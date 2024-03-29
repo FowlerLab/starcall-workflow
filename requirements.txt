@@ -1,0 +1,12 @@
+scikit-image
+scikit-learn
+numpy
+tensorflow[cpu]
+cellpose
+stardist
+matplotlib
+tifffile
+snakemake
+nd2=0.7.1
+nd2reader
+pandas
