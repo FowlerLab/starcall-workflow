@@ -6,7 +6,9 @@ cellpose
 stardist
 matplotlib
 tifffile
+pulp==2.7.0
 snakemake
-nd2=0.7.1
+nd2==0.7.1
 nd2reader
 pandas
+ome-types
