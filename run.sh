@@ -20,10 +20,3 @@ snakemake \
     --keep-incomplete
     #--immediate-submit --notemp \
 
-cd logs
-timestamp=$(date +%Y-%m-%d-%H-%M-%S)
-mv latest/ $timestamp/
-tar -czf ${timestamp}.tar.gz $timestamp/
-mv $timestamp/ latest/
-cd ..
-
