@@ -96,6 +96,13 @@ The next section of the file contains the sequencing information for each cell. 
 a count for each and a quality string. The quality string is in the same format as a fastq quality string, with the actual
 Phred error values estimated by how confident the base caller is in each bases correctness.
 
+### Log files
+
+Log files are kept for all jobs that create a file, and their path is the same as the file being created with logs/ prepended. For example,
+if I am trying to create the file input/well1.composite.bin, the log file for that would be logs/input/well1.composite.bin.log.out and logs/input/well1.composite.bin.log.err
+
+In the case of an error snakemake will print out a message showing which job failed, as well as the log file for it.
+
 ### Quickstart
 
 To run the whole pipeline, after placing the raw .nd2 files in their locations, you can request the final files from snakemake.
@@ -160,7 +167,7 @@ Outputs:
 
 In this step all the tiles for the well are registered together, and the global position for each
 is solved. This is normally a very intensive part of the pipeline, taking up to 6 hours.
-The progress can be checked in
+The progress can be checked in the log files for the job, at logs/input/well{well}.composite.bin.log.err
 
 ### Stitching (full well)
 
