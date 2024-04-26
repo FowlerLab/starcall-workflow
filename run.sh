@@ -22,6 +22,6 @@ snakemake \
     -j 128 \
     $* --cores 50 --resources mem_mb=200000 --set-resource-scopes mem_mb=global threads=global \
     --rerun-triggers mtime params input software-env \
-    --keep-incomplete
+    --keep-incomplete --latency-wait 30
     #--immediate-submit --notemp \
 
