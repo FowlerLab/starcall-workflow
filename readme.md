@@ -112,7 +112,7 @@ If you have 3 wells, you could run the command:
 snakemake process/well1.cells.csv process/well2.cells.csv process/well3.cells.csv
 ```
 
-Most wells are to large to run at once, so you can tell snakemake to split them up by changing it to this:
+Most wells are too large to run at once, so you can tell snakemake to split them up by changing it to this:
 
 ```
 snakemake process/well1_grid5.cells.csv process/well2_grid5.cells.csv process/well3_grid5.cells.csv
