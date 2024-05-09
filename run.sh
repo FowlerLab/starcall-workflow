@@ -14,7 +14,7 @@ err_path='$( (test -f {log}.err && rm {log}.err); mkdir -p $(dirname {log}.err);
 
 #cluster_cmd="qsub -P shendure_fowler -terse -l mfree=${mem_arg}M -l h_rt=48:0:0 -l 'hostname=!s022&!s025' -o $out_path -e $err_path -pe serial {threads}"
 #cluster_cmd="echo {log}"
-cluster_cmd="qsub -terse -l mfree=${mem_arg}M -l h_rt=48:0:0 -o $out_path -e $err_path -pe serial {threads}"
+cluster_cmd="qsub -terse -l mfree=${mem_arg}M -l h_rt=48:0:0 -l h=fl004 -o $out_path -e $err_path -pe serial {threads}"
 
 snakemake \
     --cluster "$cluster_cmd" \

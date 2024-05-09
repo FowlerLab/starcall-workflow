@@ -7,8 +7,9 @@ stardist
 matplotlib
 tifffile
 pulp==2.7.0
-snakemake
+snakemake>=7
 nd2==0.7.1
 nd2reader
 pandas
 ome-types
+nd2
