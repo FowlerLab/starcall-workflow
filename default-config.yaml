@@ -1,0 +1,18 @@
+rawinput_dir: 'rawinput/'
+input_dir: 'input/'
+processing_dir: 'process/'
+plots_dir: 'plots/'
+log_dir: 'logs/'
+
+phenotype_date: 'phenotype'
+phenotype_cycle: 'PT'
+phenotype_scale: 2
+
+#wells: ['B2', 'C2']
+#cycles: ['00', '01', '02']
+
+cellpose_cyto_index: 2
+cellpose_diameter: 50
+#cellpose_cycle: '01'
+
+alignment_channel: 0
