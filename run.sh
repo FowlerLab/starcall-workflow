@@ -1,5 +1,6 @@
 #!/bin/bash
 
+test -e logs || mkdir logs
 test -e logs/latest && rm -r logs/latest
 mkdir logs/latest
 
@@ -16,12 +17,20 @@ err_path='$( (test -f {log}.err && rm {log}.err); mkdir -p $(dirname {log}.err);
 #cluster_cmd="echo {log}"
 cluster_cmd="qsub -terse -l mfree=${mem_arg}M -l h_rt=48:0:0 -l h=fl004 -o $out_path -e $err_path -pe serial {threads}"
 
+configfile=
+if test -f config.yaml; then
+    configfile='--configfile  config.yaml'
+fi
+if test -t default-config.yaml; then
+    configfile='--configfile  default-config.yaml'
+fi
+
 snakemake \
     --cluster "$cluster_cmd" \
     --cluster-cancel "qdel" \
     -j 128 \
     $* --cores 50 --resources mem_mb=1000000 --set-resource-scopes mem_mb=global threads=global \
     --rerun-triggers mtime params input software-env \
-    --keep-incomplete --latency-wait 120
+    --keep-incomplete --latency-wait 120 $configfile
     #--immediate-submit --notemp \
 

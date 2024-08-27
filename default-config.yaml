@@ -16,3 +16,5 @@ cellpose_diameter: 50
 #cellpose_cycle: '01'
 
 alignment_channel: 0
+
+apply_background_correction: False
