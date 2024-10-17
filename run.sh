@@ -29,7 +29,7 @@ snakemake \
     --cluster "$cluster_cmd" \
     --cluster-cancel "qdel" \
     -j 128 \
-    $* --cores 50 --resources mem_mb=1000000 --set-resource-scopes mem_mb=global threads=global \
+    $* --cores 50 --resources mem_mb=2000000 --set-resource-scopes mem_mb=global threads=global \
     --rerun-triggers mtime params input software-env \
     --keep-incomplete --latency-wait 120 $configfile
     #--immediate-submit --notemp \
