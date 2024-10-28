@@ -9,8 +9,8 @@ mem_arg='$(expr {resources.mem_mb} / {threads})'
 #err_path=$(realpath ./logs/latest/)
 #out_path='$(realpath {log})'
 #err_path='$(realpath {log})'
-out_path='$( (test -f {log}.out && rm {log}.out); mkdir -p $(dirname {log}.out); realpath {log}.out)'
-err_path='$( (test -f {log}.err && rm {log}.err); mkdir -p $(dirname {log}.err); realpath {log}.err)'
+out_path='$( (test -f logs/{output[0]}.out && rm logs/{output[0]}.out); mkdir -p $(dirname logs/{output[0]}.out); realpath logs/{output[0]}.out)'
+err_path='$( (test -f logs/{output[0]}.err && rm logs/{output[0]}.err); mkdir -p $(dirname logs/{output[0]}.err); realpath logs/{output[0]}.err)'
 #dep_list='"$(sed '\''s/ /,/g'\'' <<< '\''{dependencies}'\'' )"'
 
 #cluster_cmd="qsub -P shendure_fowler -terse -l mfree=${mem_arg}M -l h_rt=48:0:0 -l 'hostname=!s022&!s025' -o $out_path -e $err_path -pe serial {threads}"
