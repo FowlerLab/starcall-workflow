@@ -1,5 +1,7 @@
 #!/bin/bash
 
+conda activate ops
+
 test -e logs || mkdir logs
 test -e logs/latest && rm -r logs/latest
 mkdir logs/latest
