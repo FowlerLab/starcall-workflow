@@ -14,8 +14,8 @@ mem_arg='$(expr {resources.mem_mb} / {threads})'
 out_path='$( (test -f logs/{output[0]}.out && rm logs/{output[0]}.out); mkdir -p $(dirname logs/{output[0]}.out); realpath logs/{output[0]}.out)'
 err_path='$( (test -f logs/{output[0]}.err && rm logs/{output[0]}.err); mkdir -p $(dirname logs/{output[0]}.err); realpath logs/{output[0]}.err)'
 #dep_list='"$(sed '\''s/ /,/g'\'' <<< '\''{dependencies}'\'' )"'
-cuda=
-#cuda='$(test "{resources.cuda}" -eq 1 && echo -l cuda=1)'
+#cuda=
+cuda='$(test "{resources.cuda}" -eq 1 && echo -l cuda=1)'
 
 #cluster_cmd="qsub -P shendure_fowler -terse -l mfree=${mem_arg}M -l h_rt=48:0:0 -l 'hostname=!s022&!s025' -o $out_path -e $err_path -pe serial {threads}"
 #cluster_cmd="echo {log}"
