@@ -5,6 +5,7 @@ conda activate ops 2> /dev/null
 test -e logs || mkdir logs
 test -e logs/latest && rm -r logs/latest
 mkdir logs/latest
+mkdir -p plots
 
 mem_arg='$(expr {resources.mem_mb} / {threads})'
 #out_path=$(realpath ./logs/latest/)
