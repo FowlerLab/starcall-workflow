@@ -19,7 +19,7 @@ cuda='$(test "{resources.cuda}" -eq 1 && echo -l cuda=1)'
 
 #cluster_cmd="qsub -P shendure_fowler -terse -l mfree=${mem_arg}M -l h_rt=48:0:0 -l 'hostname=!s022&!s025' -o $out_path -e $err_path -pe serial {threads}"
 #cluster_cmd="echo {log}"
-cluster_cmd="qsub -terse -l mfree=${mem_arg}M -l h_rt=48:0:0 -l h=fl004 -o $out_path -e $err_path $cuda -pe serial {threads}"
+cluster_cmd="qsub -terse -l mfree=${mem_arg}M -l h_rt=48:0:0 -l h=fl003 -o $out_path -e $err_path $cuda -pe serial {threads}"
 
 configfile=
 if test -f config.yaml; then
