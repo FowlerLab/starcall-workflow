@@ -1,0 +1,25 @@
+""" Main Snakefile for VISSEQ pipeline
+"""
+
+### setup report ###
+#configfile: "config/config.yaml"
+
+#report: "report/workflow.rst"
+
+### setup config variables ###
+include: "rules/config.smk"
+
+### load rules ###
+include: "rules/setup.smk"
+include: "rules/io.smk"
+include: "rules/alignment.smk"
+include: "rules/stitching.smk"
+include: "rules/tiles.smk"
+include: "rules/sequencing.smk"
+include: "rules/phenotyping.smk"
+include: "rules/tables.smk"
+
+### target rules ###
+
+
+
