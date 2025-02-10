@@ -5,7 +5,7 @@ import re
 
 rule segment_nuclei:
     input:
-        sequencing_input_dir + '{prefix}/raw_pt.tif',
+        sequencing_input_dir + '{prefix}/corrected_pt.tif',
         #sequencing_input_dir + '{prefix}/cycle' + phenotype_cycle + '.tif',
     output:
         sequencing_dir + '{prefix}/nuclei_mask.tif',
@@ -34,12 +34,13 @@ rule segment_nuclei:
 
 rule segment_cells:
     input:
-        sequencing_input_dir + '{prefix}/raw_pt.tif',
+        sequencing_input_dir + '{prefix}/corrected_pt.tif',
         #sequencing_input_dir + '{prefix}/cycle' + phenotype_cycle + '.tif'
     output:
         #sequencing_output_dir + '{prefix}/nuclei_mask.tif',
+        sequencing_dir + '{prefix}/cells_mask.tif',
         #sequencing_dir + '{prefix}/cells_{diam,\d+}diam_mask.tif',
-        sequencing_dir + '{prefix}/cells_{channel,\d+}channel_mask.tif',
+        #sequencing_dir + '{prefix}/cells_{channel,\d+}channel_mask.tif',
     resources:
         mem_mb = lambda wildcards, input: input.size_mb * 16 + 10000,
         #cuda = 1,
@@ -61,7 +62,7 @@ rule segment_cells:
         debug(data.shape)
 
         dapi = data[0]
-        cyto = data[int(wildcards.channel)]
+        cyto = data[2]
         if np.all(dapi == 0) or np.all(cyto == 0):
             tifffile.imwrite(output[0], data[0])
             tifffile.imwrite(output[1], data[0])
@@ -103,7 +104,7 @@ ruleorder: downscale_segmentation > segment_cells_bases
 
 rule segment_cells_bases:
     input:
-        sequencing_input_dir + '{prefix}/raw.tif'
+        sequencing_input_dir + '{prefix}/corrected.tif'
     output:
         sequencing_output_dir + '{prefix}/nuclei.tif',
         sequencing_output_dir + '{prefix}/cells.tif',
@@ -254,7 +255,7 @@ rule make_cell_images:
 
 rule find_dots:
     input:
-        sequencing_input_dir + '{prefix}/raw.tif'
+        sequencing_input_dir + '{prefix}/corrected.tif'
     output:
         sequencing_dir + '{prefix}/bases.csv'
     resources:
@@ -326,7 +327,7 @@ ruleorder: segment_cells > segment_cells_bases
 rule annotate_dots:
     input:
         #input_dir + '{prefix}/cycle' + cycles[0] + '.tif',
-        sequencing_input_dir + '{prefix}/raw.tif',
+        sequencing_input_dir + '{prefix}/corrected.tif',
         sequencing_dir + '{prefix}/bases.csv',
     output:
         qc_dir + '{prefix}/annotated.tif',
@@ -381,6 +382,7 @@ rule tabulate_cells:
         table = pandas.DataFrame(table, index=index)
         table.to_csv(output.table)
 
+ruleorder: tabulate_cells > merge_grid
 
 rule call_reads:
     input:
@@ -548,10 +550,8 @@ rule merge_final_tables:
 
         cell_table.to_csv(output.full_table)
 
-#ruleorder: merge_grid > call_reads
 ruleorder: call_reads > merge_grid
 ruleorder: match_masks > merge_grid
-ruleorder: link_masks > merge_grid
 ruleorder: merge_final_tables > merge_grid
 ruleorder: calc_features > merge_grid
 

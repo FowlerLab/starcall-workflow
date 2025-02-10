@@ -107,6 +107,7 @@ def print_info():
     print ('  stitching directory:', stitching_dir)
     print ('  sequencing directory:', sequencing_dir)
     print ('  phenotyping directory:', phenotyping_dir)
+    print ('  output directory:', output_dir)
     print ()
     print ('Input found:')
     print ('  Cycles:')

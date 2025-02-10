@@ -25,9 +25,9 @@ rule link_input_sequencing:
 
 rule link_output_sequencing:
     input:
-        sequencing_input_dir + '{prefix}/raw_pt.tif'
+        sequencing_input_dir + '{prefix}/{corrected}_pt.tif'
     output:
-        sequencing_output_dir + '{prefix}/raw_pt.tif'
+        sequencing_output_dir + '{prefix}/{corrected,raw|corrected}_pt.tif'
     localrule: True
     shell:
         "cp -l {input[0]} {output[0]}"

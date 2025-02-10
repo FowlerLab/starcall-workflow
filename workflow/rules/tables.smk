@@ -98,7 +98,7 @@ rule merge_grid_pheno_tables:
 def find_phenotype_table(wildcards):
     if wildcards.phenotype_type == '':
         return []
-    return [phenotyping_output_dir + '{prefix}/{phenotype_type}csv']
+    return [phenotyping_output_dir + '{prefix}{possible_phenogrid}/{phenotype_type}cells_phenotype.csv']
 
 rule merge_phenotype_genotype:
     input:
@@ -106,11 +106,13 @@ rule merge_phenotype_genotype:
         reads = sequencing_output_dir + '{prefix}/cells_reads.csv',
         phenotype_tables = find_phenotype_table,
     output:
-        table = output_dir + '{prefix}.{phenotype_type}cells_full.csv'
+        table = output_dir + '{prefix}{possible_phenogrid}.{phenotype_type}cells_full.csv'
     resources:
         mem_mb = lambda wildcards, input: input.size_mb * 2 + 10000
-    #wildcard_constraints:
-        #phenotype_type = '\..+|'
+    wildcard_constraints:
+        prefix = '((?!_phenogrid).)*',
+        possible_phenogrid = '(_phenogrid\d+)|',
+        phenotype_type = '[^/]*',
     run:
         import pandas
 
@@ -120,11 +122,15 @@ rule merge_phenotype_genotype:
 
 rule merge_all_well_tables:
     input:
-        tables = expand(output_dir + 'well{well}{path}.csv', well=wells, allow_missing=True),
+        #tables = expand(output_dir + 'well{well}{path}.csv', well=wells, allow_missing=True),
+        tables = lambda wildcards: expand(output_dir + 'well{well}{path}.csv', well=wildcards.wells.split('-'), allow_missing=True),
     output:
-        table = output_dir + 'wellall{path}.csv',
+        table = output_dir + 'well{wells}{path}.csv',
     resources:
         mem_mb = 5000
+    wildcard_constraints:
+        # sequence of well names joined by '-'
+        wells = '({well_pat})(-({well_pat}))+'.format(well_pat='|'.join(wells)),
     run:
         merge_csv_files(input.tables, output.table, extra_columns=['well'],
                 row_func=lambda row: {'well': wells[row['file_index']]})

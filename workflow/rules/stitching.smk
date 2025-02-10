@@ -7,6 +7,18 @@ import time
 ## Background calculation / correction
 ##################################################
 
+""" So that both raw.tif and corrected.tif are in the same folder, to
+make the wildcards for rules that read in both of them more simple
+"""
+rule link_input_stitching_raw:
+    input:
+        input_dir + 'well{well}/cycle{cycle}/raw.tif'
+    output:
+        stitching_dir + 'well{well}/cycle{cycle}/raw.tif'
+    localrule: True
+    shell:
+        "cp -l {input[0]} {output[0]}"
+
 """ Preforms background correction by estimating the 
 """
 rule calc_background:
@@ -19,15 +31,41 @@ rule calc_background:
         background = stitching_dir + 'background{ispt,_pt|}.tif',
         #background = stitching_dir + 'well{well}/background.tif',
     resources:
-        #mem_mb = lambda wildcards, input: input.size_mb * 2.5 + 5000
-        mem_mb = 150000
+        mem_mb = lambda wildcards, input: input.size_mb / 2 + 5000
+        #mem_mb = 1000000
     run:
-        import nd2
         import numpy as np
         import tifffile
-        import fisseq.correction
-        import tifffile
+        #import fisseq.correction
 
+        from pybasic.shading_correction import BaSiC
+
+        images = tifffile.memmap(input[0], mode='r')
+        images_shape = images.shape
+        images_dtype = images.dtype
+        del images
+
+        background = np.empty(images_shape[1:], np.float32)
+
+        for chan in range(images_shape[1]):
+            chan_images = np.empty((len(input), images_shape[0], *images_shape[2:]), images_dtype)
+
+            for i, path in enumerate(input):
+                images = tifffile.memmap(path, mode='r')
+                chan_images[i] = images[:,chan]
+                del images
+
+            debug (chan_images.shape)
+            optimizer = BaSiC(chan_images.reshape(chan_images.shape[0] * chan_images.shape[1], *chan_images.shape[2:]), verbose=True)
+            optimizer.prepare()
+            optimizer.run()
+
+            background[chan] = optimizer.flatfield_fullsize.astype(np.float32)
+            del chan_images
+
+        tifffile.imwrite(output.background, background)
+
+        """
         all_shapes = []
         dtype = None
         for path in input:
@@ -68,6 +106,26 @@ rule calc_background:
             background[1:,begin:end] = np.percentile(cur_batch_image, [1,5,50,95,99], axis=0)
 
         tifffile.imwrite(output.background, background.reshape(6, *image_shape))
+        """
+
+rule correct_background:
+    input:
+        images = stitching_input_dir + 'well{well}/cycle{cycle}/raw.tif',
+        background = lambda wildcards: stitching_dir + 'background{}.tif'.format('_pt' if wildcards.cycle in phenotype_cycles else '')
+    output:
+        images = stitching_dir + 'well{well}/cycle{cycle}/corrected.tif',
+    resources:
+        mem_mb = lambda wildcards, input: input.size_mb * 1.5 + 10000
+    run:
+        import tifffile
+        import fisseq.correction
+
+        images = tifffile.imread(input.images)
+        background = tifffile.imread(input.background)
+
+        fisseq.correction.illumination_correction(images, background=background, out=images)
+
+        tifffile.imwrite(output.images, images)
 
 
 ##################################################
@@ -84,18 +142,18 @@ def get_background_pt(wildcards):
 
 rule stitch_cycle:
     input:
-        images = stitching_input_dir + '{prefix}/cycle{cycle}/raw.tif',
+        images = stitching_input_dir + '{prefix}/cycle{cycle}/{corrected}.tif',
         positions = stitching_dir + '{prefix}/cycle{cycle}/positions.csv',
         composite = stitching_dir + '{prefix}/composite.bin',
-        background = lambda wildcards: get_background(wildcards, is_pt=wildcards.cycle in phenotype_cycles),
     output:
-        image = stitching_output_dir + '{prefix}/cycle{cycle}/raw.tif',
+        image = stitching_output_dir + '{prefix}/cycle{cycle}/{corrected,raw|corrected}.tif',
     resources:
         mem_mb = lambda wildcards, input: input.size_mb * 2.4 + 10000
     run:
         import numpy as np
         import tifffile
         import fisseq.stitching
+        import fisseq.correction
         import fisseq.utils
         import tifffile
 
@@ -114,8 +172,6 @@ rule stitch_cycle:
 
         #images = nd2.imread(input.images).transpose([0,2,3,1])
         images = tifffile.imread(input.images)
-        if input.background:
-            fisseq.correction.illumination_correction(images, background=tifffile.imread(input.background), out=images)
         images = images.transpose([0,2,3,1])
 
         debug(images.shape)
@@ -158,18 +214,18 @@ rule stitch_cycle:
 
 rule stitch_well:
     input:
-        images = expand(stitching_input_dir + 'well{well}/cycle{cycle}/raw.tif', cycle=cycles, allow_missing=True),
+        images = expand(stitching_input_dir + 'well{well}/cycle{cycle}/{corrected}.tif', cycle=cycles, allow_missing=True),
         positions = expand(stitching_dir + 'well{well}/cycle{cycle}/positions.csv', cycle=cycles, allow_missing=True),
         composite = stitching_dir + 'well{well}/composite.bin',
-        background = get_background,
     output:
-        stitching_output_dir + 'well{well}/raw.tif'
+        stitching_output_dir + 'well{well}/{corrected,raw|corrected}.tif'
     resources:
         mem_mb = lambda wildcards, input: input.size_mb / 4 + 10000
     run:
         import numpy as np
         import tifffile
         import fisseq.stitching
+        import fisseq.correction
         import tifffile
         import time
         import shutil
@@ -181,9 +237,6 @@ rule stitch_well:
         dims = maxes - mins
         debug (mins, maxes)
 
-        if input.background:
-            background = tifffile.imread(input.background)
-
         tmp_output = resources.tmpdir + '/well.tif'
 
         for i in fisseq.utils.simple_progress(range(len(input.images))):
@@ -192,8 +245,6 @@ rule stitch_well:
             debug(final_poses)
 
             images = tifffile.imread(input.images[i])
-            if input.background:
-                fisseq.correction.illumination_correction(images, background=background, out=images)
             images = images.transpose([0,2,3,1])
 
             final_poses = final_poses[:,2:]
@@ -232,20 +283,16 @@ rule stitch_well:
 ## stitching smaller sections, ie subsets, tiles
 ##################################################
 
-def stitch_well_section(image_paths, composite_paths, mins, maxes, background_path=None):
+def stitch_well_section(image_paths, composite_paths, mins, maxes):
     import tifffile
     import fisseq.stitching
+    import fisseq.correction
     import numpy as np
-
-    if background_path:
-        background = tifffile.imread(background_path)
 
     full_image = None
 
     for i,(path,composite_path) in enumerate(zip(image_paths, composite_paths)):
         images = tifffile.memmap(path, mode='r')
-        if background_path:
-            fisseq.correction.illumination_correction(images, background=background, out=images)
         images = images.transpose([0,2,3,1])
 
         composite = fisseq.stitching.CompositeImage.load(composite_path)
@@ -267,10 +314,9 @@ def stitch_well_section(image_paths, composite_paths, mins, maxes, background_pa
 
 rule stitch_well_pt:
     input:
-        images_pt = expand(stitching_input_dir + 'well{well}/cycle{cycle}/raw.tif', cycle=phenotype_cycles, allow_missing=True),
+        images_pt = expand(stitching_dir + 'well{well}/cycle{cycle}/{corrected}.tif', cycle=phenotype_cycles, allow_missing=True),
         composites_pt = expand(stitching_dir + 'well{well}/cycle{cycle}/composite.bin', cycle=phenotype_cycles, allow_missing=True),
         full_composite = stitching_dir + 'well{well}/composite.bin',
-        background = get_background_pt,
     output:
         image = stitching_output_dir + 'well{well}/{corrected,raw|corrected}_pt.tif',
     resources:
@@ -285,15 +331,14 @@ rule stitch_well_pt:
         mins *= phenotype_scale
         maxes *= phenotype_scale
 
-        tifffile.imwrite(output.image, stitch_well_section(input.images_pt, input.composites_pt, mins, maxes, input.background))
+        tifffile.imwrite(output.image, stitch_well_section(input.images_pt, input.composites_pt, mins, maxes))
 
 
 rule stitch_well_subset:
     input:
-        images = expand(stitching_input_dir + 'well{well}_subset{size}/cycle{cycle}/raw.tif', cycle=cycles, allow_missing=True),
+        images = expand(stitching_dir + 'well{well}_subset{size}/cycle{cycle}/{corrected}.tif', cycle=cycles, allow_missing=True),
         composites = expand(stitching_dir + 'well{well}_subset{size}/cycle{cycle}/composite.bin', cycle=cycles, allow_missing=True),
         full_composite = stitching_dir + 'well{well}_subset{size}/composite.bin',
-        background = get_background,
     output:
         image = stitching_output_dir + 'well{well}_subset{size,\d+}/{corrected,raw|corrected}.tif'
     run:
@@ -307,14 +352,13 @@ rule stitch_well_subset:
         radius = int(wildcards.size) // 2
         mins, maxes = center - radius, center + radius
 
-        tifffile.imwrite(output.image, stitch_well_section(input.images, input.composites, mins, maxes, input.background))
+        tifffile.imwrite(output.image, stitch_well_section(input.images, input.composites, mins, maxes))
 
 rule stitch_well_subset_pt:
     input:
-        images = expand(stitching_input_dir + 'well{well}_subset{size}/cycle{cycle}/raw.tif', cycle=phenotype_cycles, allow_missing=True),
+        images = expand(stitching_dir + 'well{well}_subset{size}/cycle{cycle}/{corrected}.tif', cycle=phenotype_cycles, allow_missing=True),
         composites = expand(stitching_dir + 'well{well}_subset{size}/cycle{cycle}/composite.bin', cycle=phenotype_cycles, allow_missing=True),
         full_composite = stitching_dir + 'well{well}_subset{size}/composite.bin',
-        background = get_background_pt,
     output:
         image = stitching_output_dir + 'well{well}_subset{size,\d+}/{corrected,raw|corrected}_pt.tif'
     run:
@@ -330,7 +374,7 @@ rule stitch_well_subset_pt:
         mins *= phenotype_scale
         maxes *= phenotype_scale
 
-        tifffile.imwrite(output.image, stitch_well_section(input.images, input.composites, mins, maxes, input.background))
+        tifffile.imwrite(output.image, stitch_well_section(input.images, input.composites, mins, maxes))
 
 
 ##################################################
@@ -365,10 +409,9 @@ rule split_grid_composite:
 
 rule stitch_tile_well:
     input:
-        images = expand(stitching_input_dir + '{prefix}/cycle{cycle}/raw.tif', cycle=cycles, allow_missing=True),
+        images = expand(stitching_dir + '{prefix}/cycle{cycle}/{corrected}.tif', cycle=cycles, allow_missing=True),
         composites = expand(stitching_dir + '{prefix}/cycle{cycle}/composite.bin', cycle=cycles, allow_missing=True),
         grid_composite = stitching_output_dir + '{prefix}_seqgrid{grid_size}/grid_composite.bin',
-        background = get_background,
     output:
         image = stitching_output_dir + '{prefix}_seqgrid{grid_size,\d+}/tile{x,\d+}x{y,\d+}y/{corrected,raw|corrected}.tif',
     resources:
@@ -383,15 +426,14 @@ rule stitch_tile_well:
         box = grid_composite.boxes[x*grid_size+y]
         debug(box)
 
-        tifffile.imwrite(output.image, stitch_well_section(input.images, input.composites, box.pos1, box.pos2, input.background))
+        tifffile.imwrite(output.image, stitch_well_section(input.images, input.composites, box.pos1, box.pos2))
 
 
 rule stitch_tile_well_pt:
     input:
-        images_pt = expand(stitching_input_dir + '{prefix}/cycle{cycle}/raw.tif', cycle=phenotype_cycles, allow_missing=True),
+        images_pt = expand(stitching_dir + '{prefix}/cycle{cycle}/{corrected}.tif', cycle=phenotype_cycles, allow_missing=True),
         composites_pt = expand(stitching_dir + '{prefix}/cycle{cycle}/composite.bin', cycle=phenotype_cycles, allow_missing=True),
         grid_composite = stitching_output_dir + '{prefix}_seqgrid{grid_size}/grid_composite.bin',
-        background = get_background_pt,
     output:
         image = stitching_output_dir + '{prefix}_seqgrid{grid_size,\d+}/tile{x,\d+}x{y,\d+}y/{corrected,raw|corrected}_pt.tif',
     resources:
@@ -409,6 +451,6 @@ rule stitch_tile_well_pt:
         box.pos2 *= phenotype_scale
         debug(box)
 
-        tifffile.imwrite(output.image, stitch_well_section(input.images_pt, input.composites_pt, box.pos1, box.pos2, input.background))
+        tifffile.imwrite(output.image, stitch_well_section(input.images_pt, input.composites_pt, box.pos1, box.pos2))
 
 

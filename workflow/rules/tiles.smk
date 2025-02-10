@@ -29,6 +29,9 @@ rule split_grid_table:
         grid_size, x, y = int(wildcards.grid_size), int(wildcards.x), int(wildcards.y)
 
         box = composite.boxes[x*grid_size+y]
+        box.pos1 *= phenotype_scale
+        box.pos2 *= phenotype_scale
+
         contained = []
         for i, cell in table.iterrows():
             cellbox = fisseq.stitching.BBox([cell.bbox_x1, cell.bbox_y1], [cell.bbox_x2, cell.bbox_y2])
@@ -85,7 +88,9 @@ rule split_grid_segmentation:
 
         if wildcards.segmentation_type.count('cells') > 0 or wildcards.segmentation_type.count('nuclei') > 0:
             for newindex, (index, cell) in enumerate(table.iterrows()):
-                x1, y1, x2, y2 = cell.bbox_x1 * phenotype_scale, cell.bbox_y1 * phenotype_scale, cell.bbox_x2 * phenotype_scale, cell.bbox_y2 * phenotype_scale
+                x1, y1, x2, y2 = int(cell.bbox_x1), int(cell.bbox_y1), int(cell.bbox_x2), int(cell.bbox_y2)
+                debug (x1, x2, y1, y2)
+                #x1, y1, x2, y2 = cell.bbox_x1 * phenotype_scale, cell.bbox_y1 * phenotype_scale, cell.bbox_x2 * phenotype_scale, cell.bbox_y2 * phenotype_scale
                 mask = section[x1:x2,y1:y2] == index
                 debug (x1, x2, y1, y2, mask.max(), mask.sum(), index, np.sum(section == index))
                 debug (' ', props[index].bbox)
@@ -115,10 +120,10 @@ rule merge_grid:
     resources:
         mem_mb = lambda wildcards, input: input.size_mb * 10 + 25000
     wildcard_constraints:
-        type = '((?!/tile).)*(csv|tif)',
+        #type = '((?!/tile).)*(csv|tif)',
+        type = '[^/]+',
         possible_output_dir = '(' + output_dir + ')|',
         #any_processing_dir = sequencing_dir + '|' + phenotyping_dir
-        type = 'bases.csv|(.+)_mask.tif'
     run:
         import numpy as np
         import tifffile
@@ -156,9 +161,9 @@ rule merge_grid:
 
 rule link_seq_grid_input:
     input:
-        stitching_output_dir + '{prefix}_seqgrid{grid_size}/tile{x}x{y}y{possible_cycle}/raw_pt.tif',
+        stitching_output_dir + '{prefix}_seqgrid{grid_size}/tile{x}x{y}y{possible_cycle}/{corrected}_pt.tif',
     output:
-        phenotyping_input_dir + '{prefix}{possible_seqgrid}_phenogrid{grid_size,\d+}/tile{x,\d+}x{y,\d+}y{possible_cycle}/raw_pt.tif',
+        phenotyping_input_dir + '{prefix}{possible_seqgrid}_phenogrid{grid_size,\d+}/tile{x,\d+}x{y,\d+}y{possible_cycle}/{corrected,raw|corrected}_pt.tif',
     wildcard_constraints:
         prefix = '((?!_seqgrid).)*',
         possible_seqgrid = '(_seqgrid\d+)|',

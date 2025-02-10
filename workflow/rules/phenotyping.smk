@@ -11,7 +11,7 @@ rule calc_features:
         cell_table = phenotyping_input_dir + '{prefix}/cells.csv',
         cells = phenotyping_input_dir + '{prefix}/cells_mask.tif',
         nuclei = phenotyping_input_dir + '{prefix}/nuclei_mask.tif',
-        image = phenotyping_input_dir + '{prefix}/raw_pt.tif',
+        image = phenotyping_input_dir + '{prefix}/corrected_pt.tif',
     output:
         features = phenotyping_output_dir + '{prefix}/features.csv'
     run:
@@ -75,7 +75,7 @@ rule calc_features:
 rule copy_cellprofiler_files:
     input:
         #image = phenotyping_input_dir + '{prefix}/cycle' + phenotype_cycle + '.tif',
-        image = phenotyping_input_dir + '{prefix}/raw_pt.tif',
+        image = phenotyping_input_dir + '{prefix}/corrected_pt.tif',
         cells = phenotyping_input_dir + '{prefix}/cells_mask.tif',
         nuclei = phenotyping_input_dir + '{prefix}/nuclei_mask.tif',
         #puncta = phenotyping_dir + '{prefix}/puncta_mask.tif',
@@ -172,7 +172,7 @@ rule run_cellprofiler:
 rule run_special_segmentation:
     input:
         phenotyping_input_dir + '{prefix}/cells.csv',
-        phenotyping_input_dir + '{prefix}/raw_pt.tif',
+        phenotyping_input_dir + '{prefix}/corrected_pt.tif',
         phenotyping_input_dir + '{prefix}/cells_mask.tif',
         phenotyping_input_dir + '{prefix}/nuclei_mask.tif',
     output:
