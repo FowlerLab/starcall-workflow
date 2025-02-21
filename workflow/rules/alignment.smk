@@ -23,15 +23,13 @@ rule align_cycle:
         import concurrent.futures
         import numpy as np
         import tifffile
-        import fisseq.stitching
+        import constitch
         import tifffile
 
 
         executor = concurrent.futures.ThreadPoolExecutor(max_workers=threads)
         debug("Running with", threads, "threads")
         debug(input.rawposes, input.images)
-
-        full_composite = fisseq.stitching.CompositeImage(progress=True, executor=executor)
 
         poses = np.loadtxt(input.rawposes, delimiter=',', dtype=int)
         debug ('loading images', wildcards.cycle)
@@ -42,7 +40,7 @@ rule align_cycle:
         print_mem('align_poses', resources.mem_mb)
         debug ('stitching cycle', wildcards.cycle)
 
-        composite = fisseq.stitching.CompositeImage(progress=True, executor=executor)#, precalculate_fft=True)
+        composite = constitch.CompositeImage(progress=True, executor=executor)#, precalculate_fft=True)
 
         input_poses = np.concatenate([poses[:,:2], np.full((len(poses),1), cycles_pt.index(wildcards.cycle), dtype=poses.dtype)], axis=1)
         debug(images.shape, images.ndim)
@@ -52,26 +50,32 @@ rule align_cycle:
             composite.add_images(images, input_poses, scale='tile')
         composite.print_mem_usage()
 
-        composite.calc_constraints()
-        composite.plot_scores('plots/scores_{}_cycle{}_step1.png'.format(wildcards.prefix, wildcards.cycle))
-        #composite.save('tmp_cycle.bin')
+        overlapping = composite.constraints(touching=True)
+        constraints = overlapping.calculate()
+        composite.plot_scores('plots/new_scores_{}_cycle{}_step1.png'.format(wildcards.prefix, wildcards.cycle), constraints)
 
         thresh = composite.calc_score_threshold()
-        composite.filter_constraints(thresh)
-        composite.plot_scores('plots/scores_{}_cycle{}_step2.png'.format(wildcards.prefix, wildcards.cycle))
-        composite.estimate_stage_model(filter_outliers=True)
-        composite.model_constraints()
-        composite.plot_scores('plots/scores_{}_cycle{}_step3.png'.format(wildcards.prefix, wildcards.cycle))
+        constraints = constraints.filter(min_score=thresh)
+        composite.plot_scores('plots/new_scores_{}_cycle{}_step2.png'.format(wildcards.prefix, wildcards.cycle), constraints)
+        stage_model = constraints.fit_model(outliers=True)
+        constraints = constraints.filter(stage_model.inliers)
+        modeled = overlapping.calculate(stage_model)
+        composite.plot_scores('plots/new_scores_{}_cycle{}_step3.png'.format(wildcards.prefix, wildcards.cycle), constraints.merge(modeled))
 
         if wildcards.cycle in phenotype_cycles:
             composite.boxes.pos1[:,:2] //= phenotype_scale
             composite.boxes.pos2[:,:2] //= phenotype_scale
-            for constraint in composite.constraints.values():
+
+            for constraint in constraints:
+                constraint.dx //= phenotype_scale
+                constraint.dy //= phenotype_scale
+
+            for constraint in modeled:
                 constraint.dx //= phenotype_scale
                 constraint.dy //= phenotype_scale
 
         debug('done')
-        composite.save(output.composite, save_images=False)
+        constitch.save(output.composite, composite, constraints, modeled, save_images=False)
 
 """ Combines all the alignment data for each cycle and calculates alignments between the cycles.
 outputs the result to one composite file for the whole well, another composite file for each cycle,
@@ -95,7 +99,7 @@ rule align_well:
         import concurrent.futures
         import numpy as np
         import tifffile
-        import fisseq.stitching
+        import constitch
         import tifffile
 
         all_poses = []
@@ -109,8 +113,10 @@ rule align_well:
         debug(input.images)
 
         #"""
-        full_composite = fisseq.stitching.CompositeImage(progress=True, executor=executor)#, precalculate_fft=True)
-        all_indices = []
+        full_composite = constitch.CompositeImage(progress=True, executor=executor)#, precalculate_fft=True)
+        all_constraints = constitch.ConstraintSet()
+        all_modeled = constitch.ConstraintSet()
+        subcomposites = []
 
         for cycle, rawpath, composite_path in zip(cycles_pt, input.images, input.composites):
             debug ('loading images', cycle)
@@ -120,11 +126,11 @@ rule align_well:
             #images = tifffile.imread(rawpath)[:,1].copy()
             debug(images.shape)
 
-            composite = fisseq.stitching.CompositeImage.load(composite_path)
+            composite, constraints, modeled = constitch.load(composite_path)
             composite.images = images
 
             mean_pos = (composite.boxes.pos1.mean(axis=0) + composite.boxes.pos2.mean(axis=0)) / 2
-            if len(all_indices):
+            if len(subcomposites):
                 global_mean_pos = (full_composite.boxes.pos1.mean(axis=0) + full_composite.boxes.pos2.mean(axis=0)) / 2
                 debug (mean_pos, global_mean_pos, global_mean_pos - mean_pos)
                 offset = np.round(global_mean_pos - mean_pos)[:2].reshape(1,2).astype(int)
@@ -133,66 +139,64 @@ rule align_well:
                 composite.boxes.pos2[:,:2] += offset
                 debug ((composite.boxes.pos1.mean(axis=0) + composite.boxes.pos2.mean(axis=0)) / 2)
 
-            indices = full_composite.merge(composite)
-            all_indices.append(indices)
-            del images, composite
+            debug ('composite sizes', len(constraints), len(modeled))
+            subcomposite, constraints, modeled = full_composite.merge(composite, constraints, modeled)
+            debug ('          sizes', len(constraints), len(modeled))
+            debug (' before', len(all_constraints), len(all_modeled))
+            subcomposites.append(subcomposite)
+            all_constraints.add(constraints)
+            all_modeled.add(modeled)
+            debug (' after', len(all_constraints), len(all_modeled))
 
-            #full_composite.align_disconnected_regions()
+            del images, composite, constraints, modeled
 
         debug ('adding constraints between cycles')
-        pairs = full_composite.find_unconstrained_pairs(overlap_threshold=[0,0,-100], needs_overlap=True, max_pairs=6)
-        debug ('num pairs', len(pairs))
 
-        full_composite.calc_constraints(pairs)
-        #full_composite.set_aligner(fisseq.stitching.FFTAligner())
+        max_pairs = 6
+        def filter_overlapping(constraint):
+            return constraint.overlap > 0 and constraint.box1.pos1[2] != constraint.box2.pos1[2] and abs(constraint.box1.pos1[2] - constraint.box2.pos1[2]) <= max_pairs
+
+        overlapping = full_composite.constraints(filter_overlapping)
+        debug ('num pairs', len(overlapping))
+
+        constraints = overlapping.calculate()
+        debug (len(constraints), len(all_constraints))
+        constraints.add(all_constraints)
+        debug (len(constraints))
+        debug (constraints[0,1])
         debug ('  done')
-        full_composite.save(output.composite + '.bkp.bin')
-        #"""
-        #full_composite = fisseq.stitching.CompositeImage.load(output.composite + '.old.bin')
-        for pair in list(full_composite.constraints):
-            if pair[0] == pair[1]:
-                del full_composite.constraints[pair]
-        #composite.images = full_composite.images
-        #full_composite = composite
-        #full_composite.save('tmp1.bin')#, save_images=False)
-        
-        full_composite.plot_scores('plots/scores_{}_step1.png'.format(wildcards.prefix))
+
+        full_composite.plot_scores('plots/new_scores_{}_step1.png'.format(wildcards.prefix), constraints.merge(all_modeled))
 
         thresh = full_composite.calc_score_threshold()
         debug('thresh', thresh)
-        full_composite.filter_constraints(thresh)
-        full_composite.save('tmp2.bin', save_images=False)
+        constraints = constraints.filter(min_score=thresh)
 
-        full_composite.plot_scores('plots/scores_{}_step2.png'.format(wildcards.prefix))
+        full_composite.plot_scores('plots/new_scores_{}_step2.png'.format(wildcards.prefix), constraints.merge(all_modeled))
 
-        full_composite.filter_outliers(pairs=pairs)
+        constraints = constraints.filter(max_length=max(full_composite.images[0].shape))
 
-        full_composite.plot_scores('plots/scores_{}_step3.png'.format(wildcards.prefix))
+        full_composite.plot_scores('plots/new_scores_{}_step3.png'.format(wildcards.prefix), constraints.merge(all_modeled))
 
         debug ('Solving constraints')
-        full_composite.save('tmp3.bin', save_images=False)
-        final_poses = full_composite.solve_constraints_old(filter_outliers=True, max_outlier_ratio=0.2)
-        #final_poses = full_composite.solve_constraints(filter_outliers=True, max_outlier_ratio=0.2, outlier_threshold=20, scores_plot_path='plots/scores_well{}_step3_filters{{}}.png'.format(wildcards.well))
+        full_composite.apply(constraints.merge(all_modeled).solve(constitch.OutlierSolver()))
+        #final_poses = full_composite.solve_constraints_old(filter_outliers=True, max_outlier_ratio=0.2)
+        #final_poses = full_composite.solve_constraints(filter_outliers=True, max_outlier_ratio=0.2, outlier_threshold=20, scores_plot_path='plots/new_scores_well{}_step3_filters{{}}.png'.format(wildcards.well))
         debug ('  done')
 
-        full_composite.save(output.composite, save_images=False)
+        constitch.save(output.composite, full_composite, constraints, all_modeled, save_images=False)
 
-        full_composite.plot_scores('plots/scores_{}_step4.png'.format(wildcards.prefix))
+        full_composite.plot_scores('plots/new_scores_{}_step4.png'.format(wildcards.prefix), constraints.merge(all_modeled))
+        full_composite.plot_scores('plots/new_scores_{}_step4_accuracy.png'.format(wildcards.prefix), constraints.merge(all_modeled), score_func='accuracy')
 
         executor.shutdown()
 
-        #"""
-        #full_composite = fisseq.stitching.CompositeImage.load(input_dir + 'well{}.composite.bin'.format(wildcards.prefix))
-        #final_poses = full_composite.boxes.pos1[:,:2]
-
-        for indices, poses, path, composite_path, cycle in zip(all_indices, all_poses, output.positions, output.composites, cycles_pt):
-            subcomposite = full_composite.subcomposite(indices)
+        for subcomposite, poses, poses_path, composite_path, cycle in zip(subcomposites, all_poses, output.positions, output.composites, cycles_pt):
             if cycle in phenotype_cycles:
-                final_poses[indices] *= phenotype_scale
                 subcomposite.boxes.pos1[:,:2] *= phenotype_scale
                 subcomposite.boxes.pos2[:,:2] *= phenotype_scale
 
-            poses = np.concatenate([poses[:,:2], final_poses[indices]], axis=1)
-            np.savetxt(path, poses, fmt="%d", delimiter=',')
-            subcomposite.save(composite_path, save_images=False)
+            poses = np.concatenate([poses[:,:2], subcomposite.positions], axis=1)
+            np.savetxt(poses_path, poses, fmt="%d", delimiter=',')
+            constitch.save(composite_path, subcomposite, save_images=False)
 

@@ -152,7 +152,7 @@ rule stitch_cycle:
     run:
         import numpy as np
         import tifffile
-        import fisseq.stitching
+        import constitch
         import fisseq.correction
         import fisseq.utils
         import tifffile
@@ -180,7 +180,7 @@ rule stitch_cycle:
         #del good_images
         #fisseq.correction.illumination_correction(images, out=images, background=background)
 
-        full_composite = fisseq.stitching.CompositeImage.load(input.composite)
+        full_composite = constitch.load(input.composite)
         mins = full_composite.boxes.pos1[:,:2].min(axis=0) * 2
         maxes = full_composite.boxes.pos2[:,:2].max(axis=0) * 2
         debug (mins, maxes)
@@ -188,13 +188,13 @@ rule stitch_cycle:
         try:
             final_poses = final_poses[:,2:]
 
-            composite = fisseq.stitching.CompositeImage()
+            composite = constitch.CompositeImage()
             composite.add_images([image[:,:,0] for image in images], positions=final_poses)
             full_image = composite.stitch_images(
                 real_images=images,
                 mins=mins,
                 maxes=maxes,
-                merger=fisseq.stitching.EfficientNearestMerger(),
+                merger=constitch.EfficientNearestMerger(),
             )
 
             full_image = full_image.transpose([2,0,1])
@@ -224,13 +224,13 @@ rule stitch_well:
     run:
         import numpy as np
         import tifffile
-        import fisseq.stitching
+        import constitch
         import fisseq.correction
         import tifffile
         import time
         import shutil
 
-        composite = fisseq.stitching.CompositeImage.load(input.composite)
+        composite = constitch.load(input.composite)
         debug(composite.boxes.pos1[:,:2].min(axis=0), composite.boxes.pos2[:,:2].max(axis=0))
         mins = composite.boxes.pos1[:,:2].min(axis=0)
         maxes = composite.boxes.pos2[:,:2].max(axis=0)
@@ -256,14 +256,14 @@ rule stitch_well:
                 well_image = tifffile.memmap(tmp_output)
             out_full_image = well_image[i].transpose(1,2,0)
 
-            composite = fisseq.stitching.CompositeImage()
+            composite = constitch.CompositeImage()
             composite.add_images([image[:,:,0] for image in images], positions=final_poses)
             full_image = composite.stitch_images(
                 real_images=images,
                 mins=mins,
                 maxes=maxes,
                 #out=out_full_image,
-                merger=fisseq.stitching.EfficientNearestMerger(),
+                merger=constitch.EfficientNearestMerger(),
             )
 
             full_image = full_image.transpose([2,0,1])
@@ -285,7 +285,7 @@ rule stitch_well:
 
 def stitch_well_section(image_paths, composite_paths, mins, maxes):
     import tifffile
-    import fisseq.stitching
+    import constitch
     import fisseq.correction
     import numpy as np
 
@@ -295,7 +295,7 @@ def stitch_well_section(image_paths, composite_paths, mins, maxes):
         images = tifffile.memmap(path, mode='r')
         images = images.transpose([0,2,3,1])
 
-        composite = fisseq.stitching.CompositeImage.load(composite_path)
+        composite = constitch.load(composite_path)
         composite.images = images
 
         if full_image is None:
@@ -305,7 +305,7 @@ def stitch_well_section(image_paths, composite_paths, mins, maxes):
         final_image = composite.stitch_images(
             mins = mins,
             maxes = maxes,
-            merger = fisseq.stitching.EfficientNearestMerger(),
+            merger = constitch.EfficientNearestMerger(),
             out = full_image[i].transpose(1,2,0)
         )
 
@@ -324,9 +324,9 @@ rule stitch_well_pt:
     run:
         import numpy as np
         import tifffile
-        import fisseq.stitching
+        import constitch
 
-        full_composite = fisseq.stitching.CompositeImage.load(input.full_composite)
+        full_composite = constitch.load(input.full_composite)
         mins, maxes = full_composite.boxes.pos1.min(axis=0)[:2], full_composite.boxes.pos2.max(axis=0)[:2]
         mins *= phenotype_scale
         maxes *= phenotype_scale
@@ -342,11 +342,11 @@ rule stitch_well_subset:
     output:
         image = stitching_output_dir + 'well{well}_subset{size,\d+}/{corrected,raw|corrected}.tif'
     run:
-        import fisseq.stitching
+        import constitch
         import numpy as np
         import tifffile
 
-        full_composite = fisseq.stitching.CompositeImage.load(input.full_composite)
+        full_composite = constitch.load(input.full_composite)
         mins, maxes = full_composite.boxes.pos1.min(axis=0)[:2], full_composite.boxes.pos2.max(axis=0)[:2]
         center = mins + ((maxes - mins) // 2)
         radius = int(wildcards.size) // 2
@@ -362,11 +362,11 @@ rule stitch_well_subset_pt:
     output:
         image = stitching_output_dir + 'well{well}_subset{size,\d+}/{corrected,raw|corrected}_pt.tif'
     run:
-        import fisseq.stitching
+        import constitch
         import numpy as np
         import tifffile
 
-        full_composite = fisseq.stitching.CompositeImage.load(input.full_composite)
+        full_composite = constitch.load(input.full_composite)
         mins, maxes = full_composite.boxes.pos1.min(axis=0)[:2], full_composite.boxes.pos2.max(axis=0)[:2]
         center = mins + ((maxes - mins) // 2)
         radius = int(wildcards.size) // 2
@@ -392,14 +392,14 @@ rule split_grid_composite:
     run:
         import numpy as np
         import tifffile
-        import fisseq.stitching
+        import constitch
 
-        inpcomposite = fisseq.stitching.CompositeImage.load(input.composite)
+        full_composite = constitch.load(input.composite)
         image = np.empty((inpcomposite.boxes.pos2.max(axis=0) - inpcomposite.boxes.pos1.min(axis=0)))
         debug(image.shape)
         grid_size = int(wildcards.grid_size)
 
-        composite = fisseq.stitching.CompositeImage()
+        composite = constitch.CompositeImage()
         composite.add_split_image(image, grid_size, channel_axis=-1, overlap=cellpose_diameter*2)
         composite.save(output.composite, save_images=False)
         tile_numbers = np.arange(len(composite.boxes)).reshape(-1,1)
@@ -419,9 +419,9 @@ rule stitch_tile_well:
     run:
         import numpy as np
         import tifffile
-        import fisseq.stitching
+        import constitch
 
-        grid_composite = fisseq.stitching.CompositeImage.load(input.grid_composite)
+        grid_composite = constitch.load(input.grid_composite)
         grid_size, x, y = int(wildcards.grid_size), int(wildcards.x), int(wildcards.y)
         box = grid_composite.boxes[x*grid_size+y]
         debug(box)
@@ -441,9 +441,9 @@ rule stitch_tile_well_pt:
     run:
         import numpy as np
         import tifffile
-        import fisseq.stitching
+        import constitch
 
-        grid_composite = fisseq.stitching.CompositeImage.load(input.grid_composite)
+        grid_composite = constitch.load(input.grid_composite)
         grid_size, x, y = int(wildcards.grid_size), int(wildcards.x), int(wildcards.y)
         box = grid_composite.boxes[x*grid_size+y]
         debug(box)
