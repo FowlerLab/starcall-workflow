@@ -31,7 +31,7 @@ rule calc_background:
         background = stitching_dir + 'background{ispt,_pt|}.tif',
         #background = stitching_dir + 'well{well}/background.tif',
     resources:
-        mem_mb = lambda wildcards, input: input.size_mb / 2 + 5000
+        mem_mb = lambda wildcards, input: input.size_mb + 5000
         #mem_mb = 1000000
     run:
         import numpy as np
@@ -394,14 +394,14 @@ rule split_grid_composite:
         import tifffile
         import constitch
 
-        full_composite = constitch.load(input.composite)
+        inpcomposite, constraints = constitch.load(input.composite)
         image = np.empty((inpcomposite.boxes.pos2.max(axis=0) - inpcomposite.boxes.pos1.min(axis=0)))
         debug(image.shape)
         grid_size = int(wildcards.grid_size)
 
         composite = constitch.CompositeImage()
         composite.add_split_image(image, grid_size, channel_axis=-1, overlap=cellpose_diameter*2)
-        composite.save(output.composite, save_images=False)
+        constitch.save(output.composite, composite, save_images=False)
         tile_numbers = np.arange(len(composite.boxes)).reshape(-1,1)
         np.savetxt(output.table, np.concatenate([tile_numbers // grid_size, tile_numbers % grid_size, composite.boxes.pos1], axis=1),
                 delimiter=',', fmt='%d', header="tile_x,tile_y,pixel_x,pixel_y", comments='')

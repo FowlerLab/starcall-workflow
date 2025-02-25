@@ -104,7 +104,8 @@ ruleorder: downscale_segmentation > segment_cells_bases
 
 rule segment_cells_bases:
     input:
-        sequencing_input_dir + '{prefix}/corrected.tif'
+        #sequencing_input_dir + '{prefix}/corrected.tif'
+        sequencing_input_dir + '{prefix}/raw.tif'
     output:
         sequencing_output_dir + '{prefix}/nuclei.tif',
         sequencing_output_dir + '{prefix}/cells.tif',
@@ -143,7 +144,7 @@ rule segment_cells_bases:
 
 rule make_cell_overlay:
     input:
-        image = sequencing_input_dir + '{prefix}/raw_pt.tif',
+        image = sequencing_input_dir + '{prefix}/corrected_pt.tif',
         cells = sequencing_dir + '{prefix}/{segmentation_type}_mask.tif',
     output:
         qc_dir + '{prefix}/{segmentation_type}_overlay.tif',
@@ -255,7 +256,8 @@ rule make_cell_images:
 
 rule find_dots:
     input:
-        sequencing_input_dir + '{prefix}/corrected.tif'
+        #sequencing_input_dir + '{prefix}/corrected.tif',
+        sequencing_input_dir + '{prefix}/raw.tif'
     output:
         sequencing_dir + '{prefix}/bases.csv'
     resources:
@@ -327,7 +329,8 @@ ruleorder: segment_cells > segment_cells_bases
 rule annotate_dots:
     input:
         #input_dir + '{prefix}/cycle' + cycles[0] + '.tif',
-        sequencing_input_dir + '{prefix}/corrected.tif',
+        #sequencing_input_dir + '{prefix}/corrected.tif',
+        sequencing_input_dir + '{prefix}/raw.tif',
         sequencing_dir + '{prefix}/bases.csv',
     output:
         qc_dir + '{prefix}/annotated.tif',
