@@ -88,13 +88,13 @@ rule align_well:
         composites = expand(stitching_dir + '{prefix}/cycle{cycle}/partial_composite.bin', cycle=cycles_pt, allow_missing=True),
         rawposes = expand(stitching_input_dir + '{prefix}/cycle{cycle}/positions.csv', cycle=cycles_pt, allow_missing=True),
     output:
+        composite = stitching_dir + '{prefix}/composite.bin',
         positions = expand(stitching_dir + '{prefix}/cycle{cycle}/positions.csv', cycle=cycles_pt, allow_missing=True),
         #positions = input_dir + '{prefix}.positions.csv',
-        composite = stitching_dir + '{prefix}/composite.bin',
         composites = expand(stitching_dir + '{prefix}/cycle{cycle}/composite.bin', cycle=cycles_pt, allow_missing=True),
     resources:
-        mem_mb = lambda wildcards, input: 10000 + input.size_mb / 2.5
-    threads: 16
+        mem_mb = lambda wildcards, input: 10000 + input.size_mb / 2.5 / 4
+    threads: 4#16
     run:
         import concurrent.futures
         import numpy as np
@@ -118,7 +118,7 @@ rule align_well:
         all_modeled = constitch.ConstraintSet()
         subcomposites = []
 
-        for cycle, rawpath, composite_path in zip(cycles_pt, input.images, input.composites):
+        for cycle, rawpath, composite_path in zip(cycles_pt[-3:], input.images[-3:], input.composites[-3:]):
             debug ('loading images', cycle)
 
             debug ('copy')
@@ -163,7 +163,6 @@ rule align_well:
         debug (len(constraints), len(all_constraints))
         constraints.add(all_constraints)
         debug (len(constraints))
-        debug (constraints[0,1])
         debug ('  done')
 
         full_composite.plot_scores('plots/new_scores_{}_step1.png'.format(wildcards.prefix), constraints.merge(all_modeled))
@@ -179,7 +178,27 @@ rule align_well:
         full_composite.plot_scores('plots/new_scores_{}_step3.png'.format(wildcards.prefix), constraints.merge(all_modeled))
 
         debug ('Solving constraints')
-        full_composite.apply(constraints.merge(all_modeled).solve(constitch.OutlierSolver()))
+        #for pair in solving_constraints.constraints:
+            #solving_constraints.constraints[pair] = solving_constraints.constraints[pair][:1]
+        #full_composite.apply(solving_constraints.solve(constitch.OutlierSolver()))
+        thresh = 3
+        solved = False
+
+        while not solved:
+            solving_constraints = constraints.merge(all_modeled)
+            full_composite.apply(solving_constraints.solve())
+            full_composite.plot_scores('plots/new_scores_{}_step4_midsolvingnew{:03}.png'.format(wildcards.prefix, i), solving_constraints)
+            full_composite.plot_scores('plots/new_scores_{}_step4_midsolvingnew{:03}_accuracy.png'.format(wildcards.prefix, i), solving_constraints, score_func='accuracy')
+            valid_constraints = solving_constraints.filter(lambda const: constraints.neighborhood_difference(const) <= thresh)
+            solved = len(valid_constraints) == len(constraints)
+            constraints = valid_constraints
+
+        #for i in range(25):
+            #debug ('Solving time ', i)
+            #full_composite.apply(solving_constraints.solve(constitch.OutlierSolver()))
+            #full_composite.plot_scores('plots/new_scores_{}_step4_midsolvingbad{:03}.png'.format(wildcards.prefix, i), solving_constraints)
+            #full_composite.plot_scores('plots/new_scores_{}_step4_midsolvingbad{:03}_accuracy.png'.format(wildcards.prefix, i), solving_constraints, score_func='accuracy')
+
         #final_poses = full_composite.solve_constraints_old(filter_outliers=True, max_outlier_ratio=0.2)
         #final_poses = full_composite.solve_constraints(filter_outliers=True, max_outlier_ratio=0.2, outlier_threshold=20, scores_plot_path='plots/new_scores_well{}_step3_filters{{}}.png'.format(wildcards.well))
         debug ('  done')
