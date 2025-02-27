@@ -93,8 +93,8 @@ rule align_well:
         #positions = input_dir + '{prefix}.positions.csv',
         composites = expand(stitching_dir + '{prefix}/cycle{cycle}/composite.bin', cycle=cycles_pt, allow_missing=True),
     resources:
-        mem_mb = lambda wildcards, input: 10000 + input.size_mb / 2.5 / 4
-    threads: 4#16
+        mem_mb = lambda wildcards, input: 10000 + input.size_mb / 2.5
+    threads: 16
     run:
         import concurrent.futures
         import numpy as np
@@ -118,7 +118,7 @@ rule align_well:
         all_modeled = constitch.ConstraintSet()
         subcomposites = []
 
-        for cycle, rawpath, composite_path in zip(cycles_pt[-3:], input.images[-3:], input.composites[-3:]):
+        for cycle, rawpath, composite_path in zip(cycles_pt, input.images, input.composites):
             debug ('loading images', cycle)
 
             debug ('copy')
@@ -127,6 +127,7 @@ rule align_well:
             debug(images.shape)
 
             composite, constraints, modeled = constitch.load(composite_path)
+            constraints.neighborhood_difference(next(iter(constraints)))
             composite.images = images
 
             mean_pos = (composite.boxes.pos1.mean(axis=0) + composite.boxes.pos2.mean(axis=0)) / 2
@@ -183,15 +184,17 @@ rule align_well:
         #full_composite.apply(solving_constraints.solve(constitch.OutlierSolver()))
         thresh = 3
         solved = False
+        i = 0
 
         while not solved:
             solving_constraints = constraints.merge(all_modeled)
             full_composite.apply(solving_constraints.solve())
-            full_composite.plot_scores('plots/new_scores_{}_step4_midsolvingnew{:03}.png'.format(wildcards.prefix, i), solving_constraints)
-            full_composite.plot_scores('plots/new_scores_{}_step4_midsolvingnew{:03}_accuracy.png'.format(wildcards.prefix, i), solving_constraints, score_func='accuracy')
-            valid_constraints = solving_constraints.filter(lambda const: constraints.neighborhood_difference(const) <= thresh)
+            full_composite.plot_scores('plots/new_scores_{}_step4_midsolvingnew{:03}.png'.format(wildcards.prefix, i), solving_constraints, axis_size=20)
+            full_composite.plot_scores('plots/new_scores_{}_step4_midsolvingnew{:03}_accuracy.png'.format(wildcards.prefix, i), solving_constraints, score_func='accuracy', axis_size=20)
+            valid_constraints = constraints.filter(lambda const: constraints.neighborhood_difference(const) <= thresh)
             solved = len(valid_constraints) == len(constraints)
             constraints = valid_constraints
+            i += 1
 
         #for i in range(25):
             #debug ('Solving time ', i)
