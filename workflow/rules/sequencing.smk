@@ -523,9 +523,9 @@ rule merge_final_tables:
             aux_table = pandas.read_csv(path)
             debug (aux_table)
 
-            if path.endswith('.' + wildcards.segmentation_type + '.csv'):
+            if path.endswith(wildcards.segmentation_type + '.csv'):
                 cell_table = cell_table.join(aux_table.set_index(aux_table.columns[0]), how='left')
-            elif path.endswith('.reads.csv') or path.endswith('.barcodes.csv'):
+            elif path.endswith('reads.csv') or path.endswith('barcodes.csv'):
                 debug('staring join')
                 cell_table = join_barcode(cell_table, aux_table.set_index(aux_table.columns[0]))
                 #cell_table = cell_table.reset_index().merge(aux_table, how='left', left_on='barcode_0', right_on=aux_table.columns[0]).set_index('index')
