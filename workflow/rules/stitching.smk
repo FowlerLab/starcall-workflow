@@ -180,7 +180,7 @@ rule stitch_cycle:
         #del good_images
         #fisseq.correction.illumination_correction(images, out=images, background=background)
 
-        full_composite = constitch.load(input.composite)
+        full_composite = constitch.load(input.composite, constraints=False)
         mins = full_composite.boxes.pos1[:,:2].min(axis=0) * 2
         maxes = full_composite.boxes.pos2[:,:2].max(axis=0) * 2
         debug (mins, maxes)
@@ -230,7 +230,7 @@ rule stitch_well:
         import time
         import shutil
 
-        composite = constitch.load(input.composite)
+        composite = constitch.load(input.composite, constraints=False)
         debug(composite.boxes.pos1[:,:2].min(axis=0), composite.boxes.pos2[:,:2].max(axis=0))
         mins = composite.boxes.pos1[:,:2].min(axis=0)
         maxes = composite.boxes.pos2[:,:2].max(axis=0)
@@ -295,7 +295,7 @@ def stitch_well_section(image_paths, composite_paths, mins, maxes):
         images = tifffile.memmap(path, mode='r')
         images = images.transpose([0,2,3,1])
 
-        composite = constitch.load(composite_path)[0]
+        composite = constitch.load(composite_path, constraints=False)
         composite.images = images
 
         if full_image is None:
@@ -326,7 +326,7 @@ rule stitch_well_pt:
         import tifffile
         import constitch
 
-        full_composite = constitch.load(input.full_composite)
+        full_composite = constitch.load(input.full_composite, constraints=False)
         mins, maxes = full_composite.boxes.pos1.min(axis=0)[:2], full_composite.boxes.pos2.max(axis=0)[:2]
         mins *= phenotype_scale
         maxes *= phenotype_scale
@@ -346,7 +346,7 @@ rule stitch_well_subset:
         import numpy as np
         import tifffile
 
-        full_composite = constitch.load(input.full_composite)
+        full_composite = constitch.load(input.full_composite, constraints=False)
         mins, maxes = full_composite.boxes.pos1.min(axis=0)[:2], full_composite.boxes.pos2.max(axis=0)[:2]
         center = mins + ((maxes - mins) // 2)
         radius = int(wildcards.size) // 2
@@ -366,7 +366,7 @@ rule stitch_well_subset_pt:
         import numpy as np
         import tifffile
 
-        full_composite = constitch.load(input.full_composite)
+        full_composite = constitch.load(input.full_composite, constraints=False)
         mins, maxes = full_composite.boxes.pos1.min(axis=0)[:2], full_composite.boxes.pos2.max(axis=0)[:2]
         center = mins + ((maxes - mins) // 2)
         radius = int(wildcards.size) // 2
@@ -394,7 +394,7 @@ rule split_grid_composite:
         import tifffile
         import constitch
 
-        inpcomposite = constitch.load(input.composite)[0]
+        inpcomposite = constitch.load(input.composite, constraints=False)
         image = np.empty((inpcomposite.boxes.pos2.max(axis=0) - inpcomposite.boxes.pos1.min(axis=0)))
         debug(image.shape)
         grid_size = int(wildcards.grid_size)
@@ -421,7 +421,7 @@ rule stitch_tile_well:
         import tifffile
         import constitch
 
-        grid_composite = constitch.load(input.grid_composite)
+        grid_composite = constitch.load(input.grid_compos, constraints=False)
         grid_size, x, y = int(wildcards.grid_size), int(wildcards.x), int(wildcards.y)
         box = grid_composite.boxes[x*grid_size+y]
         debug(box)
@@ -443,7 +443,7 @@ rule stitch_tile_well_pt:
         import tifffile
         import constitch
 
-        grid_composite = constitch.load(input.grid_composite)
+        grid_composite = constitch.load(input.grid_compos, constraints=False)
         grid_size, x, y = int(wildcards.grid_size), int(wildcards.x), int(wildcards.y)
         box = grid_composite.boxes[x*grid_size+y]
         debug(box)
