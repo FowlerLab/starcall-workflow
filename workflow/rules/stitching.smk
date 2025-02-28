@@ -190,7 +190,7 @@ rule stitch_cycle:
 
             composite = constitch.CompositeImage()
             composite.add_images([image[:,:,0] for image in images], positions=final_poses)
-            full_image = composite.stitch_images(
+            full_image = composite.stitch(
                 real_images=images,
                 mins=mins,
                 maxes=maxes,
@@ -258,7 +258,7 @@ rule stitch_well:
 
             composite = constitch.CompositeImage()
             composite.add_images([image[:,:,0] for image in images], positions=final_poses)
-            full_image = composite.stitch_images(
+            full_image = composite.stitch(
                 real_images=images,
                 mins=mins,
                 maxes=maxes,
@@ -302,7 +302,7 @@ def stitch_well_section(image_paths, composite_paths, mins, maxes):
             full_image = np.zeros((len(image_paths), images.shape[3], maxes[0] - mins[0], maxes[1] - mins[1]), images.dtype)
             debug (full_image.shape)
 
-        final_image = composite.stitch_images(
+        final_image = composite.stitch(
             mins = mins,
             maxes = maxes,
             merger = constitch.EfficientNearestMerger(),
