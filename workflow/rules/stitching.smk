@@ -421,7 +421,7 @@ rule stitch_tile_well:
         import tifffile
         import constitch
 
-        grid_composite = constitch.load(input.grid_compos, constraints=False)
+        grid_composite = constitch.load(input.grid_composite, constraints=False)
         grid_size, x, y = int(wildcards.grid_size), int(wildcards.x), int(wildcards.y)
         box = grid_composite.boxes[x*grid_size+y]
         debug(box)
@@ -443,7 +443,7 @@ rule stitch_tile_well_pt:
         import tifffile
         import constitch
 
-        grid_composite = constitch.load(input.grid_compos, constraints=False)
+        grid_composite = constitch.load(input.grid_composite, constraints=False)
         grid_size, x, y = int(wildcards.grid_size), int(wildcards.x), int(wildcards.y)
         box = grid_composite.boxes[x*grid_size+y]
         debug(box)
