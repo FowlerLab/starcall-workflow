@@ -295,7 +295,7 @@ def stitch_well_section(image_paths, composite_paths, mins, maxes):
         images = tifffile.memmap(path, mode='r')
         images = images.transpose([0,2,3,1])
 
-        composite = constitch.load(composite_path)
+        composite = constitch.load(composite_path)[0]
         composite.images = images
 
         if full_image is None:
@@ -394,7 +394,7 @@ rule split_grid_composite:
         import tifffile
         import constitch
 
-        inpcomposite, constraints = constitch.load(input.composite)
+        inpcomposite = constitch.load(input.composite)[0]
         image = np.empty((inpcomposite.boxes.pos2.max(axis=0) - inpcomposite.boxes.pos1.min(axis=0)))
         debug(image.shape)
         grid_size = int(wildcards.grid_size)
