@@ -13,3 +13,4 @@ nd2reader
 pandas
 ome-types
 nd2
+pybasic-illumination-correction

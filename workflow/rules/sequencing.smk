@@ -55,8 +55,10 @@ rule segment_cells:
         logging.basicConfig(level=logging.INFO)
 
         data = tifffile.memmap(input[0])
+        debug (data.shape)
         if data.shape[3] < 32:
             data = data.transpose(3,0,1,2)
+        debug (data.shape)
         data = data.reshape(-1, *data.shape[2:])
 
         debug(data.shape)
@@ -65,7 +67,6 @@ rule segment_cells:
         cyto = data[2]
         if np.all(dapi == 0) or np.all(cyto == 0):
             tifffile.imwrite(output[0], data[0])
-            tifffile.imwrite(output[1], data[0])
         else:
             #cyto = fisseq.segmentation.estimate_cyto(data[2:])
             del data
@@ -104,7 +105,8 @@ ruleorder: downscale_segmentation > segment_cells_bases
 
 rule segment_cells_bases:
     input:
-        sequencing_input_dir + '{prefix}/corrected.tif'
+        #sequencing_input_dir + '{prefix}/corrected.tif'
+        sequencing_input_dir + '{prefix}/raw.tif'
     output:
         sequencing_output_dir + '{prefix}/nuclei.tif',
         sequencing_output_dir + '{prefix}/cells.tif',
@@ -143,7 +145,7 @@ rule segment_cells_bases:
 
 rule make_cell_overlay:
     input:
-        image = sequencing_input_dir + '{prefix}/raw_pt.tif',
+        image = sequencing_input_dir + '{prefix}/corrected_pt.tif',
         cells = sequencing_dir + '{prefix}/{segmentation_type}_mask.tif',
     output:
         qc_dir + '{prefix}/{segmentation_type}_overlay.tif',
@@ -359,7 +361,8 @@ ruleorder: segment_cells > segment_cells_bases
 rule annotate_dots:
     input:
         #input_dir + '{prefix}/cycle' + cycles[0] + '.tif',
-        sequencing_input_dir + '{prefix}/corrected.tif',
+        #sequencing_input_dir + '{prefix}/corrected.tif',
+        sequencing_input_dir + '{prefix}/raw.tif',
         sequencing_dir + '{prefix}/bases.csv',
     output:
         qc_dir + '{prefix}/annotated.tif',
@@ -554,9 +557,9 @@ rule merge_final_tables:
             aux_table = pandas.read_csv(path)
             debug (aux_table)
 
-            if path.endswith('.' + wildcards.segmentation_type + '.csv'):
+            if path.endswith(wildcards.segmentation_type + '.csv'):
                 cell_table = cell_table.join(aux_table.set_index(aux_table.columns[0]), how='left')
-            elif path.endswith('.reads.csv') or path.endswith('.barcodes.csv'):
+            elif path.endswith('reads.csv') or path.endswith('barcodes.csv'):
                 debug('staring join')
                 cell_table = join_barcode(cell_table, aux_table.set_index(aux_table.columns[0]))
                 #cell_table = cell_table.reset_index().merge(aux_table, how='left', left_on='barcode_0', right_on=aux_table.columns[0]).set_index('index')
