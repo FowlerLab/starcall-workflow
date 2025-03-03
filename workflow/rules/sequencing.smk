@@ -253,13 +253,36 @@ rule make_cell_images:
         tifffile.imwrite(output.cell_images, cell_images)
         tifffile.imwrite(output.mask_images, mask_images)
 
+"""
+rule link_testing_prefix:
+    input:
+        sequencing_output_dir + '{prefix}/{file}',
+    output:
+        sequencing_output_dir + '{prefix}_test_{test,[^_]+}/{file}'
+    wildcard_constraints:
+        file = 'cells_mask.tif|cells_mask_downscaled.tif|cells.csv'
+    shell:
+        'cp -l {input[0]} {output[0]}'
+
+ruleorder: tabulate_cells > link_testing_prefix
+"""
+
+rule tmp_link_file:
+    input:
+        sequencing_output_dir + 'well1_seqgrid5/tile02x02y_test_{test}/cells_reads.csv'
+    output:
+        'results/our_{test}.cells_reads.csv'
+    localrule: True
+    shell:
+        'cp -l {input[0]} {output[0]}'
+
 rule find_dots:
     input:
-        sequencing_input_dir + '{prefix}/corrected.tif'
+        sequencing_input_dir + '{prefix}/raw.tif'
     output:
-        sequencing_dir + '{prefix}/bases.csv'
+        sequencing_dir + '{prefix}_test_newfilter/bases.csv'
     resources:
-        mem_mb = lambda wildcards, input: input.size_mb * 3 + 15000
+        mem_mb = lambda wildcards, input: input.size_mb * 10 + 15000
     threads: 4
     run:
         import numpy as np
@@ -267,6 +290,10 @@ rule find_dots:
         import fisseq.dotdetection
         import fisseq.correction
         import skimage.morphology
+
+        min_sigma = 1#2
+        max_sigma = 2#3
+        num_sigma = 7
 
         full_well = tifffile.memmap(input[0], mode='r')
         image = np.array(full_well[...,2:,:,:], dtype=np.float32)
@@ -280,9 +307,10 @@ rule find_dots:
             print_mem('extract_bases', resources.mem_mb)
             debug('image', image.shape)
 
-            dot_filter = fisseq.dotdetection.dot_filter(image)
-            tifffile.imwrite('tmp_dots_dot_filter.tif', dot_filter)
+            #dot_filter = fisseq.dotdetection.dot_filter(image, copy=False)
+            #tifffile.imwrite('tmp_dots_dot_filter.tif', dot_filter)
 
+            """
             oldshape = dot_filter.shape
             dot_filter = dot_filter.reshape(oldshape[0] * oldshape[1], oldshape[2], oldshape[3])
             newvalues = np.empty_like(dot_filter)
@@ -290,28 +318,32 @@ rule find_dots:
             for i in range(dot_filter.shape[0]):
                 skimage.morphology.dilation(dot_filter[i], mask, out=newvalues[i])
             dot_filter = newvalues.reshape(oldshape)
+            #"""
 
-            poses = fisseq.dotdetection.detect_dots(
-                dot_filter,
-                min_sigma = 1,
-                max_sigma = 2,
-                num_sigma = 7,
-                copy = False,
+            poses, values = fisseq.dotdetection.detect_dots3(
+                image,
+                min_sigma = min_sigma,
+                max_sigma = max_sigma,
+                num_sigma = num_sigma,
+                #copy = False,
             )
 
-            debug('dot_filter', dot_filter.shape)
+            #debug('dot_filter', dot_filter.shape)
 
-            values = dot_filter[:,:,poses[:,0],poses[:,1]]
+            # take read values from original image or filtered image
+            #values = image[:,:,poses[:,0],poses[:,1]]
+            #values = dot_filter[:,:,poses[:,0],poses[:,1]]
 
             values = values.transpose(1,0,2)
             debug("correcting", values.shape)
+            dye_matrix = fisseq.correction.estimate_dye_matrix(values)
             corrected = fisseq.correction.color_correct(values)
             debug("corrected")
-            #fisseq.correction.crosstalk_plot(values, corrected, dye_matrix, name=wildcards.prefix.replace('/','_'))
-            values = corrected
+            fisseq.correction.crosstalk_plot(values, corrected, dye_matrix, name=wildcards.prefix.replace('/','_'))
+            #values = corrected
             values = values.transpose(1,0,2)
 
-            values = values.reshape(dot_filter.shape[0] * dot_filter.shape[1], -1).T
+            values = values.reshape(image.shape[0] * image.shape[1], -1).T
             np.savetxt(output[0], np.concatenate((poses, values), axis=1), delimiter=',', fmt='%f')
 
 
@@ -387,10 +419,12 @@ ruleorder: tabulate_cells > merge_grid
 rule call_reads:
     input:
         cell_table = sequencing_output_dir + '{prefix}/{segmentation_type}.csv',
-        bases = sequencing_dir + '{prefix}/bases.csv',
+        #bases = sequencing_dir + '{prefix}/bases.csv',
+        bases = sequencing_dir + '{prefix}_test_{test}/bases.csv',
         cells = sequencing_output_dir + '{prefix}/{segmentation_type}_mask_downscaled.tif',
     output:
-        sequencing_dir + '{prefix}/{segmentation_type}_reads_partial.csv',
+        sequencing_dir + '{prefix}_test_{test}/{segmentation_type}_reads_partial.csv',
+        #sequencing_dir + '{prefix}_test_nocluster/{segmentation_type}_reads_partial.csv',
     wildcard_constraints:
         segmentation_type = 'cells|nuclei'
     resources:
@@ -449,10 +483,10 @@ def get_aux_data(wildcards, prefix=None):
 
 rule merge_final_tables:
     input:
-        cell_table = sequencing_dir + '{prefix}/{segmentation_type}_reads_partial.csv',
+        cell_table = sequencing_dir + '{prefix}_test_{test}/{segmentation_type}_reads_partial.csv',
         aux_data = get_aux_data,
     output:
-        full_table = sequencing_output_dir + '{prefix}/{segmentation_type}_reads.csv',
+        full_table = sequencing_output_dir + '{prefix}_test_{test}/{segmentation_type}_reads.csv',
     wildcard_constraints:
         segmentation_type = 'cells|nuclei'
     resources:
