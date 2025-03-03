@@ -93,7 +93,7 @@ rule align_well:
         #positions = input_dir + '{prefix}.positions.csv',
         composites = expand(stitching_dir + '{prefix}/cycle{cycle}/composite.bin', cycle=cycles_pt, allow_missing=True),
     resources:
-        mem_mb = lambda wildcards, input: 10000 + input.size_mb / 2.5
+        mem_mb = lambda wildcards, input: 15000 + input.size_mb / 2.5
     threads: 16
     run:
         import concurrent.futures

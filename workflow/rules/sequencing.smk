@@ -55,8 +55,10 @@ rule segment_cells:
         logging.basicConfig(level=logging.INFO)
 
         data = tifffile.memmap(input[0])
+        debug (data.shape)
         if data.shape[3] < 32:
             data = data.transpose(3,0,1,2)
+        debug (data.shape)
         data = data.reshape(-1, *data.shape[2:])
 
         debug(data.shape)
@@ -65,7 +67,6 @@ rule segment_cells:
         cyto = data[2]
         if np.all(dapi == 0) or np.all(cyto == 0):
             tifffile.imwrite(output[0], data[0])
-            tifffile.imwrite(output[1], data[0])
         else:
             #cyto = fisseq.segmentation.estimate_cyto(data[2:])
             del data
@@ -310,7 +311,7 @@ rule find_dots:
             corrected = fisseq.correction.color_correct(values)
             debug("corrected")
             #fisseq.correction.crosstalk_plot(values, corrected, dye_matrix, name=wildcards.prefix.replace('/','_'))
-            values = corrected
+            #values = corrected
             values = values.transpose(1,0,2)
 
             values = values.reshape(dot_filter.shape[0] * dot_filter.shape[1], -1).T
