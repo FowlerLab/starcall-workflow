@@ -58,13 +58,14 @@ rule align_cycle:
         constraints = constraints.filter(min_score=thresh)
         composite.plot_scores('plots/new_scores_{}_cycle{}_step2.png'.format(wildcards.prefix, wildcards.cycle), constraints)
         stage_model = constraints.fit_model(outliers=True)
-        constraints = constraints.filter(stage_model.inliers)
+        #constraints = constraints.filter(stage_model.inliers)
+        constraints = stage_model.inliers
         modeled = overlapping.calculate(stage_model)
         composite.plot_scores('plots/new_scores_{}_cycle{}_step3.png'.format(wildcards.prefix, wildcards.cycle), constraints.merge(modeled))
 
         if wildcards.cycle in phenotype_cycles:
-            composite.boxes.pos1[:,:2] //= phenotype_scale
-            composite.boxes.pos2[:,:2] //= phenotype_scale
+            composite.boxes.positions[:,:2] //= phenotype_scale
+            composite.boxes.sizes[:,:2] //= phenotype_scale
 
             for constraint in constraints:
                 constraint.dx //= phenotype_scale
@@ -130,15 +131,14 @@ rule align_well:
             constraints.neighborhood_difference(next(iter(constraints)))
             composite.images = images
 
-            mean_pos = (composite.boxes.pos1.mean(axis=0) + composite.boxes.pos2.mean(axis=0)) / 2
+            mean_pos = composite.boxes.centers.mean(axis=0)
             if len(subcomposites):
-                global_mean_pos = (full_composite.boxes.pos1.mean(axis=0) + full_composite.boxes.pos2.mean(axis=0)) / 2
+                global_mean_pos = full_composite.boxes.centers.mean(axis=0)
                 debug (mean_pos, global_mean_pos, global_mean_pos - mean_pos)
                 offset = np.round(global_mean_pos - mean_pos)[:2].reshape(1,2).astype(int)
                 debug (offset)
-                composite.boxes.pos1[:,:2] += offset
-                composite.boxes.pos2[:,:2] += offset
-                debug ((composite.boxes.pos1.mean(axis=0) + composite.boxes.pos2.mean(axis=0)) / 2)
+                composite.boxes.positions[:,:2] += offset
+                debug (composite.boxes.centers.mean(axis=0))
 
             debug ('composite sizes', len(constraints), len(modeled))
             subcomposite, constraints, modeled = full_composite.merge(composite, constraints, modeled)
@@ -155,7 +155,10 @@ rule align_well:
 
         max_pairs = 6
         def filter_overlapping(constraint):
-            return constraint.overlap > 0 and constraint.box1.pos1[2] != constraint.box2.pos1[2] and abs(constraint.box1.pos1[2] - constraint.box2.pos1[2]) <= max_pairs
+            # REMOVE
+            if constraint.box2.position[2] == 12 and constraint.box1.position[2] % 4 == 1: return True
+            return (constraint.overlap > 0 and constraint.box1.position[2] != constraint.box2.position[2]
+                    and abs(constraint.box1.position[2] - constraint.box2.position[2]) <= max_pairs)
 
         overlapping = full_composite.constraints(filter_overlapping)
         debug ('num pairs', len(overlapping))
@@ -165,6 +168,11 @@ rule align_well:
         constraints.add(all_constraints)
         debug (len(constraints))
         debug ('  done')
+
+        for const in all_modeled:
+            const.score = 0.2
+            const.dx = int(const.dx)
+            const.dy = int(const.dy)
 
         full_composite.plot_scores('plots/new_scores_{}_step1.png'.format(wildcards.prefix), constraints.merge(all_modeled))
 
@@ -181,14 +189,14 @@ rule align_well:
         debug ('Solving constraints')
         #for pair in solving_constraints.constraints:
             #solving_constraints.constraints[pair] = solving_constraints.constraints[pair][:1]
-        #full_composite.apply(solving_constraints.solve(constitch.OutlierSolver()))
+        #full_composite.setpositions(solving_constraints.solve(constitch.OutlierSolver()))
         thresh = 3
         solved = False
         i = 0
 
         while not solved:
             solving_constraints = constraints.merge(all_modeled)
-            full_composite.apply(solving_constraints.solve())
+            full_composite.setpositions(solving_constraints.solve())
             full_composite.plot_scores('plots/new_scores_{}_step4_midsolvingnew{:03}.png'.format(wildcards.prefix, i), solving_constraints, axis_size=20)
             full_composite.plot_scores('plots/new_scores_{}_step4_midsolvingnew{:03}_accuracy.png'.format(wildcards.prefix, i), solving_constraints, score_func='accuracy', axis_size=20)
             valid_constraints = constraints.filter(lambda const: constraints.neighborhood_difference(const) <= thresh)
@@ -198,7 +206,7 @@ rule align_well:
 
         #for i in range(25):
             #debug ('Solving time ', i)
-            #full_composite.apply(solving_constraints.solve(constitch.OutlierSolver()))
+            #full_composite.setpositions(solving_constraints.solve(constitch.OutlierSolver()))
             #full_composite.plot_scores('plots/new_scores_{}_step4_midsolvingbad{:03}.png'.format(wildcards.prefix, i), solving_constraints)
             #full_composite.plot_scores('plots/new_scores_{}_step4_midsolvingbad{:03}_accuracy.png'.format(wildcards.prefix, i), solving_constraints, score_func='accuracy')
 
@@ -215,8 +223,8 @@ rule align_well:
 
         for subcomposite, poses, poses_path, composite_path, cycle in zip(subcomposites, all_poses, output.positions, output.composites, cycles_pt):
             if cycle in phenotype_cycles:
-                subcomposite.boxes.pos1[:,:2] *= phenotype_scale
-                subcomposite.boxes.pos2[:,:2] *= phenotype_scale
+                subcomposite.boxes.positions[:,:2] *= phenotype_scale
+                subcomposite.boxes.sizes[:,:2] *= phenotype_scale
 
             poses = np.concatenate([poses[:,:2], subcomposite.positions], axis=1)
             np.savetxt(poses_path, poses, fmt="%d", delimiter=',')
