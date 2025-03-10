@@ -155,8 +155,6 @@ rule align_well:
 
         max_pairs = 6
         def filter_overlapping(constraint):
-            # REMOVE
-            if constraint.box2.position[2] == 12 and constraint.box1.position[2] % 4 == 1: return True
             return (constraint.overlap > 0 and constraint.box1.position[2] != constraint.box2.position[2]
                     and abs(constraint.box1.position[2] - constraint.box2.position[2]) <= max_pairs)
 
