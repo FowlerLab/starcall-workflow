@@ -9,7 +9,7 @@ import glob
 
 def get_composite(wildcards):
     prefix = wildcards.prefix.split('_seqgrid')[0].split('_phenogrid')[0]
-    return stitching_output_dir + prefix + '_seqgrid{grid_size}/grid_composite.bin'
+    return stitching_output_dir + prefix + '_seqgrid{grid_size}/grid_composite.json'
 
 rule split_grid_table:
     input:
@@ -108,13 +108,13 @@ def get_grid_filenames(wildcards):
     return expand(sequencing_dir + '{possible_output_dir}{prefix}_seqgrid{grid_size}/tile{x}x{y}y/{type}', x=numbers, y=numbers, allow_missing=True)
 
 def get_composite_filename(wildcards):
-    #return wildcards.prefix.replace(processing_dir, input_dir) + '_grid{grid_size}/composite.bin'
-    return wildcards.any_output_dir.replace(output_dir, input_dir) + '{prefix}_grid{grid_size}/grid_composite.bin'
+    #return wildcards.prefix.replace(processing_dir, input_dir) + '_grid{grid_size}/composite.json'
+    return wildcards.any_output_dir.replace(output_dir, input_dir) + '{prefix}_grid{grid_size}/grid_composite.json'
 
 rule merge_grid:
     input:
         images = get_grid_filenames,
-        composite = stitching_output_dir + '{prefix}_seqgrid{grid_size}/grid_composite.bin',
+        composite = stitching_output_dir + '{prefix}_seqgrid{grid_size}/grid_composite.json',
     output:
         image = sequencing_dir + '{possible_output_dir}{prefix}_seqgrid{grid_size,\d+}/{type}',
     resources:

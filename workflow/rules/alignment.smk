@@ -15,7 +15,7 @@ rule align_cycle:
         images = stitching_input_dir + '{prefix}/cycle{cycle}/raw.tif',
         rawposes = stitching_input_dir + '{prefix}/cycle{cycle}/positions.csv',
     output:
-        composite = stitching_dir + '{prefix}/cycle{cycle}/partial_composite.bin',
+        composite = stitching_dir + '{prefix}/cycle{cycle}/partial_composite.json',
     resources:
         mem_mb = lambda wildcards, input: input.size_mb + 5000
     threads: 8
@@ -86,13 +86,13 @@ rule align_well:
     input:
         #images = expand(input_dir + '{prefix}/cycle{cycle}.raw.nd2', cycle=cycles_pt, allow_missing=True),
         images = expand(stitching_input_dir + '{prefix}/cycle{cycle}/raw.tif', cycle=cycles_pt, allow_missing=True),
-        composites = expand(stitching_dir + '{prefix}/cycle{cycle}/partial_composite.bin', cycle=cycles_pt, allow_missing=True),
+        composites = expand(stitching_dir + '{prefix}/cycle{cycle}/partial_composite.json', cycle=cycles_pt, allow_missing=True),
         rawposes = expand(stitching_input_dir + '{prefix}/cycle{cycle}/positions.csv', cycle=cycles_pt, allow_missing=True),
     output:
-        composite = stitching_dir + '{prefix}/composite.bin',
+        composite = stitching_dir + '{prefix}/composite.json',
         positions = expand(stitching_dir + '{prefix}/cycle{cycle}/positions.csv', cycle=cycles_pt, allow_missing=True),
         #positions = input_dir + '{prefix}.positions.csv',
-        composites = expand(stitching_dir + '{prefix}/cycle{cycle}/composite.bin', cycle=cycles_pt, allow_missing=True),
+        composites = expand(stitching_dir + '{prefix}/cycle{cycle}/composite.json', cycle=cycles_pt, allow_missing=True),
     resources:
         mem_mb = lambda wildcards, input: 15000 + input.size_mb / 2.5
     threads: 16

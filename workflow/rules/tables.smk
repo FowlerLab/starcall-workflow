@@ -9,7 +9,7 @@ def get_grid_filenames_pheno(wildcards):
 
 def get_composite_pheno(wildcards):
     prefix = wildcards.prefix.split('_seqgrid')[0] + '_seqgrid{grid_size}'
-    return stitching_output_dir + prefix + '/grid_composite.bin'
+    return stitching_output_dir + prefix + '/grid_composite.json'
 
 def merge_csv_files(input_paths, output_path, extra_columns=tuple(), row_func=None):
     import csv
@@ -116,8 +116,11 @@ rule merge_phenotype_genotype:
     run:
         import pandas
 
-        tables = [pandas.read_csv(path, index_col=0) for path in input]
-        table = pandas.concat(tables, axis=1)
+        #tables = [pandas.read_csv(path, index_col=0) for path in input]
+        #table = pandas.concat(tables, axis=1)
+        table = pandas.read_csv(input[0], index_col=0)
+        for path in input[1:]:
+            table = table.join(pandas.read_csv(path, index_col=0))
         table.to_csv(output.table)
 
 rule merge_all_well_tables:

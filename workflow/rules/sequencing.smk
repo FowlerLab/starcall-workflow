@@ -282,7 +282,7 @@ rule find_dots:
     input:
         sequencing_input_dir + '{prefix}/raw.tif'
     output:
-        sequencing_dir + '{prefix}_test_newfilter/bases.csv'
+        sequencing_dir + '{prefix}/bases.csv'
     resources:
         mem_mb = lambda wildcards, input: input.size_mb * 10 + 15000
     threads: 4
@@ -423,11 +423,11 @@ rule call_reads:
     input:
         cell_table = sequencing_output_dir + '{prefix}/{segmentation_type}.csv',
         #bases = sequencing_dir + '{prefix}/bases.csv',
-        bases = sequencing_dir + '{prefix}_test_{test}/bases.csv',
+        bases = sequencing_dir + '{prefix}/bases.csv',
         cells = sequencing_output_dir + '{prefix}/{segmentation_type}_mask_downscaled.tif',
     output:
-        sequencing_dir + '{prefix}_test_{test}/{segmentation_type}_reads_partial.csv',
-        #sequencing_dir + '{prefix}_test_nocluster/{segmentation_type}_reads_partial.csv',
+        sequencing_dir + '{prefix}/{segmentation_type}_reads_partial.csv',
+        #sequencing_dir + '{prefix}/{segmentation_type}_reads_partial.csv',
     wildcard_constraints:
         segmentation_type = 'cells|nuclei'
     resources:
@@ -486,10 +486,10 @@ def get_aux_data(wildcards, prefix=None):
 
 rule merge_final_tables:
     input:
-        cell_table = sequencing_dir + '{prefix}_test_{test}/{segmentation_type}_reads_partial.csv',
+        cell_table = sequencing_dir + '{prefix}/{segmentation_type}_reads_partial.csv',
         aux_data = get_aux_data,
     output:
-        full_table = sequencing_output_dir + '{prefix}_test_{test}/{segmentation_type}_reads.csv',
+        full_table = sequencing_output_dir + '{prefix}/{segmentation_type}_reads.csv',
     wildcard_constraints:
         segmentation_type = 'cells|nuclei'
     resources:

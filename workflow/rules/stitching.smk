@@ -144,7 +144,7 @@ rule stitch_cycle:
     input:
         images = stitching_input_dir + '{prefix}/cycle{cycle}/{corrected}.tif',
         positions = stitching_dir + '{prefix}/cycle{cycle}/positions.csv',
-        composite = stitching_dir + '{prefix}/composite.bin',
+        composite = stitching_dir + '{prefix}/composite.json',
     output:
         image = stitching_output_dir + '{prefix}/cycle{cycle}/{corrected,raw|corrected}.tif',
     resources:
@@ -216,7 +216,7 @@ rule stitch_well:
     input:
         images = expand(stitching_input_dir + 'well{well}/cycle{cycle}/{corrected}.tif', cycle=cycles, allow_missing=True),
         positions = expand(stitching_dir + 'well{well}/cycle{cycle}/positions.csv', cycle=cycles, allow_missing=True),
-        composite = stitching_dir + 'well{well}/composite.bin',
+        composite = stitching_dir + 'well{well}/composite.json',
     output:
         stitching_output_dir + 'well{well}/{corrected,raw|corrected}.tif'
     resources:
@@ -315,8 +315,8 @@ def stitch_well_section(image_paths, composite_paths, mins, maxes):
 rule stitch_well_pt:
     input:
         images_pt = expand(stitching_dir + 'well{well}/cycle{cycle}/{corrected}.tif', cycle=phenotype_cycles, allow_missing=True),
-        composites_pt = expand(stitching_dir + 'well{well}/cycle{cycle}/composite.bin', cycle=phenotype_cycles, allow_missing=True),
-        full_composite = stitching_dir + 'well{well}/composite.bin',
+        composites_pt = expand(stitching_dir + 'well{well}/cycle{cycle}/composite.json', cycle=phenotype_cycles, allow_missing=True),
+        full_composite = stitching_dir + 'well{well}/composite.json',
     output:
         image = stitching_output_dir + 'well{well}/{corrected,raw|corrected}_pt.tif',
     resources:
@@ -337,8 +337,8 @@ rule stitch_well_pt:
 rule stitch_well_subset:
     input:
         images = expand(stitching_dir + 'well{well}_subset{size}/cycle{cycle}/{corrected}.tif', cycle=cycles, allow_missing=True),
-        composites = expand(stitching_dir + 'well{well}_subset{size}/cycle{cycle}/composite.bin', cycle=cycles, allow_missing=True),
-        full_composite = stitching_dir + 'well{well}_subset{size}/composite.bin',
+        composites = expand(stitching_dir + 'well{well}_subset{size}/cycle{cycle}/composite.json', cycle=cycles, allow_missing=True),
+        full_composite = stitching_dir + 'well{well}_subset{size}/composite.json',
     output:
         image = stitching_output_dir + 'well{well}_subset{size,\d+}/{corrected,raw|corrected}.tif'
     run:
@@ -357,8 +357,8 @@ rule stitch_well_subset:
 rule stitch_well_subset_pt:
     input:
         images = expand(stitching_dir + 'well{well}_subset{size}/cycle{cycle}/{corrected}.tif', cycle=phenotype_cycles, allow_missing=True),
-        composites = expand(stitching_dir + 'well{well}_subset{size}/cycle{cycle}/composite.bin', cycle=phenotype_cycles, allow_missing=True),
-        full_composite = stitching_dir + 'well{well}_subset{size}/composite.bin',
+        composites = expand(stitching_dir + 'well{well}_subset{size}/cycle{cycle}/composite.json', cycle=phenotype_cycles, allow_missing=True),
+        full_composite = stitching_dir + 'well{well}_subset{size}/composite.json',
     output:
         image = stitching_output_dir + 'well{well}_subset{size,\d+}/{corrected,raw|corrected}_pt.tif'
     run:
@@ -383,9 +383,9 @@ rule stitch_well_subset_pt:
 
 rule split_grid_composite:
     input:
-        composite = stitching_dir + '{prefix}/composite.bin'
+        composite = stitching_dir + '{prefix}/composite.json'
     output:
-        composite = stitching_output_dir + '{prefix}_seqgrid{grid_size,\d+}/grid_composite.bin',
+        composite = stitching_output_dir + '{prefix}_seqgrid{grid_size,\d+}/grid_composite.json',
         table = stitching_output_dir + '{prefix}_seqgrid{grid_size,\d+}/grid_positions.csv',
     resources:
         mem_mb = 5000
@@ -410,8 +410,8 @@ rule split_grid_composite:
 rule stitch_tile_well:
     input:
         images = expand(stitching_dir + '{prefix}/cycle{cycle}/{corrected}.tif', cycle=cycles, allow_missing=True),
-        composites = expand(stitching_dir + '{prefix}/cycle{cycle}/composite.bin', cycle=cycles, allow_missing=True),
-        grid_composite = stitching_output_dir + '{prefix}_seqgrid{grid_size}/grid_composite.bin',
+        composites = expand(stitching_dir + '{prefix}/cycle{cycle}/composite.json', cycle=cycles, allow_missing=True),
+        grid_composite = stitching_output_dir + '{prefix}_seqgrid{grid_size}/grid_composite.json',
     output:
         image = stitching_output_dir + '{prefix}_seqgrid{grid_size,\d+}/tile{x,\d+}x{y,\d+}y/{corrected,raw|corrected}.tif',
     resources:
@@ -432,8 +432,8 @@ rule stitch_tile_well:
 rule stitch_tile_well_pt:
     input:
         images_pt = expand(stitching_dir + '{prefix}/cycle{cycle}/{corrected}.tif', cycle=phenotype_cycles, allow_missing=True),
-        composites_pt = expand(stitching_dir + '{prefix}/cycle{cycle}/composite.bin', cycle=phenotype_cycles, allow_missing=True),
-        grid_composite = stitching_output_dir + '{prefix}_seqgrid{grid_size}/grid_composite.bin',
+        composites_pt = expand(stitching_dir + '{prefix}/cycle{cycle}/composite.json', cycle=phenotype_cycles, allow_missing=True),
+        grid_composite = stitching_output_dir + '{prefix}_seqgrid{grid_size}/grid_composite.json',
     output:
         image = stitching_output_dir + '{prefix}_seqgrid{grid_size,\d+}/tile{x,\d+}x{y,\d+}y/{corrected,raw|corrected}_pt.tif',
     resources:
