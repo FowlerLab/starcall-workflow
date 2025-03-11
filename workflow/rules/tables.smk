@@ -74,9 +74,9 @@ rule merge_grid_pheno_tables:
     wildcard_constraints:
         possible_output_dir = '(' + output_dir + ')|',
     run:
-        import fisseq
+        import constitch
 
-        composite = fisseq.stitching.CompositeImage.load(input.composite)
+        composite = constitch.load(input.composite)
 
         def row_func(row):
             i = row['file_index']

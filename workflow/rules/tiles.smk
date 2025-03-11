@@ -22,10 +22,10 @@ rule split_grid_table:
     run:
         import pandas
         import numpy as np
-        import fisseq.stitching
+        import constitch
 
         table = pandas.read_csv(input.table, index_col=0)
-        composite = fisseq.stitching.CompositeImage.load(input.composite)
+        composite = constitch.load(input.composite)
         grid_size, x, y = int(wildcards.grid_size), int(wildcards.x), int(wildcards.y)
 
         box = composite.boxes[x*grid_size+y]
@@ -34,7 +34,7 @@ rule split_grid_table:
 
         contained = []
         for i, cell in table.iterrows():
-            cellbox = fisseq.stitching.BBox([cell.bbox_x1, cell.bbox_y1], [cell.bbox_x2, cell.bbox_y2])
+            cellbox = constitch.BBox([cell.bbox_x1, cell.bbox_y1], [cell.bbox_x2, cell.bbox_y2])
             is_contained = box.contains(cellbox)
             if i == 15336: debug(is_contained, cellbox, box)
             for j in range(x*grid_size+y):
@@ -64,13 +64,13 @@ rule split_grid_segmentation:
         import numpy as np
         import tifffile
         import pandas
-        import fisseq.stitching
+        import constitch
         import skimage.measure
 
         image = tifffile.memmap(input.image, mode='r')
         table = pandas.read_csv(input.table, index_col=0)
 
-        composite = fisseq.stitching.CompositeImage.load(input.composite)
+        composite = constitch.load(input.composite)
         grid_size, x, y = int(wildcards.grid_size), int(wildcards.x), int(wildcards.y)
 
         box = composite.boxes[x*grid_size+y]
@@ -127,10 +127,10 @@ rule merge_grid:
     run:
         import numpy as np
         import tifffile
-        import fisseq.stitching
+        import constitch
         import pandas
 
-        composite = fisseq.stitching.CompositeImage.load(input.composite)
+        composite = constitch.load(input.composite)
 
         if wildcards.type == 'bases.csv':
             filtered = []
@@ -146,13 +146,13 @@ rule merge_grid:
             for i,path in enumerate(input.images):
                 composite.images[i] = tifffile.imread(path)
 
-            merger = fisseq.stitching.LastMerger()
+            merger = constitch.LastMerger()
             if wildcards.type.endswith('_mask_downscaled.tif'):
-                merger = fisseq.stitching.MaskMerger()
+                merger = constitch.MaskMerger()
             if wildcards.type.endswith('_mask.tif'):
                 composite.boxes.positions *= phenotype_scale
                 composite.boxes.sizes *= phenotype_scale
-                merger = fisseq.stitching.MaskMerger()
+                merger = constitch.MaskMerger()
 
             full_image = composite.stitch_images(merger=merger)
             del composite
