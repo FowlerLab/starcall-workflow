@@ -221,8 +221,9 @@ rule align_well:
 
         for subcomposite, poses, poses_path, composite_path, cycle in zip(subcomposites, all_poses, output.positions, output.composites, cycles_pt):
             if cycle in phenotype_cycles:
-                subcomposite.boxes.positions[:,:2] *= phenotype_scale
-                subcomposite.boxes.sizes[:,:2] *= phenotype_scale
+                for i in range(len(subcomposite.boxes)):
+                    subcomposite.boxes[i].position[:2] *= phenotype_scale
+                    subcomposite.boxes[i].size[:2] *= phenotype_scale
 
             poses = np.concatenate([poses[:,:2], subcomposite.positions], axis=1)
             np.savetxt(poses_path, poses, fmt="%d", delimiter=',')
