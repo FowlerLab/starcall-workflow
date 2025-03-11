@@ -154,7 +154,7 @@ rule merge_grid:
                 composite.boxes.sizes *= phenotype_scale
                 merger = constitch.MaskMerger()
 
-            full_image = composite.stitch_images(merger=merger)
+            full_image = composite.stitch(merger=merger)
             del composite
             tifffile.imwrite(output.image, full_image)
 
