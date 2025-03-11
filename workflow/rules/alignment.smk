@@ -90,6 +90,7 @@ rule align_well:
         rawposes = expand(stitching_input_dir + '{prefix}/cycle{cycle}/positions.csv', cycle=cycles_pt, allow_missing=True),
     output:
         composite = stitching_dir + '{prefix}/composite.json',
+        #composite_bkp = stitching_dir + '{prefix}/composite_outliers.json',
         positions = expand(stitching_dir + '{prefix}/cycle{cycle}/positions.csv', cycle=cycles_pt, allow_missing=True),
         #positions = input_dir + '{prefix}.positions.csv',
         composites = expand(stitching_dir + '{prefix}/cycle{cycle}/composite.json', cycle=cycles_pt, allow_missing=True),
@@ -187,7 +188,9 @@ rule align_well:
         debug ('Solving constraints')
         #for pair in solving_constraints.constraints:
             #solving_constraints.constraints[pair] = solving_constraints.constraints[pair][:1]
-        #full_composite.setpositions(solving_constraints.solve(constitch.OutlierSolver()))
+        """
+        full_composite.setpositions(solving_constraints.solve(constitch.OptimalSolver()))
+        """
         thresh = 3
         solved = False
         i = 0
@@ -201,6 +204,7 @@ rule align_well:
             solved = len(valid_constraints) == len(constraints)
             constraints = valid_constraints
             i += 1
+        #"""
 
         #for i in range(25):
             #debug ('Solving time ', i)
@@ -213,6 +217,7 @@ rule align_well:
         debug ('  done')
 
         constitch.save(output.composite, full_composite, constraints, all_modeled, save_images=False)
+        #constitch.save(output.composite_bkp, full_composite, constraints, all_modeled, save_images=False)
 
         full_composite.plot_scores('plots/new_scores_{}_step4.png'.format(wildcards.prefix), constraints.merge(all_modeled))
         full_composite.plot_scores('plots/new_scores_{}_step4_accuracy.png'.format(wildcards.prefix), constraints.merge(all_modeled), score_func='accuracy')

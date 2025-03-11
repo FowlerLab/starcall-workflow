@@ -181,8 +181,8 @@ rule stitch_cycle:
         #fisseq.correction.illumination_correction(images, out=images, background=background)
 
         full_composite = constitch.load(input.composite, constraints=False)
-        mins = full_composite.boxes.pos1[:,:2].min(axis=0) * 2
-        maxes = full_composite.boxes.pos2[:,:2].max(axis=0) * 2
+        mins = full_composite.boxes.points1[:,:2].min(axis=0) * 2
+        maxes = full_composite.boxes.points2[:,:2].max(axis=0) * 2
         debug (mins, maxes)
 
         try:
@@ -231,9 +231,9 @@ rule stitch_well:
         import shutil
 
         composite = constitch.load(input.composite, constraints=False)
-        debug(composite.boxes.pos1[:,:2].min(axis=0), composite.boxes.pos2[:,:2].max(axis=0))
-        mins = composite.boxes.pos1[:,:2].min(axis=0)
-        maxes = composite.boxes.pos2[:,:2].max(axis=0)
+        debug(composite.boxes.points1[:,:2].min(axis=0), composite.boxes.points2[:,:2].max(axis=0))
+        mins = composite.boxes.points1[:,:2].min(axis=0)
+        maxes = composite.boxes.points2[:,:2].max(axis=0)
         dims = maxes - mins
         debug (mins, maxes)
 
@@ -327,7 +327,7 @@ rule stitch_well_pt:
         import constitch
 
         full_composite = constitch.load(input.full_composite, constraints=False)
-        mins, maxes = full_composite.boxes.pos1.min(axis=0)[:2], full_composite.boxes.pos2.max(axis=0)[:2]
+        mins, maxes = full_composite.boxes.points1.min(axis=0)[:2], full_composite.boxes.points2.max(axis=0)[:2]
         mins *= phenotype_scale
         maxes *= phenotype_scale
 
@@ -347,7 +347,7 @@ rule stitch_well_subset:
         import tifffile
 
         full_composite = constitch.load(input.full_composite, constraints=False)
-        mins, maxes = full_composite.boxes.pos1.min(axis=0)[:2], full_composite.boxes.pos2.max(axis=0)[:2]
+        mins, maxes = full_composite.boxes.points1.min(axis=0)[:2], full_composite.boxes.points2.max(axis=0)[:2]
         center = mins + ((maxes - mins) // 2)
         radius = int(wildcards.size) // 2
         mins, maxes = center - radius, center + radius
@@ -367,7 +367,7 @@ rule stitch_well_subset_pt:
         import tifffile
 
         full_composite = constitch.load(input.full_composite, constraints=False)
-        mins, maxes = full_composite.boxes.pos1.min(axis=0)[:2], full_composite.boxes.pos2.max(axis=0)[:2]
+        mins, maxes = full_composite.boxes.points1.min(axis=0)[:2], full_composite.boxes.points2.max(axis=0)[:2]
         center = mins + ((maxes - mins) // 2)
         radius = int(wildcards.size) // 2
         mins, maxes = center - radius, center + radius
@@ -395,7 +395,7 @@ rule split_grid_composite:
         import constitch
 
         inpcomposite = constitch.load(input.composite, constraints=False)
-        image = np.empty((inpcomposite.boxes.pos2.max(axis=0) - inpcomposite.boxes.pos1.min(axis=0)))
+        image = np.empty((inpcomposite.boxes.points1.max(axis=0) - inpcomposite.boxes.points2.min(axis=0)))
         debug(image.shape)
         grid_size = int(wildcards.grid_size)
 
@@ -403,7 +403,7 @@ rule split_grid_composite:
         composite.add_split_image(image, grid_size, channel_axis=-1, overlap=cellpose_diameter*2)
         constitch.save(output.composite, composite, save_images=False)
         tile_numbers = np.arange(len(composite.boxes)).reshape(-1,1)
-        np.savetxt(output.table, np.concatenate([tile_numbers // grid_size, tile_numbers % grid_size, composite.boxes.pos1], axis=1),
+        np.savetxt(output.table, np.concatenate([tile_numbers // grid_size, tile_numbers % grid_size, composite.boxes.points1], axis=1),
                 delimiter=',', fmt='%d', header="tile_x,tile_y,pixel_x,pixel_y", comments='')
 
 
@@ -426,7 +426,7 @@ rule stitch_tile_well:
         box = grid_composite.boxes[x*grid_size+y]
         debug(box)
 
-        tifffile.imwrite(output.image, stitch_well_section(input.images, input.composites, box.pos1, box.pos2))
+        tifffile.imwrite(output.image, stitch_well_section(input.images, input.composites, box.point1, box.point2))
 
 
 rule stitch_tile_well_pt:
@@ -447,10 +447,10 @@ rule stitch_tile_well_pt:
         grid_size, x, y = int(wildcards.grid_size), int(wildcards.x), int(wildcards.y)
         box = grid_composite.boxes[x*grid_size+y]
         debug(box)
-        box.pos1 *= phenotype_scale
-        box.pos2 *= phenotype_scale
+        box.position *= phenotype_scale
+        box.size *= phenotype_scale
         debug(box)
 
-        tifffile.imwrite(output.image, stitch_well_section(input.images_pt, input.composites_pt, box.pos1, box.pos2))
+        tifffile.imwrite(output.image, stitch_well_section(input.images_pt, input.composites_pt, box.point1, box.point2))
 
 

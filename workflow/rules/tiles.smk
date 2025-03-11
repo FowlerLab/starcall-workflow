@@ -29,8 +29,8 @@ rule split_grid_table:
         grid_size, x, y = int(wildcards.grid_size), int(wildcards.x), int(wildcards.y)
 
         box = composite.boxes[x*grid_size+y]
-        box.pos1 *= phenotype_scale
-        box.pos2 *= phenotype_scale
+        box.position *= phenotype_scale
+        box.size *= phenotype_scale
 
         contained = []
         for i, cell in table.iterrows():
@@ -43,12 +43,12 @@ rule split_grid_table:
             contained.append(is_contained)
 
         table = table[contained]
-        table['bbox_x1'] -= box.pos1[0]
-        table['bbox_x2'] -= box.pos1[0]
-        table['bbox_y1'] -= box.pos1[1]
-        table['bbox_y2'] -= box.pos1[1]
-        table['xpos'] -= box.pos1[0]
-        table['ypos'] -= box.pos1[1]
+        table['bbox_x1'] -= box.position[0]
+        table['bbox_x2'] -= box.position[0]
+        table['bbox_y1'] -= box.position[1]
+        table['bbox_y2'] -= box.position[1]
+        table['xpos'] -= box.position[0]
+        table['ypos'] -= box.position[1]
         table.to_csv(output.table)
 
 rule split_grid_segmentation:
@@ -74,12 +74,12 @@ rule split_grid_segmentation:
         grid_size, x, y = int(wildcards.grid_size), int(wildcards.x), int(wildcards.y)
 
         box = composite.boxes[x*grid_size+y]
-        box.pos1 *= phenotype_scale
-        box.pos2 *= phenotype_scale
+        box.position *= phenotype_scale
+        box.size *= phenotype_scale
 
         debug (box)
 
-        section = image[...,box.pos1[0]:box.pos2[0],box.pos1[1]:box.pos2[1]]
+        section = image[...,box.point1[0]:box.point2[0],box.point1[1]:box.point2[1]]
         props = skimage.measure.regionprops(section)
         props = {prop.label: prop for prop in props}
 
@@ -136,7 +136,7 @@ rule merge_grid:
             filtered = []
             for i,path in enumerate(input.images):
                 bases = np.loadtxt(path, delimiter=',')
-                bases[:,:2] += composite.boxes[i].pos1[:2].reshape(1,2)
+                bases[:,:2] += composite.boxes[i].position[:2].reshape(1,2)
                 filtered.append(bases)
 
             np.savetxt(output.image, np.concatenate(filtered, axis=0), delimiter=',', fmt='%f')
@@ -150,8 +150,8 @@ rule merge_grid:
             if wildcards.type.endswith('_mask_downscaled.tif'):
                 merger = fisseq.stitching.MaskMerger()
             if wildcards.type.endswith('_mask.tif'):
-                composite.boxes.pos1 *= phenotype_scale
-                composite.boxes.pos2 *= phenotype_scale
+                composite.boxes.positions *= phenotype_scale
+                composite.boxes.sizes *= phenotype_scale
                 merger = fisseq.stitching.MaskMerger()
 
             full_image = composite.stitch_images(merger=merger)
