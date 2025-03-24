@@ -212,20 +212,21 @@ rule stitch_cycle:
             traceback.print_exc()
             raise
 
+
 rule stitch_well:
     input:
         images = expand(stitching_input_dir + 'well{well}/cycle{cycle}/{corrected}.tif', cycle=cycles, allow_missing=True),
-        positions = expand(stitching_dir + 'well{well}/cycle{cycle}/positions.csv', cycle=cycles, allow_missing=True),
         composite = stitching_dir + 'well{well}/composite.json',
     output:
         stitching_output_dir + 'well{well}/{corrected,raw|corrected}.tif'
     resources:
-        mem_mb = lambda wildcards, input: input.size_mb / 4 + 10000
+        mem_mb = lambda wildcards, input: input.size_mb / len(cycles) * 3 + 10000
     run:
         import numpy as np
         import tifffile
         import constitch
         import fisseq.correction
+        import fisseq.utils
         import tifffile
         import time
         import shutil
@@ -241,14 +242,9 @@ rule stitch_well:
 
         for i in fisseq.utils.simple_progress(range(len(input.images))):
             debug("stitching cycle", i, time.asctime())
-            final_poses = np.loadtxt(input.positions[i], delimiter=',', dtype=int)
-            debug(final_poses)
 
             images = tifffile.imread(input.images[i])
             images = images.transpose([0,2,3,1])
-
-            final_poses = final_poses[:,2:]
-            debug (images.shape, final_poses.shape)
 
             if i == 0:
                 well_image = tifffile.memmap(tmp_output, shape=(len(input.images), images.shape[3], int(dims[0]), int(dims[1])), dtype=images.dtype)
@@ -256,9 +252,8 @@ rule stitch_well:
                 well_image = tifffile.memmap(tmp_output)
             out_full_image = well_image[i].transpose(1,2,0)
 
-            composite = constitch.CompositeImage()
-            composite.add_images([image[:,:,0] for image in images], positions=final_poses)
-            full_image = composite.stitch(
+            subcomposite = composite.layer(i)
+            full_image = subcomposite.stitch(
                 real_images=images,
                 mins=mins,
                 maxes=maxes,
@@ -277,6 +272,8 @@ rule stitch_well:
         debug("Moving tmp file")
         shutil.move(tmp_output, output[0])
         #"""
+
+
 
 
 ##################################################

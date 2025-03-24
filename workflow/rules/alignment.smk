@@ -1,236 +1,194 @@
 import os
 import glob
 
+alignment_channel = config.get('alignment_channel', 0)
+max_constraint_pairs = config.get('max_constraint_pairs', 6)
+
 ##################################################
 ##  Aligning tiles and solving for global positions
 ##################################################
 
-""" Does alignment for one cycle, calculating constraints between neighboring images.
-Outputs a composite file, which contains all the calculated data from the cycle
-Also outputs plots into the plots directory under plots/scores_well*_cycle*_
-which show how well the alignment is going
-"""
-rule align_cycle:
+rule make_initial_composite:
     input:
-        images = stitching_input_dir + '{prefix}/cycle{cycle}/raw.tif',
-        rawposes = stitching_input_dir + '{prefix}/cycle{cycle}/positions.csv',
+        images = expand(stitching_input_dir + '{prefix}/cycle{cycle}/raw.tif', cycle=cycles_pt, allow_missing=True),
+        rawposes = expand(stitching_input_dir + '{prefix}/cycle{cycle}/positions.csv', cycle=cycles_pt, allow_missing=True),
     output:
-        composite = stitching_dir + '{prefix}/cycle{cycle}/partial_composite.json',
+        composite = stitching_dir + '{prefix}/initial_composite.json',
+    resources:
+        mem_mb = 5000
+    run:
+        import tifffile
+        import constitch
+        import numpy as np
+
+        composite = constitch.CompositeImage()
+
+        for i, cycle in enumerate(cycles_pt):
+            subcomposite = composite.layer(i)
+
+            poses = np.loadtxt(input.rawposes[i], delimiter=',', dtype=int)
+            poses = poses[:,:2]
+            images = tifffile.memmap(input.images[i], mode='r')[:,alignment_channel]
+            debug(poses.shape, images.shape)
+
+            subcomposite.add_images(images, poses, scale='tile')
+            subcomposite.setimages([None] * len(subcomposite.images))
+
+            if cycle in phenotype_cycles:
+                for box in subcomposite.boxes:
+                    box.position[:2] //= phenotype_scale
+                    box.size[:2] //= phenotype_scale
+
+            del images
+
+        constitch.save(output.composite, composite)
+
+rule calculate_constraints:
+    input:
+        composite = stitching_dir + '{prefix}/initial_composite.json',
+        images1 = stitching_input_dir + '{prefix}/cycle{cycle1}/raw.tif',
+        images2 = stitching_input_dir + '{prefix}/cycle{cycle2}/raw.tif',
+    output:
+        constraints = stitching_dir + '{prefix}/cycle{cycle1}/cycle{cycle2}/constraints.json',
+        plot = qc_dir + '{prefix}/cycle{cycle1}_cycle{cycle2}_scores_calculated.png',
     resources:
         mem_mb = lambda wildcards, input: input.size_mb + 5000
     threads: 8
     run:
-        import concurrent.futures
-        import numpy as np
         import tifffile
         import constitch
-        import tifffile
+        import concurrent.futures
+        import numpy as np
 
+        cycle1, cycle2 = cycles_pt.index(wildcards.cycle1), cycles_pt.index(wildcards.cycle2)
 
         executor = concurrent.futures.ThreadPoolExecutor(max_workers=threads)
-        debug("Running with", threads, "threads")
-        debug(input.rawposes, input.images)
+        composite = constitch.load(input.composite, debug=True, progress=True, executor=executor)
+        images = tifffile.memmap(input.images1, mode='r')[:,alignment_channel]
+        composite.layer(cycle1).setimages(images)
 
-        poses = np.loadtxt(input.rawposes, delimiter=',', dtype=int)
-        debug ('loading images', wildcards.cycle)
+        if cycle1 != cycle2:
+            images = tifffile.memmap(input.images2, mode='r')[:,alignment_channel]
+            composite.layer(cycle2).setimages(images)
 
-        images = tifffile.memmap(input.images, mode='r')[:,alignment_channel]
-        debug(images.shape)
-
-        print_mem('align_poses', resources.mem_mb)
-        debug ('stitching cycle', wildcards.cycle)
-
-        composite = constitch.CompositeImage(progress=True, executor=executor)#, precalculate_fft=True)
-
-        input_poses = np.concatenate([poses[:,:2], np.full((len(poses),1), cycles_pt.index(wildcards.cycle), dtype=poses.dtype)], axis=1)
-        debug(images.shape, images.ndim)
-        if images.ndim == 4:
-            composite.add_images(images, input_poses, scale='tile', channel_axis=0)
+            def constraint_filter(const):
+                return const.box1.position[2] == cycle1 and const.box2.position[2] == cycle2 and const.overlap_ratio >= 0.1
         else:
-            composite.add_images(images, input_poses, scale='tile')
-        composite.print_mem_usage()
+            def constraint_filter(const):
+                return const.box1.position[2] == cycle1 and const.box2.position[2] == cycle2 and const.touching == True
 
-        overlapping = composite.constraints(touching=True)
+        if cycle1 == cycle2:
+            overlapping = composite.constraints(lambda const:
+                    const.box1.position[2] == cycle1 and const.box2.position[2] == cycle2 and const.touching == True)
+        else:
+            overlapping = composite.constraints(lambda const:
+                    const.box1.position[2] == cycle1 and const.box2.position[2] == cycle2 and const.overlap_ratio >= 0.1)
+
+        debug ('constraints', len(overlapping), cycle1, cycle2, np.unique(composite.boxes.positions[:,2]))
         constraints = overlapping.calculate()
-        composite.plot_scores('plots/new_scores_{}_cycle{}_step1.png'.format(wildcards.prefix, wildcards.cycle), constraints)
+        composite.plot_scores('plots/tmp_scores.png', constraints)
 
-        thresh = composite.calc_score_threshold()
-        constraints = constraints.filter(min_score=thresh)
-        composite.plot_scores('plots/new_scores_{}_cycle{}_step2.png'.format(wildcards.prefix, wildcards.cycle), constraints)
-        stage_model = constraints.fit_model(outliers=True)
-        #constraints = constraints.filter(stage_model.inliers)
-        constraints = stage_model.inliers
-        modeled = overlapping.calculate(stage_model)
-        composite.plot_scores('plots/new_scores_{}_cycle{}_step3.png'.format(wildcards.prefix, wildcards.cycle), constraints.merge(modeled))
+        nonoverlapping = composite.constraints(lambda const:
+                const.box1.position[2] == cycle1 and const.box2.position[2] == cycle2
+                and const.overlap_x < -3000 and const.overlap_y < -3000, limit=100, random=True)
+        erroneous_constraints = nonoverlapping.calculate()
 
-        if wildcards.cycle in phenotype_cycles:
-            composite.boxes.positions[:,:2] //= phenotype_scale
-            composite.boxes.sizes[:,:2] //= phenotype_scale
+        composite.plot_scores(output.plot, constraints)
 
-            for constraint in constraints:
-                constraint.dx //= phenotype_scale
-                constraint.dy //= phenotype_scale
+        constitch.save(output.constraints, overlapping, constraints, erroneous_constraints)
 
-            for constraint in modeled:
-                constraint.dx //= phenotype_scale
-                constraint.dy //= phenotype_scale
 
-        debug('done')
-        constitch.save(output.composite, composite, constraints, modeled, save_images=False)
-
-""" Combines all the alignment data for each cycle and calculates alignments between the cycles.
-outputs the result to one composite file for the whole well, another composite file for each cycle,
-and a positions csv file that has the pixel positions for each cycle.
-"""
-rule align_well:
+rule filter_constraints:
     input:
-        #images = expand(input_dir + '{prefix}/cycle{cycle}.raw.nd2', cycle=cycles_pt, allow_missing=True),
-        images = expand(stitching_input_dir + '{prefix}/cycle{cycle}/raw.tif', cycle=cycles_pt, allow_missing=True),
-        composites = expand(stitching_dir + '{prefix}/cycle{cycle}/partial_composite.json', cycle=cycles_pt, allow_missing=True),
-        rawposes = expand(stitching_input_dir + '{prefix}/cycle{cycle}/positions.csv', cycle=cycles_pt, allow_missing=True),
+        composite = stitching_dir + '{prefix}/initial_composite.json',
+        constraints = stitching_dir + '{prefix}/cycle{cycle1}/cycle{cycle2}/constraints.json',
+    output:
+        constraints = stitching_dir + '{prefix}/cycle{cycle1}/cycle{cycle2}/filtered_constraints.json',
+        plot = qc_dir + '{prefix}/cycle{cycle1}_cycle{cycle2}_scores_filtered.png',
+    resources:
+        mem_mb = lambda wildcards, input: input.size_mb + 5000
+    run:
+        import constitch
+        import numpy as np
+
+        composite = constitch.load(input.composite)
+        overlapping, constraints, erroneous_constraints = constitch.load(input.constraints, composite=composite)
+
+        score_threshold = np.percentile([const.score for const in erroneous_constraints], 99)
+        constraints = constraints.filter(min_score=score_threshold)
+
+        modeled = constitch.ConstraintSet()
+        if wildcards.cycle1 == wildcards.cycle2:
+            stage_model = constitch.SimpleOffsetModel() if wildcards.cycle1 == wildcards.cycle2 else constitch.GlobalStageModel()
+            stage_model = constraints.fit_model(stage_model, outliers=True)
+            constraints = stage_model.inliers
+            modeled = overlapping.calculate(stage_model)
+
+        composite.plot_scores(output.plot, constraints)
+
+        constitch.save(output.constraints, constraints, modeled)
+
+
+def constraints_needed(wildcards):
+    paths = []
+    for i in range(len(cycles_pt)):
+        for j in range(i, min(i + max_constraint_pairs, len(cycles_pt))):
+            paths.append(stitching_dir + '{prefix}/' + 'cycle{cycle1}/cycle{cycle2}/filtered_constraints.json'.format(
+                cycle1=cycles_pt[i], cycle2=cycles_pt[j]))
+    return paths
+
+rule solve_constraints:
+    input:
+        composite = stitching_dir + '{prefix}/initial_composite.json',
+        constraints = constraints_needed,
     output:
         composite = stitching_dir + '{prefix}/composite.json',
-        #composite_bkp = stitching_dir + '{prefix}/composite_outliers.json',
-        positions = expand(stitching_dir + '{prefix}/cycle{cycle}/positions.csv', cycle=cycles_pt, allow_missing=True),
-        #positions = input_dir + '{prefix}.positions.csv',
-        composites = expand(stitching_dir + '{prefix}/cycle{cycle}/composite.json', cycle=cycles_pt, allow_missing=True),
+        plot1 = qc_dir + '{prefix}/presolve.png',
+        plot2 = qc_dir + '{prefix}/solved.png',
     resources:
-        mem_mb = lambda wildcards, input: 15000 + input.size_mb / 2.5
-    threads: 16
+        mem_mb = lambda wildcards, input: input.size_mb * 1000 + 15000
     run:
-        import concurrent.futures
-        import numpy as np
-        import tifffile
         import constitch
-        import tifffile
 
-        all_poses = []
-        for i,path in enumerate(sorted(input.rawposes)):
-            cur_poses = np.loadtxt(path, delimiter=',', dtype=int)
-            all_poses.append(cur_poses)
-            debug(cur_poses.shape)
+        composite = constitch.load(input.composite)
 
-        executor = concurrent.futures.ThreadPoolExecutor(max_workers=threads)
-        debug("Running with", threads, "threads")
-        debug(input.images)
-
-        #"""
-        full_composite = constitch.CompositeImage(progress=True, executor=executor)#, precalculate_fft=True)
         all_constraints = constitch.ConstraintSet()
         all_modeled = constitch.ConstraintSet()
-        subcomposites = []
 
-        for cycle, rawpath, composite_path in zip(cycles_pt, input.images, input.composites):
-            debug ('loading images', cycle)
-
-            debug ('copy')
-            images = tifffile.memmap(rawpath, mode='r')[:,alignment_channel].copy()
-            #images = tifffile.imread(rawpath)[:,1].copy()
-            debug(images.shape)
-
-            composite, constraints, modeled = constitch.load(composite_path)
-            constraints.neighborhood_difference(next(iter(constraints)))
-            composite.images = images
-
-            mean_pos = composite.boxes.centers.mean(axis=0)
-            if len(subcomposites):
-                global_mean_pos = full_composite.boxes.centers.mean(axis=0)
-                debug (mean_pos, global_mean_pos, global_mean_pos - mean_pos)
-                offset = np.round(global_mean_pos - mean_pos)[:2].reshape(1,2).astype(int)
-                debug (offset)
-                composite.boxes.positions[:,:2] += offset
-                debug (composite.boxes.centers.mean(axis=0))
-
-            debug ('composite sizes', len(constraints), len(modeled))
-            subcomposite, constraints, modeled = full_composite.merge(composite, constraints, modeled)
-            debug ('          sizes', len(constraints), len(modeled))
-            debug (' before', len(all_constraints), len(all_modeled))
-            subcomposites.append(subcomposite)
+        for path in input.constraints:
+            constraints, modeled = constitch.load(path, composite=composite)
             all_constraints.add(constraints)
             all_modeled.add(modeled)
-            debug (' after', len(all_constraints), len(all_modeled))
 
-            del images, composite, constraints, modeled
+        solving_constraints = all_constraints.merge(all_modeled)
+        composite.plot_scores(output.plot1, solving_constraints)
+        solution = solving_constraints.solve(constitch.QuantileSolver())
 
-        debug ('adding constraints between cycles')
+        composite.setpositions(solution)
+        composite.plot_scores(output.plot2, solving_constraints)
 
-        max_pairs = 6
-        def filter_overlapping(constraint):
-            return (constraint.overlap > 0 and constraint.box1.position[2] != constraint.box2.position[2]
-                    and abs(constraint.box1.position[2] - constraint.box2.position[2]) <= max_pairs)
+        constitch.save(output.composite, composite)
 
-        overlapping = full_composite.constraints(filter_overlapping)
-        debug ('num pairs', len(overlapping))
 
-        constraints = overlapping.calculate()
-        debug (len(constraints), len(all_constraints))
-        constraints.add(all_constraints)
-        debug (len(constraints))
-        debug ('  done')
+rule split_composite:
+    input:
+        composite = stitching_dir + '{prefix}/composite.json',
+    output:
+        composite = stitching_dir + '{prefix}/cycle{cycle}/composite.json',
+    run:
+        import constitch
 
-        for const in all_modeled:
-            const.score = 0.2
-            const.dx = int(const.dx)
-            const.dy = int(const.dy)
+        cycle = cycles_pt.index(wildcards.cycle)
 
-        full_composite.plot_scores('plots/new_scores_{}_step1.png'.format(wildcards.prefix), constraints.merge(all_modeled))
+        composite = constitch.load(input.composite)
+        composite = composite.layer(cycle)
+        
+        if wildcards.cycle in phenotype_cycles:
+            for box in composite.boxes:
+                box.position[:2] *= phenotype_scale
+                box.size[:2] *= phenotype_scale
 
-        thresh = full_composite.calc_score_threshold()
-        debug('thresh', thresh)
-        constraints = constraints.filter(min_score=thresh)
+        constitch.save(output.composite, composite)
 
-        full_composite.plot_scores('plots/new_scores_{}_step2.png'.format(wildcards.prefix), constraints.merge(all_modeled))
 
-        constraints = constraints.filter(max_length=max(full_composite.images[0].shape))
-
-        full_composite.plot_scores('plots/new_scores_{}_step3.png'.format(wildcards.prefix), constraints.merge(all_modeled))
-
-        debug ('Solving constraints')
-        #for pair in solving_constraints.constraints:
-            #solving_constraints.constraints[pair] = solving_constraints.constraints[pair][:1]
-        """
-        full_composite.setpositions(solving_constraints.solve(constitch.OptimalSolver()))
-        """
-        thresh = 3
-        solved = False
-        i = 0
-
-        while not solved:
-            solving_constraints = constraints.merge(all_modeled)
-            full_composite.setpositions(solving_constraints.solve())
-            full_composite.plot_scores('plots/new_scores_{}_step4_midsolvingnew{:03}.png'.format(wildcards.prefix, i), solving_constraints, axis_size=20)
-            full_composite.plot_scores('plots/new_scores_{}_step4_midsolvingnew{:03}_accuracy.png'.format(wildcards.prefix, i), solving_constraints, score_func='accuracy', axis_size=20)
-            valid_constraints = constraints.filter(lambda const: constraints.neighborhood_difference(const) <= thresh)
-            solved = len(valid_constraints) == len(constraints)
-            constraints = valid_constraints
-            i += 1
-        #"""
-
-        #for i in range(25):
-            #debug ('Solving time ', i)
-            #full_composite.setpositions(solving_constraints.solve(constitch.OutlierSolver()))
-            #full_composite.plot_scores('plots/new_scores_{}_step4_midsolvingbad{:03}.png'.format(wildcards.prefix, i), solving_constraints)
-            #full_composite.plot_scores('plots/new_scores_{}_step4_midsolvingbad{:03}_accuracy.png'.format(wildcards.prefix, i), solving_constraints, score_func='accuracy')
-
-        #final_poses = full_composite.solve_constraints_old(filter_outliers=True, max_outlier_ratio=0.2)
-        #final_poses = full_composite.solve_constraints(filter_outliers=True, max_outlier_ratio=0.2, outlier_threshold=20, scores_plot_path='plots/new_scores_well{}_step3_filters{{}}.png'.format(wildcards.well))
-        debug ('  done')
-
-        constitch.save(output.composite, full_composite, constraints, all_modeled, save_images=False)
-        #constitch.save(output.composite_bkp, full_composite, constraints, all_modeled, save_images=False)
-
-        full_composite.plot_scores('plots/new_scores_{}_step4.png'.format(wildcards.prefix), constraints.merge(all_modeled))
-        full_composite.plot_scores('plots/new_scores_{}_step4_accuracy.png'.format(wildcards.prefix), constraints.merge(all_modeled), score_func='accuracy')
-
-        executor.shutdown()
-
-        for subcomposite, poses, poses_path, composite_path, cycle in zip(subcomposites, all_poses, output.positions, output.composites, cycles_pt):
-            if cycle in phenotype_cycles:
-                for i in range(len(subcomposite.boxes)):
-                    subcomposite.boxes[i].position[:2] *= phenotype_scale
-                    subcomposite.boxes[i].size[:2] *= phenotype_scale
-
-            poses = np.concatenate([poses[:,:2], subcomposite.positions], axis=1)
-            np.savetxt(poses_path, poses, fmt="%d", delimiter=',')
-            constitch.save(composite_path, subcomposite, save_images=False)
 

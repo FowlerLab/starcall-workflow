@@ -22,13 +22,16 @@ phenotyping_output_dir = phenotyping_dir + output_dir
 
 phenotype_date = config.get('phenotype_date', 'phenotype')
 #phenotype_cycle = config.get('phenotype_cycle', 'PT')
-phenotype_cycles = config.get('phenotype_cycles', ['PT', 'PT1', 'PT2', 'PT3', 'PT4'])
 phenotype_scale = config.get('phenotype_scale', 2)
 
 dates = [] if not os.path.exists(rawinput_dir) else sorted(os.listdir(rawinput_dir))
 dates_pt = dates.copy()
+
 phenotype_dates = [date for date in dates if date[:len(phenotype_date)] == phenotype_date]
-phenotype_cycles = phenotype_cycles[:len(phenotype_dates)]
+if 'phenotype_cycles' not in config:
+    phenotype_cycles = ['PT', 'PT1', 'PT2', 'PT3', 'PT4'][:len(phenotype_dates)]
+else:
+    phenotype_cycles = config['phenotype_cycles']
 
 if 'phenotype_channels' not in config:
     if phenotype_date in dates:
@@ -57,17 +60,12 @@ if 'cycles' not in config:
 else:
     cycles = config['cycles']
 
-if phenotype_date in dates_pt:
-    cycles_pt = cycles + phenotype_cycles
-else:
-    cycles_pt = cycles
+cycles_pt = cycles + phenotype_cycles
 #cycles_pt = sorted(cycles_pt)
 
 cellpose_cyto_index = config.get('cellpose_cyto_index', 1)
 cellpose_diameter = config.get('cellpose_diameter', 50)
 cellpose_cycle = config.get('cellpose_cycle', cycles[-1] if len(cycles) else None)
-
-alignment_channel = config.get('alignment_channel', 0)
 
 apply_background_correction = config.get('apply_background_correction', False)
 
