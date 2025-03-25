@@ -48,10 +48,10 @@ this, either `_seqgrid` or `_phenogrid` is used. Tile filenames follow the patte
 specified. To use the previous example, the raw image file for a single tile would be `well1_seqgrid5/tile02x02y/raw.tif`.
 A more in depth description of tile splitting and merging can be found at the section Tiles below.
 
-A less common but still possible level of organization is a section of a well, which follows the pattern `well??_subset{size}`.
-This is normally used to test the pipeline on a smaller part of the well. Size specifies the side length of the section in pixels,
+A less common but still possible level of organization is a subset of a well, which follows the pattern `well??_subset{size}`.
+This is normally used to test the pipeline on a smaller part of the well. Size specifies the number of microscope tiles to include,
 and the section is centered in the well. If you want to get example data before committing to running the whole well, requesting
-just part of the well can be useful. As before, a section of the raw images of well 1 would be at `well1_subset1000/raw.tif`.
+just part of the well can be useful. As before, a section of the raw images of well 1 would be at `well1_subset3/raw.tif`.
 
 As mentioned above, another level of organization is possible with the different cycles of imaging being separated into
 folders `cycle??/`. This is not common and only occurs in the `stitching/` folder. Once stitching and alignment has been preformed
@@ -110,7 +110,7 @@ correct order alphabetically. The exception to this is the phenotype cycle, whic
 
 This is normally the same structure that the microscope saves the files as, so you can simply copy
 them into the rawinput directory, and rename the phenotype cycle to "phenotype". If you have multiple
-phenotype cycles you can name them "phenotype1", "phenotype2", or however you want as long as each begins
+phenotype cycles you can name them "phenotype1", "phenotype_20240107...", or however you want as long as each begins
 with "phenotype".
 
 ### General Input
@@ -165,6 +165,7 @@ the cell, in the case of VISSEQ this is a certain variant. To add this informati
 data table, you can add a `barcodes.csv` file in the folder `input/auxdata/`. All that is required is
 the first column contains the barcodes that should be used to match to cells. This table will be merged
 with the output table and cells that contain a barcode will have the remaining columns added to their table.
+An individual file for each well can also be specified by placing it in `input/well1/auxdata/`.
 
 If you would like to match multiple barcodes, you can separate them with a '-' and only cells with both will
 be matched.
@@ -181,11 +182,15 @@ The first couple columns contain simple cell identification information, in the 
 2, 15.265079365079366,  180.40238095238095, 0,       157,     32,      207
 ```
 The position of each cell is its centroid, and the bounding box specifies the section
-of image needed to contain the cell.
+of image needed to contain the cell. All measurements here are in the scale of the phenotype images, not the
+sequencing images, which is important to remember when phenotype images are taken at a different
+scale. This means that cell masks can be obtained using the bbox values into the `cells_mask.tif` file and
+cell images can be obtained from `raw_pt.tif` or `corrected_pt.tif`, but if retrieving images from `raw.tif` or
+`corrected.tif` the bbox positions must be rescaled according to the scale of the phenotype images.
 
 The first main section is the sequencing data, and contains all the reads sequenced in the cell, in the format:
 ```
-count_0, barcode_0,    quality_0,    count_1, barcode_1,    quality_1,    count_2, barcode_2,    quality_2,    count_3, barcode_3,    quality_3,    count
+count_0, read_0,    quality_0,    count_1, read_1,    quality_1,    count_2, read_2,    quality_2,    count_3, read_3,    quality_3,    total_count
 2,		 TATTAATTGTGT, i_ag]_MVbV2U, 2,       TATTAATTGTTT, Offde_l`oYNA, 2,       TATTAATTGTAT, j^ge\M_fYb,_, 1,       TATTAATTGTCT, _%\hF8jg+60Z, 5
 4,		 TGCTTCACTGCT, eWjngSWHYICX, 1,       TCGTTAAATTTT, eFO!a:L3V>7Q, 1,       TCGGTTACTTTT, aUIHe$Q&VJJC, 1,       TCGGTCATTTTT, d9W9`2T*`6bb, 3
 ```
@@ -232,7 +237,7 @@ is generated for each well, eg `output/well1.features.cells_full.csv`.
 ### Log files
 
 Log files are kept for all jobs that create a file, and their path is the same as the file being created with `logs/` prepended. For example,
-if I am trying to create the file `input/well1.composite.bin`, the log file for that would be `logs/input/well1.composite.bin.log.out` and `logs/input/well1.composite.bin.log.err`
+if I am trying to create the file `input/well1/composite.json`, the log file for that would be `logs/input/well1/composite.json.err` and `logs/input/well1/composite.json.out`
 
 In the case of an error snakemake will print out a message showing which job failed, as well as the log file for it.
 
@@ -271,7 +276,7 @@ When splitting the well into tiles, you can request only one tile:
 
 Instead of only requesting one tile, you can request a small section of the well to test out the pipeline and get some example data:
 ```
-./run.sh output/well{1..6}_subset1000.features.cells_full.csv
+./run.sh output/well{1..6}_subset3.features.cells_full.csv
 ```
 
 Finally, you can also change what type of phenotyping you do. If you would like to run the cellprofiler pipeline 'pipeline.cppipe'
@@ -291,16 +296,22 @@ changing parameters without rerunning the proper steps, resulting in outdated fi
 specifying parameters are described below
 
 ```
-output/well{well} [_subset{size}] [_seqgrid{grid_size}] [_phenogrid{grid_size}] [/tile{x}x{y}] [.features] [.cellprofiler_{pipeline}] [.{custom_phenotyping}] .cells.csv 
+output/well{well} [_subset{size}] [_section{size}] [_seqgrid{grid_size}] [_phenogrid{grid_size}] [/tile{x}x{y}] [.features] [.cellprofiler_{pipeline}] [.{custom_phenotyping}] .cells_full.csv 
 ```
 
 #### Subset
 
-When adding `_subset{size}` to a well, this means that only a size by size pixel portion of the well will be processed,
+When adding `_subset{size}` to a well, this means that only a size by size tile section of the input microscope tiles are included,
 taken from the center of the well. This is useful to do a test run of the pipeline, as it greatly reduces the computation
-necessary for all steps. This is similar to requesting a single tile, such as `output/well1_seqgrid20/tile09x09y/cells.csv`,
+necessary for all steps. This is similar to requesting a single tile, such as `output/well1_seqgrid20/tile09x09y/cells_full.csv`,
 which also greatly reduces computation, but using a subset also eliminates the need to stitch the whole well together, saving
 even more time.
+
+#### Section
+
+After stitching a well or subset, the final images can be cropped by adding `_section{size}` to only include
+a size by size pixel section of the well, taken from the center. This can be useful if you have stitched a whole well but want to
+test all downstream steps with a small section of the stitched images.
 
 #### Tile grids
 
@@ -342,9 +353,11 @@ Including `.features` will run a simple feature calculation algorithm that retur
 max, and percentile values inside the cell, nucleus, and cytoplasm for each phenotyping channel. These are enough for simple phenotype
 analysis, but if you are looking for more complex phenotypes then another algorithm is probably better.
 
-Including `.ce`
-
-
+Including `.cellprofiler_{pipeline}` will invoke cellprofiler with the pipeline file `{pipeline}.cppipe`, or additionally searching
+for any files matching `*{pipeline}.cppipe`. A common pattern is to date different versions of pipelines, if the files
+`cellprofiler_122424.cppipe` and `cellprofiler_022525.cppipe` are present and `.cellprofiler_022525` is requested,
+the second pipeline will be ran. Cellprofiler is a proven method to extract many different features from cell images,
+for visualization or analyis. More info on what a pipeline should look like is included in the Cellprofiler section below.
 
 ## Steps of the pipeline
 
@@ -359,7 +372,9 @@ Outputs:
 - `input/well{well}/cycle{cycle}/raw.tif`
 - `input/well{well}/cycle{cycle}/positions.csv`
 
-Extracts the images and positional information from the microscope.
+Extracts the images and positional information from the microscope. This is only ran if the rawinput directory
+is provided, if your input files are in `.tif` format they will work directly with the pipeline, placed
+in the `input/` folder according to the format specified above in the Input section.
 
 ### Alignment
 
@@ -370,18 +385,18 @@ Inputs:
 
 Outputs:
 
-- `stitching/well{well}/composite.bin`
+- `stitching/well{well}/composite.json`
 
 In this step all the tiles for the well are registered together, and the global position for each
 is solved. This is normally a very intensive part of the pipeline, taking up to 6 hours.
-The progress can be checked in the log files for the job, at `logs/input/well{well}/composite.bin.err`
+The progress can be checked in the log files for the job, at `logs/input/well{well}/composite.json.err`
 
 ### Stitching (full well)
 
 Inputs:
 
 - `stitching/input/well{well}/cycle{cycle}/raw.tif`
-- `stitching/well{well}/composite.bin`
+- `stitching/well{well}/composite.json`
 
 Outputs:
 
@@ -397,7 +412,7 @@ at once, and instead the image is split into smaller tiles.
 Inputs:
 
 - `stitching/well{well}/cycle{cycle}/raw.tif`
-- `stitching/well{well}/composite.bin`
+- `stitching/well{well}/composite.json`
 
 Outputs:
 
@@ -459,6 +474,25 @@ This is the other main processing step in the pipeline, where the flourescent do
 The output is a csv file where the first two columns are the xy position of each dot, and the rest
 of the columns are the values of the dot in each of the 4 flourescent base channels.
 
+### Merging sequencing grid
+
+Inputs:
+
+- `sequencing/well{well}_seqgrid{grid_size}/tile{x}x{y}y/bases.csv`
+- `sequencing/output/well{well}_seqgrid{grid_size}/tile{x}x{y}y/cells_mask.tif`
+- `sequencing/output/well{well}_seqgrid{grid_size}/tile{x}x{y}y/nuclei_mask.tif`
+
+Outputs:
+
+- `sequencing/well{well}_seqgrid{grid_size}/bases.csv`
+- `sequencing/output/well{well}_seqgrid{grid_size}/cells_mask.tif`
+- `sequencing/output/well{well}_seqgrid{grid_size}/nuclei_mask.tif`
+
+If the grid was split previously, now it is combined back together to get the final bases.csv table and cell segmentation for the
+whole well. This doesn''t modify the table much, however it does update all xy positions to be global for
+the well as well as adding a tile column that records which tile the cell was originally from. The cell segmentations are merged together,
+combining any cells in the overlapping regions.
+
 ### Calling reads
 
 Inputs:
@@ -469,26 +503,14 @@ Inputs:
 Outputs:
 
 - `sequencing/output/{prefix}/cells.csv`
+- `sequencing/output/{prefix}/cells_reads.csv`
 
 This is the final output of the processing section of the pipeline, where the flourescent dots
 are collected in cells and the sequences are read out. The structure of this file is described in the Outputs
 section in more detail, but it contains the sequencing results from all the cells in the well.
+The `cells.csv` file contains only positional information about cells while the `cells_reads.csv` file contains
+the reads found for each cell.
 
-### Merging sequencing grid
-
-Inputs:
-
-- `sequencing/output/well{well}_seqgrid{grid_size}/tile{x}x{y}y/cells.csv`
-- `sequencing/output/well{well}_seqgrid{grid_size}/tile{x}x{y}y/cells_mask.tif`
-
-Outputs:
-
-- `sequencing/output/well{well}_seqgrid{grid_size}/cells.csv`
-- `sequencing/output/well{well}_seqgrid{grid_size}/cells_mask.tif`
-
-If the grid was split previously, now it is combined back together to get the final cells.csv table for the
-whole well. This doesn''t modify the table much, however it does update all xy positions to be global for
-the well as well as adding a tile column that records which tile the cell was originally from.
 
 ### Splitting phenotyping grid
 
@@ -555,7 +577,7 @@ masks as Cells and Nuclei. The Cells mask should be converted into objects with 
 analysis can be done using these cell objects. When exporting data with ExportToSpreadsheet, the outputs should go into
 the default output folder, and it should output a file called `Cells.csv`.
 
-Although a bit rigid, once these requirements are satesfied any typical cellprofiler analysis can be preformed, greatly
+Although a bit rigid, once these requirements are satisfied any typical cellprofiler analysis can be preformed, greatly
 increasing the possible downstream data analysis.
 
 ### Calculating custom features
@@ -572,7 +594,7 @@ Inputs:
 
 Output:
 
-- `phenotyping/output/{prefix}/cellprofiler_pipeline.features.cells_full.csv`
+- `phenotyping/output/{prefix}/cellprofiler_pipeline.features.cells_phenotype.csv`
 															 (any additional table names would be included here)
 
 Once all the desired phenotyping analysis has been run, the resulting features can be combined with the cell table,
@@ -583,18 +605,28 @@ by requesting a different filename you can alter which methods run.
 
 Input:
 
-- `phenotyping/output/{prefix}_phenogrid{grid_size}/tile{x}x{y}/features.cells_full.csv`
+- `phenotyping/output/{prefix}_phenogrid{grid_size}/tile{x}x{y}/features.cells_phenotype.csv`
 
 Output:
 
-- `phenotyping/output/{prefix}_phenogrid{grid_size}/features.cells_full.csv`
+- `phenotyping/output/{prefix}_phenogrid{grid_size}/features.cells_phenotype.csv`
 
 The last step is to merge any tiles that were split for phenotyping. As described in the splitting section,
 this is very simple and only consists of concatenating the different tiles and updating cell x and y positions.
 If you do not care about the positional information, you can even do this step yourself with pandas.
 
-### Output
+### Merging phenotype and genotype
 
-Once all steps have finished, the output will be present in the `output/` folder, as for example
-`output/well1_seqgrid5_phenogrid20.cellprofiler_pipeline.cells_full.csv`.
+Input:
+
+- `phenotyping/output/{prefix}/features.cells_phenotype.csv`
+- `sequencing/output/{prefix}/features.cells_reads.csv`
+
+Output:
+
+- `output/{prefix}.features.cells_full.csv`
+
+The final step is merging the phenotype and genotype of cells into the final table. This is simply a join on
+the cell ids shared between the two tables, contained in the `cells.csv` table created from the cell segmentation.
+
 
