@@ -1,0 +1,15 @@
+__pycache__
+*.pyc
+/rawinput/
+/input/
+/stitching/
+/sequencing/
+/phenotyping/
+/output/
+/logs/
+/plots/
+config.yaml
+run.sh.e*
+run.sh.o*
+/tmp*
+*.tmp

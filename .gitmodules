@@ -1,0 +1,6 @@
+[submodule "packages/constitch"]
+	path = packages/constitch
+	url = https://github.com/FowlerLab/constitch.git
+[submodule "packages/starcall"]
+	path = packages/starcall
+	url = https://github.com/FowlerLab/starcall.git
