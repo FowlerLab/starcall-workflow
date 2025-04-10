@@ -12,9 +12,9 @@ make the wildcards for rules that read in both of them more simple
 """
 rule link_input_stitching_raw:
     input:
-        input_dir + 'well{well}/cycle{cycle}/raw.tif'
+        input_dir + '{prefix}/cycle{cycle}/raw.tif'
     output:
-        stitching_dir + 'well{well}/cycle{cycle}/raw.tif'
+        stitching_dir + '{prefix}/cycle{cycle}/raw.tif'
     localrule: True
     shell:
         "cp -l {input[0]} {output[0]}"
@@ -36,7 +36,7 @@ rule calc_background:
     run:
         import numpy as np
         import tifffile
-        #import fisseq.correction
+        #import starcall.correction
 
         from pybasic.shading_correction import BaSiC
 
@@ -100,7 +100,7 @@ rule calc_background:
                 cur_pos += tmp_image.shape[0]
                 del tmp_image
 
-            #background[begin:end] = fisseq.correction.estimate_background(cur_batch_image)
+            #background[begin:end] = starcall.correction.estimate_background(cur_batch_image)
             #background[begin:end] = cur_batch_image.mean(axis=0)
             background[0,begin:end] = cur_batch_image.mean(axis=0)
             background[1:,begin:end] = np.percentile(cur_batch_image, [1,5,50,95,99], axis=0)
@@ -110,20 +110,20 @@ rule calc_background:
 
 rule correct_background:
     input:
-        images = stitching_input_dir + 'well{well}/cycle{cycle}/raw.tif',
+        images = stitching_input_dir + '{prefix}/cycle{cycle}/raw.tif',
         background = lambda wildcards: stitching_dir + 'background{}.tif'.format('_pt' if wildcards.cycle in phenotype_cycles else '')
     output:
-        images = stitching_dir + 'well{well}/cycle{cycle}/corrected.tif',
+        images = stitching_dir + '{prefix}/cycle{cycle}/corrected.tif',
     resources:
         mem_mb = lambda wildcards, input: input.size_mb * 1.5 + 10000
     run:
         import tifffile
-        import fisseq.correction
+        import starcall.correction
 
         images = tifffile.imread(input.images)
         background = tifffile.imread(input.background)
 
-        fisseq.correction.illumination_correction(images, background=background, out=images)
+        starcall.correction.illumination_correction(images, background=background, out=images)
 
         tifffile.imwrite(output.images, images)
 
@@ -153,8 +153,8 @@ rule stitch_cycle:
         import numpy as np
         import tifffile
         import constitch
-        import fisseq.correction
-        import fisseq.utils
+        import starcall.correction
+        import starcall.utils
         import tifffile
 
         final_poses = np.loadtxt(input.positions, delimiter=',', dtype=int)
@@ -176,9 +176,9 @@ rule stitch_cycle:
 
         debug(images.shape)
         #good_images = images[filter_edge_tiles(final_poses)]
-        #background = fisseq.correction.estimate_background(good_images)
+        #background = starcall.correction.estimate_background(good_images)
         #del good_images
-        #fisseq.correction.illumination_correction(images, out=images, background=background)
+        #starcall.correction.illumination_correction(images, out=images, background=background)
 
         full_composite = constitch.load(input.composite, constraints=False)
         mins = full_composite.boxes.points1[:,:2].min(axis=0) * 2
@@ -205,7 +205,7 @@ rule stitch_cycle:
             debug (full_image.min(), full_image.max(), full_image.dtype, full_image.shape, full_image.nbytes)
             #tifffile.imwrite(output.image, full_image)
             print_mem('full_image', resources.mem_mb)
-            debug (fisseq.utils.human_readable(full_image.nbytes))
+            debug (starcall.utils.human_readable(full_image.nbytes))
             tifffile.imwrite(output.image, full_image)
         except:
             import traceback
@@ -215,18 +215,18 @@ rule stitch_cycle:
 
 rule stitch_well:
     input:
-        images = expand(stitching_input_dir + 'well{well}/cycle{cycle}/{corrected}.tif', cycle=cycles, allow_missing=True),
-        composite = stitching_dir + 'well{well}/composite.json',
+        images = expand(stitching_input_dir + '{prefix}/cycle{cycle}/{corrected}.tif', cycle=cycles, allow_missing=True),
+        composite = stitching_dir + '{prefix}/composite.json',
     output:
-        stitching_output_dir + 'well{well}/{corrected,raw|corrected}.tif'
+        stitching_output_dir + '{prefix}/{corrected,raw|corrected}.tif'
     resources:
         mem_mb = lambda wildcards, input: input.size_mb / len(cycles) * 3 + 10000
     run:
         import numpy as np
         import tifffile
         import constitch
-        import fisseq.correction
-        import fisseq.utils
+        import starcall.correction
+        import starcall.utils
         import tifffile
         import time
         import shutil
@@ -240,7 +240,7 @@ rule stitch_well:
 
         tmp_output = resources.tmpdir + '/well.tif'
 
-        for i in fisseq.utils.simple_progress(range(len(input.images))):
+        for i in starcall.utils.simple_progress(range(len(input.images))):
             debug("stitching cycle", i, time.asctime())
 
             images = tifffile.imread(input.images[i])
@@ -283,7 +283,7 @@ rule stitch_well:
 def stitch_well_section(image_paths, composite_paths, mins, maxes):
     import tifffile
     import constitch
-    import fisseq.correction
+    import starcall.correction
     import numpy as np
 
     full_image = None
@@ -311,11 +311,11 @@ def stitch_well_section(image_paths, composite_paths, mins, maxes):
 
 rule stitch_well_pt:
     input:
-        images_pt = expand(stitching_dir + 'well{well}/cycle{cycle}/{corrected}.tif', cycle=phenotype_cycles, allow_missing=True),
-        composites_pt = expand(stitching_dir + 'well{well}/cycle{cycle}/composite.json', cycle=phenotype_cycles, allow_missing=True),
-        full_composite = stitching_dir + 'well{well}/composite.json',
+        images_pt = expand(stitching_dir + '{prefix}/cycle{cycle}/{corrected}.tif', cycle=phenotype_cycles, allow_missing=True),
+        composites_pt = expand(stitching_dir + '{prefix}/cycle{cycle}/composite.json', cycle=phenotype_cycles, allow_missing=True),
+        full_composite = stitching_dir + '{prefix}/composite.json',
     output:
-        image = stitching_output_dir + 'well{well}/{corrected,raw|corrected}_pt.tif',
+        image = stitching_output_dir + '{prefix}/{corrected,raw|corrected}_pt.tif',
     resources:
         mem_mb = lambda wildcards, input: 5000 + input.size_mb * 1.5
     run:
@@ -331,13 +331,13 @@ rule stitch_well_pt:
         tifffile.imwrite(output.image, stitch_well_section(input.images_pt, input.composites_pt, mins, maxes))
 
 
-rule stitch_well_subset:
+rule stitch_well_section:
     input:
-        images = expand(stitching_dir + 'well{well}_subset{size}/cycle{cycle}/{corrected}.tif', cycle=cycles, allow_missing=True),
-        composites = expand(stitching_dir + 'well{well}_subset{size}/cycle{cycle}/composite.json', cycle=cycles, allow_missing=True),
-        full_composite = stitching_dir + 'well{well}_subset{size}/composite.json',
+        images = expand(stitching_dir + '{prefix}/cycle{cycle}/{corrected}.tif', cycle=cycles, allow_missing=True),
+        composites = expand(stitching_dir + '{prefix}/cycle{cycle}/composite.json', cycle=cycles, allow_missing=True),
+        full_composite = stitching_dir + '{prefix}/composite.json',
     output:
-        image = stitching_output_dir + 'well{well}_subset{size,\d+}/{corrected,raw|corrected}.tif'
+        image = stitching_output_dir + '{prefix}_section{size,\d+}/{corrected,raw|corrected}.tif'
     run:
         import constitch
         import numpy as np
@@ -351,13 +351,13 @@ rule stitch_well_subset:
 
         tifffile.imwrite(output.image, stitch_well_section(input.images, input.composites, mins, maxes))
 
-rule stitch_well_subset_pt:
+rule stitch_well_section_pt:
     input:
-        images = expand(stitching_dir + 'well{well}_subset{size}/cycle{cycle}/{corrected}.tif', cycle=phenotype_cycles, allow_missing=True),
-        composites = expand(stitching_dir + 'well{well}_subset{size}/cycle{cycle}/composite.json', cycle=phenotype_cycles, allow_missing=True),
-        full_composite = stitching_dir + 'well{well}_subset{size}/composite.json',
+        images = expand(stitching_dir + '{prefix}/cycle{cycle}/{corrected}.tif', cycle=phenotype_cycles, allow_missing=True),
+        composites = expand(stitching_dir + '{prefix}/cycle{cycle}/composite.json', cycle=phenotype_cycles, allow_missing=True),
+        full_composite = stitching_dir + '{prefix}/composite.json',
     output:
-        image = stitching_output_dir + 'well{well}_subset{size,\d+}/{corrected,raw|corrected}_pt.tif'
+        image = stitching_output_dir + '{prefix}_section{size,\d+}/{corrected,raw|corrected}_pt.tif'
     run:
         import constitch
         import numpy as np

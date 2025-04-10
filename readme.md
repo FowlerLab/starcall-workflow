@@ -1,8 +1,8 @@
-# FISSEQ data pipeline
+# FISSEQ data pipeline: Starcall
 
 This repository is a full data pipeline for the analysis of FISSEQ (Flourescent in-situ sequencing) data.
 This readme will give an overview of the pipeline and how to run it, for more information there is documentation
-for the fisseq python package
+for the starcall python package
 
 ## Structure
 
@@ -17,7 +17,7 @@ Fowler lab, specifically it assumes a Nikon microscope, 8-12 sequencing cycles a
 pipeline or write your own using the python library.
 
 This readme will describe running the Snakemake pipeline, for an overview of the python library see the
-docs at <https://fowlerlab.github.io/fisseq/fisseq.html>
+docs at <https://fowlerlab.github.io/starcall-docs/starcall.html>
 
 ### General file structure:
 

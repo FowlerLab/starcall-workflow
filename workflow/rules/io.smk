@@ -170,14 +170,18 @@ rule make_section:
         mins = np.min(mins, axis=0)
         maxes = np.max(maxes, axis=0)
 
-        images = tifffile.imread(input.images[0])
-        tile_size = int(wildcards.size) / (min(images.shape[2:]) * 0.75)
-        debug (tile_size, wildcards.size, min(images.shape[2:]))
-        tile_radius = math.ceil(tile_size / 2)
-        del images
+        #images = tifffile.imread(input.images[0])
+        #tile_size = int(wildcards.size) / (min(images.shape[2:]) * 0.75)
+        #debug (tile_size, wildcards.size, min(images.shape[2:]))
+        #tile_radius = math.ceil(tile_size / 2)
+        #del images
+        #tile_radius = int(wildcards.size)
+        tile_size = int(wildcards.size)
 
         center = np.round((maxes - mins) / 2)
-        low_bound, high_bound = center - tile_radius, center + tile_radius
+        #low_bound, high_bound = center - tile_radius, center + tile_radius
+        low_bound = center - (tile_size - (tile_size // 2))
+        high_bound = center + (tile_size // 2)
 
         for i, poses, path in zip(range(len(all_poses)), all_poses, input.images):
             low, high = low_bound, high_bound

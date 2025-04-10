@@ -110,7 +110,7 @@ rule merge_phenotype_genotype:
     resources:
         mem_mb = lambda wildcards, input: input.size_mb * 2 + 10000
     wildcard_constraints:
-        prefix = '((?!_phenogrid).)*',
+        prefix = '((?!_phenogrid)[^.])*',
         possible_phenogrid = '(_phenogrid\d+)|',
         phenotype_type = '[^/]*',
     run:

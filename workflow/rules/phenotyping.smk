@@ -19,7 +19,7 @@ rule calc_features:
         import numpy as np
         import pandas
         import skimage.measure
-        import fisseq.utils
+        import starcall.utils
 
         cell_table = pandas.read_csv(input.cell_table, index_col=0)
         cells, nuclei = tifffile.imread(input.cells), tifffile.imread(input.nuclei)
@@ -31,7 +31,7 @@ rule calc_features:
 
         features = {}
 
-        for index, cell in fisseq.utils.simple_progress(list(cell_table.iterrows())):
+        for index, cell in starcall.utils.simple_progress(list(cell_table.iterrows())):
             x1, y1 = cell.bbox_x1 * phenotype_scale, cell.bbox_y1 * phenotype_scale
             x2, y2 = cell.bbox_x2 * phenotype_scale, cell.bbox_y2 * phenotype_scale
             cell_mask = cells[x1:x2,y1:y2] == index
@@ -138,8 +138,8 @@ rule run_cellprofiler:
         pipeline = find_pipeline,
         #pipeline = '{pipeline}.cppipe',
     output:
-        data = phenotyping_output_dir + '{prefix}/cellprofiler_{pipeline}.csv',
-        mark = phenotyping_dir + '{prefix}/cellprofiler/{pipeline}/mark',
+        data = phenotyping_output_dir + '{prefix}/cellprofiler_{pipeline,[^./]+}.csv',
+        mark = phenotyping_dir + '{prefix}/cellprofiler/{pipeline,[^./]+}/mark',
     resources:
         mem_mb = lambda wildcards, input, attempt: input.size_mb * ([50, 100, 500][attempt-1]) + 10000 #+ (attempt - 1) * 200000
     threads: 2

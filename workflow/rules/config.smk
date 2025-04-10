@@ -85,13 +85,17 @@ wildcard_constraints:
 def debug(*args, **kwargs):
     print (time.asctime() + ':', *args, **kwargs, file=sys.stderr)
 
+def progress(*args, **kwargs):
+    import starcall.utils
+    return starcall.utils.simple_progress(*args, **kwargs)
+
 def print_mem(name, mem_limit):
     import psutil
-    import fisseq.utils
-    #{key: fisseq.utils.human_readable(val) for key,val in psutil.Process().memory_info()._asdict().items()}
+    import starcall.utils
+    #{key: starcall.utils.human_readable(val) for key,val in psutil.Process().memory_info()._asdict().items()}
     mem = psutil.Process().memory_info().rss / 1000000
-    debug ("Rule", name, "Limit", mem_limit, fisseq.utils.human_readable(mem_limit * 1000000),
-                    "Using", mem, fisseq.utils.human_readable(mem * 1000000))
+    debug ("Rule", name, "Limit", mem_limit, starcall.utils.human_readable(mem_limit * 1000000),
+                    "Using", mem, starcall.utils.human_readable(mem * 1000000))
 
 def coredump():
     if os.fork() == 0:

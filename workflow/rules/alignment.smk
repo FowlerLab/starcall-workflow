@@ -162,7 +162,7 @@ rule solve_constraints:
 
         solving_constraints = all_constraints.merge(all_modeled)
         composite.plot_scores(output.plot1, solving_constraints)
-        solution = solving_constraints.solve(constitch.QuantileSolver())
+        solution = solving_constraints.solve(solver='mae')
 
         composite.setpositions(solution)
         composite.plot_scores(output.plot2, solving_constraints)
