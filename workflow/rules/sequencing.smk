@@ -255,28 +255,6 @@ rule make_cell_images:
         tifffile.imwrite(output.cell_images, cell_images)
         tifffile.imwrite(output.mask_images, mask_images)
 
-"""
-rule link_testing_prefix:
-    input:
-        sequencing_output_dir + '{prefix}/{file}',
-    output:
-        sequencing_output_dir + '{prefix}_test_{test,[^_]+}/{file}'
-    wildcard_constraints:
-        file = 'cells_mask.tif|cells_mask_downscaled.tif|cells.csv'
-    shell:
-        'cp -l {input[0]} {output[0]}'
-
-ruleorder: tabulate_cells > link_testing_prefix
-"""
-
-rule tmp_link_file:
-    input:
-        sequencing_output_dir + 'well1_seqgrid5/tile02x02y_test_{test}/cells_reads.csv'
-    output:
-        'results/our_{test}.cells_reads.csv'
-    localrule: True
-    shell:
-        'cp -l {input[0]} {output[0]}'
 
 rule find_dots:
     input:
@@ -298,18 +276,13 @@ rule find_dots:
         num_sigma = 7
 
         full_well = tifffile.memmap(input[0], mode='r')
-        image = np.array(full_well[...,2:,:,:], dtype=np.float32)
+        image = full_well[...,2:,:,:].astype(np.float32, copy=True)
         del full_well
 
         if np.all(image == 0):
-            tifffile.imwrite(output.dots, image[0,0])
-            tifffile.imwrite(output.dotvalues, image[0,0])
+            reads = ReadSet()
         else:
-
-            print_mem('extract_bases', resources.mem_mb)
-            debug('image', image.shape)
-
-            poses, values = starcall.dotdetection.detect_dots(
+            reads = starcall.dotdetection.detect_dots(
                 image,
                 min_sigma = min_sigma,
                 max_sigma = max_sigma,
@@ -317,22 +290,24 @@ rule find_dots:
                 copy = False,
             )
 
-            """
-            values = values.transpose(1,0,2)
-            debug("correcting", values.shape)
-            dye_matrix = starcall.correction.estimate_dye_matrix(values)
-            corrected = starcall.correction.color_correct(values)
-            debug("corrected")
-            starcall.correction.crosstalk_plot(values, corrected, dye_matrix, name=wildcards.prefix.replace('/','_'))
-            values = corrected
-            values = values.transpose(1,0,2)
-            """
+        """
+        values = values.transpose(1,0,2)
+        debug("correcting", values.shape)
+        dye_matrix = starcall.correction.estimate_dye_matrix(values)
+        corrected = starcall.correction.color_correct(values)
+        debug("corrected")
+        starcall.correction.crosstalk_plot(values, corrected, dye_matrix, name=wildcards.prefix.replace('/','_'))
+        values = corrected
+        values = values.transpose(1,0,2)
+        """
 
-            #values = values.reshape(image.shape[0] * image.shape[1], -1).T
-            values = values.reshape(values.shape[0], -1)
-            debug (values.mean(axis=0))
-            debug (values.shape)
-            np.savetxt(output[0], np.concatenate((poses, values), axis=1), delimiter=',', fmt='%f')
+        reads.to_table().to_csv(output[0])
+
+        ##values = values.reshape(image.shape[0] * image.shape[1], -1).T
+        #values = values.reshape(values.shape[0], -1)
+        #debug (values.mean(axis=0))
+        #debug (values.shape)
+        #np.savetxt(output[0], np.concatenate((poses, values), axis=1), delimiter=',', fmt='%f')
 
 def read_value_dist(values1, values2):
     return 1 - np.sum(values1 * values2)
@@ -340,8 +315,8 @@ def read_value_dist(values1, values2):
 rule call_raw_reads:
     input:
         bases = sequencing_dir + '{prefix}/bases.csv',
-        cells = sequencing_output_dir + '{prefix}/{segmentation_type}_mask.tif',
-        cells_table = sequencing_output_dir + '{prefix}/{segmentation_type}.csv',
+        cells = sequencing_output_dir + '{prefix}/{segmentation_type}_mask_downscaled.tif',
+        #cells_table = sequencing_output_dir + '{prefix}/{segmentation_type}.csv',
     output:
         table = sequencing_dir + '{prefix}/{segmentation_type}_raw_reads.csv',
     resources:
@@ -352,7 +327,17 @@ rule call_raw_reads:
         import pandas
         import csv
         import matplotlib.pyplot as plt
+        import starcall.reads
 
+        cells = tifffile.imread(input.cells)
+        reads = starcall.reads.ReadSet.from_table(pandas.read_csv(input.bases, index_col=0))
+
+        xposes, yposes = np.round(reads.positions.T).astype(int)
+        reads.attrs['cell'] = cells[xposes,yposes]
+
+        reads.to_table().to_csv(output.table)
+
+        """
         cells_table = pandas.read_csv(input.cells_table, index_col=0)
         cells = tifffile.imread(input.cells)
         values = np.loadtxt(input.bases, delimiter=',')
@@ -375,26 +360,48 @@ rule call_raw_reads:
                     quality = qualities.mean(),
                     **{'quality_{}'.format(j): qualities[j] for j in range(len(qualities))}
                 ))
+        """
 
 
 rule calculate_dist_matrix:
     input:
         bases = sequencing_dir + '{prefix}/bases.csv',
         cells = sequencing_output_dir + '{prefix}/{segmentation_type}_mask_downscaled.tif',
-        cells_table = sequencing_output_dir + '{prefix}/{segmentation_type}.csv',
+        #cells_table = sequencing_output_dir + '{prefix}/{segmentation_type}.csv',
     output:
-        table = sequencing_dir + '{prefix}/{segmentation_type}_reads_dist_matrix_norm{norm,[^_]+}_distmul{distmul,\d+}.csv'
+        table = sequencing_dir + '{prefix}/{segmentation_type}_reads_dist_matrix_norm{norm,[^_]+}_distmul{distmul,\d+}_valmul{valmul,[^_]+}_seqmul{seqmul,[^_]+}.csv'
     resources:
         mem_mb = lambda wildcards, input: 5000 + input.size_mb * 10
     run:
         import tifffile
         import numpy as np
         import pandas
-        import scipy.ndimage
+        import starcall.reads
         import csv
-        import matplotlib.pyplot as plt
-        import sklearn.neighbors
 
+        reads = starcall.reads.ReadSet.from_table(pandas.read_csv(input.bases, index_col=0))
+        cells = tifffile.imread(input.cells)
+
+        if wildcards.norm != 'none':
+            reads.normalize(method=wildcards.norm)
+
+        dist_matrix = starcall.reads.distance_matrix(
+            reads, cells=cells,
+            distance_cutoff=50,
+            positional_weight=float(wildcards.distmul),
+            value_weight=float(wildcards.valmul),
+            sequence_weight=float(wildcards.seqmul),
+            debug=True, progress=True,
+        )
+
+        with open(output.table, 'w') as ofile:
+            writer = csv.DictWriter(ofile, ['i', 'j', 'distance'])
+            writer.writeheader()
+
+            for pair, dist in dist_matrix.items():
+                writer.writerow(dict(i=pair[0], j=pair[1], distance=dist))
+
+        """
         dist_threshold = 50
 
         #dist_multiplier = 50000
@@ -530,19 +537,40 @@ rule calculate_dist_matrix:
                         #skdjfls
 
         #fig.savefig('tmp_dists.png')
+        """
 
 
 rule cluster_reads:
     input:
         distances = sequencing_dir + '{prefix}/{segmentation_type}_reads_dist_matrix{params}.csv'
     output:
-        clusters = sequencing_dir + '{prefix}/{segmentation_type}_read_clusters_thresh{thresh,\d+}_linkage{linkage,min|mean|max}{params}.csv',
+        clusters = sequencing_dir + '{prefix}/{segmentation_type}_read_clusters_thresh{thresh,[^_]+}_linkage{linkage,min|mean|max}{params}.csv',
     resources:
         mem_mb = lambda wildcards, input: 5000 + input.size_mb * 10
     run:
         import numpy as np
         import csv
+        import starcall.reads
 
+        distance_matrix = {}
+        with open(input.distances) as ifile:
+            reader = csv.DictReader(ifile)
+            for row in reader:
+                i, j, distance = int(row['i']), int(row['j']), float(row['distance'])
+                distance_matrix[i,j] = distance
+
+        cluster_indices = starcall.reads.cluster_reads(
+            distance_matrix,
+            threshold=float(wildcards.thresh),
+            linkage=wildcards.linkage,
+            debug=True, progress=True,
+        )
+
+        with open(output.clusters, 'w') as ofile:
+            ofile.write('cluster\n')
+            ofile.write(''.join(str(cluster) + '\n' for cluster in cluster_indices))
+
+        '''
         #dist_threshold = 100#6 / len(cycles)
         dist_threshold = float(wildcards.thresh)
 
@@ -723,13 +751,14 @@ rule cluster_reads:
         with open(output.clusters, 'w') as ofile:
             ofile.write('cluster\n')
             ofile.write(''.join(str(cluster) + '\n' for cluster in cluster_indices))
+        '''
 
 
 rule combine_reads:
     input:
         bases = sequencing_dir + '{prefix}/bases.csv',
-        cells = sequencing_output_dir + '{prefix}/{segmentation_type}_mask.tif',
-        cells_table = sequencing_output_dir + '{prefix}/{segmentation_type}.csv',
+        cells = sequencing_output_dir + '{prefix}/{segmentation_type}_mask_downscaled.tif',
+        #cells_table = sequencing_output_dir + '{prefix}/{segmentation_type}.csv',
         clusters = sequencing_dir + '{prefix}/{segmentation_type}_read_clusters{params}.csv',
     output:
         table = sequencing_dir + '{prefix}/{segmentation_type}_clustered_reads{params}.csv',
@@ -741,14 +770,27 @@ rule combine_reads:
         import pandas
         import csv
         import matplotlib.pyplot as plt
+        import starcall.reads
 
-        cells_table = pandas.read_csv(input.cells_table, index_col=0)
+        #cells_table = pandas.read_csv(input.cells_table, index_col=0)
         cells = tifffile.imread(input.cells)
-        values = np.loadtxt(input.bases, delimiter=',')
-        poses, values = values[:,:2].astype(int), values[:,2:]
-        values = values.reshape(values.shape[0], len(cycles), -1)
+        #values = np.loadtxt(input.bases, delimiter=',')
+        #poses, values = values[:,:2].astype(int), values[:,2:]
+        #values = values.reshape(values.shape[0], len(cycles), -1)
+        reads = starcall.reads.ReadSet.from_table(pandas.read_csv(input.bases, index_col=0))
         clusters = np.loadtxt(input.clusters, skiprows=1, dtype=int, delimiter=',').reshape(-1)
+        reads.attrs['cluster'] = clusters
+        reads.attrs['count'] = np.ones(len(clusters))
+        xposes, yposes = np.round(reads.positions.T).astype(int)
+        reads.attrs['cell'] = cells[xposes,yposes]
 
+        read_sets = reads.groupby('cluster')
+        combined = read_sets.combine(method=dict(count='sum'))
+        del combined.attrs['cluster']
+
+        combined.to_table().to_csv(output.table)
+
+        """
         with open(output.table, 'w') as ofile:
             writer = csv.DictWriter(ofile, ['index', 'xpos', 'ypos', 'read', 'count', 'cell', 'quality'] + ['quality_{}'.format(i) for i in range(values.shape[1])])
             writer.writeheader()
@@ -781,6 +823,7 @@ rule combine_reads:
                     quality = qualities.mean(),
                     **{'quality_{}'.format(j): qualities[j] for j in range(len(qualities))}
                 ))
+        """
 
 
 rule combine_cell_reads:
@@ -792,7 +835,17 @@ rule combine_cell_reads:
         import pandas
         import numpy as np
         import starcall.utils
+        import starcall.reads
 
+        reads = starcall.reads.ReadSet.from_table(pandas.read_csv(input.table))
+        reads.attrs['read_index'] = np.arange(len(reads))
+
+        cell_reads = reads.groupby('cell')
+        read_table = cell_reads.to_table(columns=['cell', 'read', 'count', 'quality', 'read_index'], sequences=True, qualities=True)
+        read_table = read_table.set_index('cell')
+        read_table.to_csv(output.table)
+
+        """
         reads = pandas.read_csv(input.table, index_col=0)
 
         index = []
@@ -821,6 +874,7 @@ rule combine_cell_reads:
 
         table = pandas.DataFrame(table, index=index)
         table.to_csv(output[0])
+        """
 
 
 
