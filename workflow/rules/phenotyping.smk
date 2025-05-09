@@ -138,14 +138,28 @@ rule run_cellprofiler:
         pipeline = find_pipeline,
         #pipeline = '{pipeline}.cppipe',
     output:
-        data = phenotyping_output_dir + '{prefix}/cellprofiler_{pipeline,[^./]+}.csv',
-        mark = phenotyping_dir + '{prefix}/cellprofiler/{pipeline,[^./]+}/mark',
+        #data = phenotyping_output_dir + '{prefix}/cellprofiler_{pipeline,[^./]+}.csv',
+        #mark = phenotyping_dir + '{prefix}/cellprofiler/{pipeline,[^./]+}/mark',
+        cell_file = phenotyping_dir + '{prefix}/cellprofiler/{pipeline}/Cells.csv'
     resources:
         mem_mb = lambda wildcards, input, attempt: input.size_mb * ([50, 100, 500][attempt-1]) + 10000 #+ (attempt - 1) * 200000
     threads: 2
-    retries: 2
+    conda:
+        'cp4'
+        #'../envs/cellprofiler.yaml'
+    #retries: 2
+    shell:
+        'cellprofiler -c -r -p {input.pipeline} -i ' + phenotyping_dir + '{wildcards.prefix}/cellprofiler -o ' + phenotyping_dir + '{wildcards.prefix}/cellprofiler/{wildcards.pipeline}'
+        #'~/miniconda3/envs/cp4/bin/cellprofiler -c -r -p {input.pipeline} -i ' + phenotyping_dir + '{wildcards.prefix}/cellprofiler -o ' + phenotyping_dir + '{wildcards.prefix}/cellprofiler/{wildcards.pipeline}'
+
+rule copy_cellprofiler_output:
+    input:
+        cell_file = phenotyping_dir + '{prefix}/cellprofiler/{pipeline}/Cells.csv'
+    output:
+        data = phenotyping_output_dir + '{prefix}/cellprofiler_{pipeline,[^./]+}.csv',
     run:
         import pandas
+        '''
         command = '~/miniconda3/envs/cp4/bin/cellprofiler -c -r -p {pipeline_file} -i {proc}{prefix}/cellprofiler -o {proc}{prefix}/cellprofiler/{pipeline}'
         command = command.format(proc=phenotyping_dir, prefix=wildcards.prefix, pipeline=wildcards.pipeline, pipeline_file=input.pipeline)
         print (command)
@@ -160,9 +174,11 @@ rule run_cellprofiler:
         else:
             table = pandas.DataFrame()
         #os.system('ln -s "{}" "{}"'.format(os.path.relpath(table_path, os.path.dirname(output.data)), output.data))
+        '''
+        table = pandas.read_csv(input.cell_file, index_col=0)
         table.to_csv(output.data)
 
-        os.system('touch {}'.format(output.mark))
+        #os.system('touch {}'.format(output.mark))
 
 
 ##################################################

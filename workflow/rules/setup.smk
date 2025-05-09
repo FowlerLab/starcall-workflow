@@ -41,6 +41,7 @@ rule link_input_phenotyping:
     shell:
         "cp -l {input[0]} {output[0]}"
 
+"""
 rule link_output:
     input:
         phenotyping_output_dir + '{file}'
@@ -58,7 +59,7 @@ rule link_output_nice:
     localrule: True
     shell:
         "cp -l {input[0]} {output[0]}"
-
+"""
 
 
 

@@ -121,7 +121,8 @@ rule merge_grid:
         mem_mb = lambda wildcards, input: input.size_mb * 10 + 25000
     wildcard_constraints:
         #type = '((?!/tile).)*(csv|tif)',
-        type = '[^/]+',
+        #type = '[^/]+',
+        type = '(bases.csv)|([^/_]+_mask.tif)',
         possible_output_dir = '(' + output_dir + ')|',
         #any_processing_dir = sequencing_dir + '|' + phenotyping_dir
     run:
@@ -135,11 +136,16 @@ rule merge_grid:
         if wildcards.type == 'bases.csv':
             filtered = []
             for i,path in enumerate(input.images):
-                bases = np.loadtxt(path, delimiter=',')
-                bases[:,:2] += composite.boxes[i].position[:2].reshape(1,2)
+                #bases = np.loadtxt(path, delimiter=',')
+                #bases[:,:2] += composite.boxes[i].position[:2].reshape(1,2)
+                #filtered.append(bases)
+                bases = pandas.read_csv(path, index_col=0)
+                bases['xpos'] += composite.boxes[i].position[0]
+                bases['ypos'] += composite.boxes[i].position[1]
                 filtered.append(bases)
 
-            np.savetxt(output.image, np.concatenate(filtered, axis=0), delimiter=',', fmt='%f')
+            #np.savetxt(output.image, np.concatenate(filtered, axis=0), delimiter=',', fmt='%f')
+            pandas.concat(filtered).to_csv(output.image)
 
         elif wildcards.type.endswith('.tif'):
 
@@ -150,8 +156,8 @@ rule merge_grid:
             if wildcards.type.endswith('_mask_downscaled.tif'):
                 merger = constitch.MaskMerger()
             if wildcards.type.endswith('_mask.tif'):
-                composite.boxes.positions *= phenotype_scale
-                composite.boxes.sizes *= phenotype_scale
+                composite.boxes.positions[:,:2] *= phenotype_scale
+                composite.boxes.sizes[:,:2] *= phenotype_scale
                 merger = constitch.MaskMerger()
 
             full_image = composite.stitch(merger=merger)

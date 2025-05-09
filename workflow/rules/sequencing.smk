@@ -363,13 +363,13 @@ rule call_raw_reads:
         """
 
 
-rule calculate_dist_matrix:
+rule calculate_distance_matrix:
     input:
         bases = sequencing_dir + '{prefix}/bases.csv',
         cells = sequencing_output_dir + '{prefix}/{segmentation_type}_mask_downscaled.tif',
         #cells_table = sequencing_output_dir + '{prefix}/{segmentation_type}.csv',
     output:
-        table = sequencing_dir + '{prefix}/{segmentation_type}_reads_dist_matrix_norm{norm,[^_]+}_distmul{distmul,\d+}_valmul{valmul,[^_]+}_seqmul{seqmul,[^_]+}.csv'
+        table = sequencing_dir + '{prefix}/{segmentation_type}_reads_distance_matrix.csv'
     resources:
         mem_mb = lambda wildcards, input: 5000 + input.size_mb * 10
     run:
@@ -379,18 +379,23 @@ rule calculate_dist_matrix:
         import starcall.reads
         import csv
 
+        normalization = 'none'
+        positional_weight = 100
+        value_weight = 0
+        sequence_weight = 1
+
         reads = starcall.reads.ReadSet.from_table(pandas.read_csv(input.bases, index_col=0))
         cells = tifffile.imread(input.cells)
 
-        if wildcards.norm != 'none':
-            reads.normalize(method=wildcards.norm)
+        if normalization != 'none':
+            reads.normalize(method=normalization)
 
-        dist_matrix = starcall.reads.distance_matrix(
+        distance_matrix = starcall.reads.distance_matrix(
             reads, cells=cells,
             distance_cutoff=50,
-            positional_weight=float(wildcards.distmul),
-            value_weight=float(wildcards.valmul),
-            sequence_weight=float(wildcards.seqmul),
+            positional_weight=positional_weight,
+            value_weight=value_weight,
+            sequence_weight=sequence_weight,
             debug=True, progress=True,
         )
 
@@ -398,159 +403,24 @@ rule calculate_dist_matrix:
             writer = csv.DictWriter(ofile, ['i', 'j', 'distance'])
             writer.writeheader()
 
-            for pair, dist in dist_matrix.items():
+            for pair, dist in distance_matrix.items():
                 writer.writerow(dict(i=pair[0], j=pair[1], distance=dist))
-
-        """
-        dist_threshold = 50
-
-        #dist_multiplier = 50000
-        dist_multiplier = float(wildcards.distmul)
-        #dist_multiplier_cell = 0
-
-        dist_multiplier = dist_multiplier / dist_threshold
-
-        cells_table = pandas.read_csv(input.cells_table, index_col=0)
-        cells = tifffile.imread(input.cells)
-        #cells = skimage.transform.rescale(mask, 1/phenotype_scale, order=0)
-        values = np.loadtxt(input.bases, delimiter=',')
-        poses, values = values[:,:2].astype(int), values[:,2:]
-
-        #lengths = np.linalg.norm(values, axis=2)
-        #lengths = lengths / np.linalg.norm(lengths, axis=1)[:,None]
-        #values *= lengths[:,:,None]
-        #assert not np.any(np.isnan(values))
-        if wildcards.norm == 'large':
-            values = values.reshape(values.shape[0], -1, 4)
-            values /= np.maximum(1, np.linalg.norm(values, axis=2)[:,:,None])
-            values = values.reshape(values.shape[0], -1)
-        if wildcards.norm == 'full':
-            values = values.reshape(values.shape[0], -1, 4)
-            values /= np.maximum(0.0000000001, np.linalg.norm(values, axis=2)[:,:,None])
-            values = values.reshape(values.shape[0], -1)
-        if wildcards.norm == 'sub':
-            values = values.reshape(values.shape[0], -1, 4)
-            sorted_values = np.sort(values, axis=2)
-            values -= sorted_values[:,:,-2:-1]
-            values = values.reshape(values.shape[0], -1)
-        #assert not np.any(np.isnan(values))
-
-        debug ("Finding neighbors")
-        neighbors = sklearn.neighbors.NearestNeighbors(radius=dist_threshold)
-        neighbors = neighbors.fit(poses)
-
-        cell_matrix = {}
-
-        debug ("Calculating cell distances")
-
-        cell_poses = np.array([cells_table['xpos'], cells_table['ypos']]).T // phenotype_scale
-        dists, indices = neighbors.radius_neighbors(cell_poses)
-
-        for i, cell in enumerate(progress(cells_table.index)):
-            x1 = max(0, cells_table['bbox_x1'][cell] // phenotype_scale - dist_threshold)
-            y1 = max(0, cells_table['bbox_y1'][cell] // phenotype_scale - dist_threshold)
-            x2 = cells_table['bbox_x2'][cell] // phenotype_scale + dist_threshold
-            y2 = cells_table['bbox_y2'][cell] // phenotype_scale + dist_threshold
-            section = cells[x1:x2,y1:y2] == cell
-            #debug (cells_table.loc[cell,:])
-            #assert np.any(section)
-            #assert not np.all(section)
-
-            dists = scipy.ndimage.distance_transform_edt(~section)
-            dists[section] = 0
-            #debug (dists.mean(), len(indices[i]))
-
-            for j in indices[i]:
-                #all_indices.add(j)
-                x, y = poses[j]
-                #debug(x, y, x1, y1, x2, y2)
-                if x >= x1 and x < x2 and y >= y1 and y < y2:
-                    dist = dists[x-x1,y-y1]
-                    #debug(dist)
-                    #cell_matrix[cell,j] = dist
-                    cell_matrix.setdefault(j, {})[cell] = dist
-            #sdfklj
-
-        #debug ('  done', len(cell_matrix), list(cell_matrix.keys())[:10])
-        #debug (len(all_indices))
-        #debug (all_indices == set(cell_matrix.keys()))
-
-        #skdjflsdk
-        #fig, axis = plt.subplots()
-
-        debug("Calculating dot distances")
-        dists, indices = neighbors.radius_neighbors(poses)
-
-        #full_matrix = {}
-        with open(output.table, 'w') as ofile:
-            writer = csv.DictWriter(ofile, ['i', 'j', 'distance'])
-            writer.writeheader()
-            #ofile.write('i,j,distance\n')
-
-            #for i in progress(range(len(poses))):
-                #for j in range(i+1, len(poses)):
-                    #direct_dist = np.linalg.norm(poses[i] - poses[j])
-                    #if direct_dist > dist_threshold:
-                        #continue
-            for i, cur_dists, cur_indices in zip(progress(range(len(dists))), dists, indices):
-                for pos_dist, j in zip(cur_dists, cur_indices):
-                    if i >= j:
-                        continue
-
-                    direct_dist = pos_dist
-                    value_dist = np.linalg.norm(values[i]) * np.linalg.norm(values[j]) - np.sum(values[i] * values[j])
-
-                    #debug ('value dist', value_dist, np.linalg.norm(values[i]), np.linalg.norm(values[j]))
-                    #debug ('   ', ''.join(np.array(list('GTAC'))[values[i].reshape(-1,4).argmax(axis=1)]))
-                    #debug ('   ', ''.join(np.array(list('GTAC'))[values[j].reshape(-1,4).argmax(axis=1)]))
-                    #debug ('   ', values[i], values[j])
-                    #debug ('direct dist', direct_dist)
-
-                    min_cell_dist = direct_dist
-                    #for cell in cells_table.index:
-                        #if (cell, i) not in cell_matrix or (cell, j) not in cell_matrix:
-                            #continue
-                        #dist = cell_matrix[cell,i] + cell_matrix[cell,j]
-                    #if i not in cell_matrix:
-                        #debug ('not in cell matrix', i)
-                    #if j not in cell_matrix:
-                        #debug ('not in cell matrix', i)
-
-                    if i in cell_matrix and j in cell_matrix:
-                        for cell in set(cell_matrix[i].keys()) & set(cell_matrix[j].keys()):
-                            dist = cell_matrix[i][cell] + cell_matrix[j][cell]
-                            if dist < min_cell_dist:
-                                min_cell_dist = dist
-                                #cell_center = np.argwhere(cells == cell).mean(axis=0)
-                                #axis.plot([poses[i,0], cell_center[0], poses[j,0]], [poses[i,1], cell_center[1], poses[j,1]], color='red')
-                                #debug ('cell closer', cell, dist)
-
-                    #debug ('cell dist', min_cell_dist)
-                    dist = min_cell_dist * dist_multiplier + value_dist
-                    #debug('dist', dist)
-                    writer.writerow(dict(i=str(i), j=str(j), distance=str(dist)))
-                    #ofile.write('{},{},{}\n'.format(i, j, dist))
-                    #axis.plot([poses[i,0], poses[j,0]], [poses[i,1], poses[j,1]], color='blue')
-                    #debug (dist)
-                    #if i == 10:
-                        #fig.savefig('tmp_dists.png')
-                        #skdjfls
-
-        #fig.savefig('tmp_dists.png')
-        """
 
 
 rule cluster_reads:
     input:
-        distances = sequencing_dir + '{prefix}/{segmentation_type}_reads_dist_matrix{params}.csv'
+        distances = sequencing_dir + '{prefix}/{segmentation_type}_reads_distance_matrix.csv'
     output:
-        clusters = sequencing_dir + '{prefix}/{segmentation_type}_read_clusters_thresh{thresh,[^_]+}_linkage{linkage,min|mean|max}{params}.csv',
+        clusters = sequencing_dir + '{prefix}/{segmentation_type}_reads_clusters.csv',
     resources:
         mem_mb = lambda wildcards, input: 5000 + input.size_mb * 10
     run:
         import numpy as np
         import csv
         import starcall.reads
+
+        threshold = 0.5
+        linkage = 'min'
 
         distance_matrix = {}
         with open(input.distances) as ifile:
@@ -561,8 +431,8 @@ rule cluster_reads:
 
         cluster_indices = starcall.reads.cluster_reads(
             distance_matrix,
-            threshold=float(wildcards.thresh),
-            linkage=wildcards.linkage,
+            threshold=threshold,
+            linkage=linkage,
             debug=True, progress=True,
         )
 
@@ -570,198 +440,16 @@ rule cluster_reads:
             ofile.write('cluster\n')
             ofile.write(''.join(str(cluster) + '\n' for cluster in cluster_indices))
 
-        '''
-        #dist_threshold = 100#6 / len(cycles)
-        dist_threshold = float(wildcards.thresh)
-
-        dists = {}
-        cluster_dists = {}
-        num_reads = 0
-        with open(input.distances) as ifile:
-            reader = csv.DictReader(ifile)
-            for row in reader:
-                i, j, distance = int(row['i']), int(row['j']), float(row['distance'])
-                #if distance <= dist_threshold:
-                dists[i,j] = distance
-                #dists.setdefault(i, {})[j] = distance
-                #dists.setdefault(j, {})[i] = distance
-                cluster_dists.setdefault(i, {})[j] = distance
-                cluster_dists.setdefault(j, {})[i] = distance
-                num_reads = max(num_reads, i, j)
-
-        #cluster_dists = dists.copy()
-        #num_reads = max(max(pair) for pair in dists) + 1
-        num_reads += 1
-
-        clusters = np.arange(num_reads).reshape(-1,1).tolist()
-        debug (len(clusters))
-        cluster_indices = np.arange(num_reads)
-
-        #for pair, dist in dists.items():
-            #clusters[pair[0]].extend(clusters[pair[1]])
-            #clusters[pair[1]] = []
-
-        def merge_dists_mean(cluster1, cluster2, dists1, dists2):
-            weight1, weight2 = len(clusters[cluster1]), len(clusters[cluster2])
-            weight1, weight2 = weight1 / (weight1 + weight2), weight2 / (weight1 + weight2)
-
-            new_dists = {}
-            for i, dist1 in dists1.items():
-                if i in dists2:
-                    new_dists[i] = dist1 * weight1 + dists2[i] * weight2
-
-                    """
-                    dist_set = []
-                    for j in list(clusters[cluster1]) + list(clusters[cluster2]):
-                        for k in clusters[i]:
-                            pair = (j,k) if j < k else (k,j)
-                            dist_set.append(dists[pair])
-                    debug (dist_set)
-                    debug (dist1, dists2[i], weight1, weight2)
-                    dist = sum(dist_set) / len(dist_set)
-
-                    debug (dist, new_dists[i])
-                    assert abs(dist - new_dists[i]) < 0.0001
-                    """
-
-            return new_dists
-
-        def merge_dists_max(cluster1, cluster2, dists1, dists2):
-            return {pair: max(dists1[pair], dists2[pair]) for pair in set(dists1.keys()) & set(dists2.keys())}
-
-        def merge_dists_min(cluster1, cluster2, dists1, dists2):
-            return {pair: min(dists1[pair], dists2[pair]) for pair in set(dists1.keys()) & set(dists2.keys())}
-
-        merge_dists_func = merge_dists_mean
-        if wildcards.linkage == 'min':
-            merge_dists_func = merge_dists_min
-        if wildcards.linkage == 'max':
-            merge_dists_func = merge_dists_max
-
-        for pair, dist in progress(sorted(dists.items(), key=lambda kv: -kv[1])):
-            """
-        while True:
-            min_pair = None
-            min_dist = dist_threshold
-            for cluster1 in cluster_dists.keys():
-                for cluster2, dist in cluster_dists[cluster1].items():
-                    if dist < min_dist:
-                        min_dist = dist
-                        min_pair = cluster1, cluster2
-
-            if min_pair is None:
-                break
-
-            pair = min_pair
-            if pair[0] > pair[1]:
-                pair = pair[1], pair[0]
-
-            #min_pair = min(((i, *min(cluster_dists[i].items(), key=lambda kv: kv[1])) for i in cluster_dists.keys()), key=lambda x: x[2])
-
-            #if min_pair[2] > dist_threshold:
-                #break
-
-            #pair = min_pair[:2]
-
-            """
-            pair = cluster_indices[pair[0]], cluster_indices[pair[1]]
-
-            assert len(clusters[pair[0]]) != 0 and len(clusters[pair[1]]) != 0
-
-            if pair[1] not in cluster_dists[pair[0]]:
-                continue
-
-            cluster_dist = cluster_dists[pair[0]][pair[1]]
-            if cluster_dist > dist_threshold:
-                continue
-            #"""
-
-            #debug ('Merging ', pair, cluster_dists[pair[0]][pair[1]])
-
-            for other in cluster_dists[pair[0]].keys():
-                del cluster_dists[other][pair[0]]
-            for other in cluster_dists[pair[1]].keys():
-                del cluster_dists[other][pair[1]]
-
-            new_dists = merge_dists_func(pair[0], pair[1], cluster_dists.pop(pair[0]), cluster_dists.pop(pair[1]))
-
-            cluster_dists[pair[0]] = new_dists
-            for other, dist in new_dists.items():
-                cluster_dists[other][pair[0]] = dist
-
-            # updating clusters, all reads in cluster pair[1] join pair[0]
-
-            cluster_indices[clusters[pair[1]]] = pair[0]
-
-            clusters[pair[0]].extend(clusters[pair[1]])
-            clusters[pair[1]] = []
-
-
-        """
-        min_pair = min(cluster_dists.keys(), key=lambda pair: cluster_dists[pair])
-        while cluster_dists[min_pair] < dist_threshold:
-            debug ('merging', min_pair)
-            debug (len(clusters))
-
-            clusters[min_pair[0]].extend(clusters[min_pair[1]])
-            clusters[min_pair[1]] = []
-            cluster_indices.remove(min_pair[1])
-
-            dists1, dists2 = cluster_dists.pop(min_pair[0]), cluster_dists.pop(min_pair[1])
-
-
-            #for other in range(len(clusters)):
-            for other in cluster_indices:
-                #if other == min_pair[0] or len(clusters[other]) == 0: continue
-
-                pair = (other, min_pair[0]) if other < min_pair[0] else (min_pair[0], other)
-                prev_pair = (other, min_pair[1]) if other < min_pair[1] else (min_pair[1], other)
-
-                if prev_pair in cluster_dists:
-                    del cluster_dists[prev_pair]
-                else:
-                    continue
-
-                if pair in cluster_dists:
-                    del cluster_dists[pair]
-                else:
-                    continue
-
-                if pair[0] == pair[1]: continue
-
-                dist_set = []
-                for i in clusters[pair[0]]:
-                    for j in clusters[pair[1]]:
-                        dist_set.append(dists.get((i,j), None))
-
-                if any(dist is None for dist in dist_set):
-                    continue
-
-                dist = sum(dist_set) / len(dist_set)
-                cluster_dists[pair] = dist
-
-            min_pair = min(cluster_dists.keys(), key=lambda pair: cluster_dists[pair])
-        """
-
-        cluster_indices = np.zeros(num_reads, dtype=int)
-        for i,cluster in enumerate(filter(lambda cluster: len(cluster), clusters)):
-            cluster_indices[cluster] = i
-            debug ('cluster', i, cluster)
-
-        with open(output.clusters, 'w') as ofile:
-            ofile.write('cluster\n')
-            ofile.write(''.join(str(cluster) + '\n' for cluster in cluster_indices))
-        '''
 
 
 rule combine_reads:
     input:
-        bases = sequencing_dir + '{prefix}/bases.csv',
-        cells = sequencing_output_dir + '{prefix}/{segmentation_type}_mask_downscaled.tif',
-        #cells_table = sequencing_output_dir + '{prefix}/{segmentation_type}.csv',
-        clusters = sequencing_dir + '{prefix}/{segmentation_type}_read_clusters{params}.csv',
+        #bases = sequencing_dir + '{prefix}/bases.csv',
+        raw_reads = sequencing_dir + '{prefix}/{segmentation_type}_raw_reads.csv',
+        #cells = sequencing_output_dir + '{prefix}/{segmentation_type}_mask_downscaled.tif',
+        clusters = sequencing_dir + '{prefix}/{segmentation_type}_reads_clusters.csv',
     output:
-        table = sequencing_dir + '{prefix}/{segmentation_type}_clustered_reads{params}.csv',
+        table = sequencing_dir + '{prefix}/{segmentation_type}_clustered_reads.csv',
     resources:
         mem_mb = lambda wildcards, input: 5000 + input.size_mb * 10
     run:
@@ -772,65 +460,27 @@ rule combine_reads:
         import matplotlib.pyplot as plt
         import starcall.reads
 
-        #cells_table = pandas.read_csv(input.cells_table, index_col=0)
-        cells = tifffile.imread(input.cells)
-        #values = np.loadtxt(input.bases, delimiter=',')
-        #poses, values = values[:,:2].astype(int), values[:,2:]
-        #values = values.reshape(values.shape[0], len(cycles), -1)
-        reads = starcall.reads.ReadSet.from_table(pandas.read_csv(input.bases, index_col=0))
+        reads = starcall.reads.ReadSet.from_table(pandas.read_csv(input.raw_reads, index_col=0))
         clusters = np.loadtxt(input.clusters, skiprows=1, dtype=int, delimiter=',').reshape(-1)
         reads.attrs['cluster'] = clusters
         reads.attrs['count'] = np.ones(len(clusters))
-        xposes, yposes = np.round(reads.positions.T).astype(int)
-        reads.attrs['cell'] = cells[xposes,yposes]
 
         read_sets = reads.groupby('cluster')
-        combined = read_sets.combine(method=dict(count='sum'))
+        combined = read_sets.combine(method=dict(
+            count='sum',
+            cell='mode',
+        ))
+
         del combined.attrs['cluster']
 
         combined.to_table().to_csv(output.table)
 
-        """
-        with open(output.table, 'w') as ofile:
-            writer = csv.DictWriter(ofile, ['index', 'xpos', 'ypos', 'read', 'count', 'cell', 'quality'] + ['quality_{}'.format(i) for i in range(values.shape[1])])
-            writer.writeheader()
-
-            for cluster in range(clusters.max() + 1):
-                mask = clusters == cluster
-                cur_poses = poses[mask] * phenotype_scale
-                cur_values = values[mask].mean(axis=0)
-                all_reads = np.array(list('GTAC'))[np.argmax(values[mask], axis=2)]
-                all_reads = list(map(''.join, all_reads))
-                read = ''.join('GTAC'[j] for j in np.argmax(cur_values, axis=1))
-                debug ('\n' + '\n'.join(all_reads) + '\n\n' + read)
-
-                #for read in all_reads:
-                    #debug (''.join(read))
-
-                cell_labels, counts = np.unique(cells[cur_poses[:,0],cur_poses[:,1]], return_counts=True)
-                cell = cell_labels[np.argmax(counts)]
-
-                qualities = cur_values.max(axis=1)
-                xpos, ypos = cur_poses.mean(axis=0)
-
-                writer.writerow(dict(
-                    index = cluster,
-                    xpos = xpos,
-                    ypos = ypos,
-                    read = ''.join('GTAC'[j] for j in np.argmax(cur_values, axis=1)),
-                    count = len(cur_poses),
-                    cell = cell,
-                    quality = qualities.mean(),
-                    **{'quality_{}'.format(j): qualities[j] for j in range(len(qualities))}
-                ))
-        """
-
 
 rule combine_cell_reads:
     input:
-        table = sequencing_dir + '{prefix}/{segmentation_type}_clustered_reads{params}.csv',
+        table = sequencing_dir + '{prefix}/{segmentation_type}_clustered_reads.csv',
     output:
-        table = sequencing_dir + '{prefix}/{segmentation_type}_reads_partial{params}.csv',
+        table = sequencing_dir + '{prefix}/{segmentation_type}_reads_partial.csv',
     run:
         import pandas
         import numpy as np
@@ -845,40 +495,8 @@ rule combine_cell_reads:
         read_table = read_table.set_index('cell')
         read_table.to_csv(output.table)
 
-        """
-        reads = pandas.read_csv(input.table, index_col=0)
 
-        index = []
-        indices = []
-        read_sets = []
-        counts = []
-        qualities = []
-
-        for cell, group in reads.groupby('cell'):
-            if cell == 0: continue
-            group = group.sort_values('count', ascending=False)
-            index.append(cell)
-            indices.append(list(group.index))
-            read_sets.append(list(group['read']))
-            counts.append(list(group['count']))
-            qualities.append(list(group['quality']))
-
-        table = {}
-
-        starcall.utils.write_multicolumn(table, 'read', read_sets, length_column='read_count')
-        starcall.utils.write_multicolumn(table, 'count', counts, length_column='read_count')
-        starcall.utils.write_multicolumn(table, 'read_index', indices, length_column='read_count')
-        starcall.utils.write_multicolumn(table, 'quality', qualities, length_column='read_count')
-
-        table['total_count'] = list(map(sum, counts))
-
-        table = pandas.DataFrame(table, index=index)
-        table.to_csv(output[0])
-        """
-
-
-
-ruleorder: merge_grid > find_dots
+#ruleorder: merge_grid > find_dots
 ruleorder: merge_grid > segment_cells
 #ruleorder: link_grid > find_dots
 #ruleorder: link_grid > segment_cells

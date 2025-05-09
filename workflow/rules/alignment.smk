@@ -145,8 +145,9 @@ rule solve_constraints:
         composite = stitching_dir + '{prefix}/composite.json',
         plot1 = qc_dir + '{prefix}/presolve.png',
         plot2 = qc_dir + '{prefix}/solved.png',
+        plot3 = qc_dir + '{prefix}/solved_accuracy.png',
     resources:
-        mem_mb = lambda wildcards, input: input.size_mb * 1000 + 15000
+        mem_mb = lambda wildcards, input: input.size_mb * 1000 + 25000
     run:
         import constitch
 
@@ -166,6 +167,7 @@ rule solve_constraints:
 
         composite.setpositions(solution)
         composite.plot_scores(output.plot2, solving_constraints)
+        composite.plot_scores(output.plot3, solving_constraints, score_func='accuracy')
 
         constitch.save(output.composite, composite)
 

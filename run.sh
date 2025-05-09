@@ -37,6 +37,6 @@ snakemake \
     $* --cores 50 --resources mem_mb=2000000 --set-resource-scopes mem_mb=global threads=global \
     --rerun-triggers mtime params input software-env \
     --keep-incomplete --latency-wait 120 $configfile \
-    --default-resources cuda=0
+    --default-resources cuda=0 --use-conda --conda-frontend conda
     #--immediate-submit --notemp \
 
