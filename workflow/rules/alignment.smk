@@ -142,7 +142,7 @@ rule solve_constraints:
         composite = stitching_dir + '{prefix}/initial_composite.json',
         constraints = constraints_needed,
     output:
-        composite = stitching_dir + '{prefix}/composite.json',
+        composite = stitching_dir + '{prefix,[^/]*}/composite.json',
         plot1 = qc_dir + '{prefix}/presolve.png',
         plot2 = qc_dir + '{prefix}/solved.png',
         plot3 = qc_dir + '{prefix}/solved_accuracy.png',

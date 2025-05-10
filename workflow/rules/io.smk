@@ -30,12 +30,12 @@ def get_nd2filename(wildcards):
     else:
         index = cycles.index(wildcards.cycle)
         if index >= len(dates):
-            return []
+            return ['not_found']
         date = dates[index]
     path = rawinput_dir + date + '/Well{well}_*.nd2'.format(**wildcards)
     paths = glob.glob(path)
     if len(paths) == 0:
-        return []
+        return ['not_found']
     return paths[0]
 
 

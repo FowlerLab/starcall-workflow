@@ -221,6 +221,8 @@ rule stitch_well:
         stitching_output_dir + '{prefix}/{corrected,raw|corrected}.tif'
     resources:
         mem_mb = lambda wildcards, input: input.size_mb / len(cycles) * 3 + 10000
+    wildcard_constraints:
+        prefix = '((?!tile).)*'
     run:
         import numpy as np
         import tifffile
@@ -318,6 +320,8 @@ rule stitch_well_pt:
         image = stitching_output_dir + '{prefix}/{corrected,raw|corrected}_pt.tif',
     resources:
         mem_mb = lambda wildcards, input: 5000 + input.size_mb * 1.5
+    wildcard_constraints:
+        prefix = '((?!tile).)*'
     run:
         import numpy as np
         import tifffile

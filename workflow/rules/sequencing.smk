@@ -5,7 +5,7 @@ import re
 
 rule segment_nuclei:
     input:
-        sequencing_input_dir + '{prefix}/corrected_pt.tif',
+        sequencing_input_dir + '{prefix}/raw_pt.tif',
         #sequencing_input_dir + '{prefix}/cycle' + phenotype_cycle + '.tif',
     output:
         sequencing_dir + '{prefix}/nuclei_mask.tif',
@@ -34,7 +34,8 @@ rule segment_nuclei:
 
 rule segment_cells:
     input:
-        sequencing_input_dir + '{prefix}/corrected_pt.tif',
+        sequencing_input_dir + '{prefix}/raw_pt.tif',
+        #sequencing_input_dir + '{prefix}/corrected_pt.tif',
         #sequencing_input_dir + '{prefix}/cycle' + phenotype_cycle + '.tif'
     output:
         #sequencing_output_dir + '{prefix}/nuclei_mask.tif',
@@ -371,7 +372,7 @@ rule calculate_distance_matrix:
     output:
         table = sequencing_dir + '{prefix}/{segmentation_type}_reads_distance_matrix.csv'
     resources:
-        mem_mb = lambda wildcards, input: 5000 + input.size_mb * 10
+        mem_mb = lambda wildcards, input: 15000 + input.size_mb * 10
     run:
         import tifffile
         import numpy as np
@@ -637,7 +638,7 @@ rule call_reads:
 def get_aux_data(wildcards, prefix=None):
     prefix = wildcards.prefix if prefix is None else prefix
 
-    if prefix != '': prefix = prefix + '.'
+    #if prefix != '': prefix = prefix + '.'
 
     files = []
     for base_dir in (sequencing_dir, input_dir):
@@ -647,7 +648,11 @@ def get_aux_data(wildcards, prefix=None):
         files.extend(sorted(glob.glob(pattern)))
 
     #if re.fullmatch('(tile.+)|(well.+)|(cycle.+)', os.path.basename(prefix)):
-    if prefix:
+    if prefix.count('_phenogrid'):
+        files.extend(get_aux_data(wildcards, prefix=prefix.split('_phenogrid')[0]))
+    elif prefix.count('_seqgrid'):
+        files.extend(get_aux_data(wildcards, prefix=prefix.split('_seqgrid')[0]))
+    elif prefix:
         files.extend(get_aux_data(wildcards, prefix=os.path.dirname(prefix)))
 
     for i in range(len(files)):
