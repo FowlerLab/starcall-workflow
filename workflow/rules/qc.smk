@@ -12,8 +12,8 @@ rule make_qc_read_plots:
         full_table = sequencing_output_dir + '{prefix}/{segmentation_type}_reads.csv',
         barcodes = get_aux_data,
     output:
-        #plot = qc_dir + '{prefix}/{segmentation_type}_reads.pdf'
-        plots = [qc_dir + '{prefix}/{segmentation_type}_reads_plot' + str(i) + '.svg' for i in range(16)]
+        plot = qc_dir + '{prefix}/{segmentation_type}_reads.pdf'
+        #plots = [qc_dir + '{prefix}/{segmentation_type}_reads_plot' + str(i) + '.svg' for i in range(16)]
     resources:
         mem_mb = lambda wildcards, input: 5000 + input.size_mb * 10
     run:
@@ -71,7 +71,7 @@ rule make_qc_read_plots:
         double_barcode = 'matched_read_index_1' in read_table.columns
 
         nrows, ncols = 4, 4
-        """
+        #"""
         fig, axes = plt.subplots(nrows=nrows, ncols=ncols, figsize=(4*ncols, 4*nrows))
         """
         figs = []
@@ -438,7 +438,7 @@ rule make_qc_read_plots:
 
 
 
-        """
+        #"""
         fig.tight_layout()
         fig.savefig(output.plot, dpi=300)
         """
