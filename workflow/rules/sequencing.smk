@@ -17,7 +17,7 @@ rule segment_nuclei:
         import tifffile
         import starcall.segmentation
 
-        data = tifffile.memmap(input[0])
+        data = tifffile.memmap(input[0], mode='r')
         if data.shape[3] < 32:
             data = data.transpose(3,0,1,2)
         data = data.reshape(-1, *data.shape[2:])
@@ -55,7 +55,7 @@ rule segment_cells:
 
         logging.basicConfig(level=logging.INFO)
 
-        data = tifffile.memmap(input[0])
+        data = tifffile.memmap(input[0], mode='r')
         debug (data.shape)
         if data.shape[3] < 32:
             data = data.transpose(3,0,1,2)
@@ -99,7 +99,10 @@ rule downscale_segmentation:
 
         mask = tifffile.imread(input[0])
 
-        tifffile.imwrite(output[0], skimage.transform.rescale(mask, 1/phenotype_scale, order=0))
+        if wildcards.mask in ('cellsbases', 'nucleibases'):
+            tifffile.imwrite(output[0], mask)
+        else:
+            tifffile.imwrite(output[0], skimage.transform.rescale(mask, 1/phenotype_scale, order=0))
 
 ruleorder: downscale_segmentation > merge_grid
 ruleorder: downscale_segmentation > segment_cells_bases
@@ -109,10 +112,10 @@ rule segment_cells_bases:
         #sequencing_input_dir + '{prefix}/corrected.tif'
         sequencing_input_dir + '{prefix}/raw.tif'
     output:
-        sequencing_output_dir + '{prefix}/nuclei.tif',
-        sequencing_output_dir + '{prefix}/cells.tif',
+        sequencing_output_dir + '{prefix}/nucleibases_mask.tif',
+        sequencing_output_dir + '{prefix}/cellsbases_mask.tif',
     resources:
-        mem_mb = lambda wildcards, input: input.size_mb * 1.4 + 5000
+        mem_mb = lambda wildcards, input: input.size_mb * 8 + 10000
     threads: 8
     run:
         import numpy as np
@@ -261,7 +264,9 @@ rule find_dots:
     input:
         sequencing_input_dir + '{prefix}/raw.tif'
     output:
-        sequencing_dir + '{prefix}/bases.csv'
+        #sequencing_dir + '{prefix}/bases.csv'
+        sequencing_dir + '{prefix}/bases.csv',
+        sequencing_dir + '{prefix}/dot_filter.tif',
     resources:
         mem_mb = lambda wildcards, input: input.size_mb * 10 + 15000
     threads: 4
@@ -283,6 +288,8 @@ rule find_dots:
         if np.all(image == 0):
             reads = ReadSet()
         else:
+            dot_filter = starcall.dotdetection.dot_filter_new(image)
+            tifffile.imwrite(output[1], dot_filter)
             reads = starcall.dotdetection.detect_dots(
                 image,
                 min_sigma = min_sigma,
@@ -471,10 +478,24 @@ rule combine_reads:
             count='sum',
             cell='mode',
         ))
+        combined.normalize()
 
         del combined.attrs['cluster']
 
         combined.to_table().to_csv(output.table)
+
+#def get_barcode_files(wildcards):
+    #prefixes = []
+    #for 
+    #return glob.glob('input/auxdata/*barcodes.csv') + glob.glob('input/
+
+rule match_reads:
+    input:
+        table = sequencing_dir + '{prefix}/{segmentation_type}_clustered_reads.csv',
+    output:
+        table = sequencing_dir + '{prefix}/{segmentation_type}_clustered_matched_reads.csv',
+    resources:
+        mem_mb = lambda wildcards, input: 5000 + input.size_mb * 50
 
 
 rule combine_cell_reads:
@@ -482,18 +503,25 @@ rule combine_cell_reads:
         table = sequencing_dir + '{prefix}/{segmentation_type}_clustered_reads.csv',
     output:
         table = sequencing_dir + '{prefix}/{segmentation_type}_reads_partial.csv',
+    resources:
+        mem_mb = lambda wildcards, input: 5000 + input.size_mb * 50
     run:
         import pandas
         import numpy as np
         import starcall.utils
         import starcall.reads
 
+        max_reads = 2
+
         reads = starcall.reads.ReadSet.from_table(pandas.read_csv(input.table))
         reads.attrs['read_index'] = np.arange(len(reads))
 
+        reads = starcall.reads.ReadSet([read for read in reads if read.attrs['cell'] != 0])
+
         cell_reads = reads.groupby('cell')
-        read_table = cell_reads.to_table(columns=['cell', 'read', 'count', 'quality', 'read_index'], sequences=True, qualities=True)
+        read_table = cell_reads.head(max_reads).to_table(columns=['cell', 'read', 'count', 'quality', 'read_index'], sequences=True, qualities=True)
         read_table = read_table.set_index('cell')
+        read_table['total_count'] = [read_set.attrs['count'].sum() for read_set in cell_reads]
         read_table.to_csv(output.table)
 
 
@@ -509,14 +537,14 @@ rule annotate_dots:
     input:
         #input_dir + '{prefix}/cycle' + cycles[0] + '.tif',
         #sequencing_input_dir + '{prefix}/corrected.tif',
-        sequencing_input_dir + '{prefix}/raw.tif',
-        sequencing_dir + '{prefix}/bases.csv',
-        'tmp_dot_greyimage.tif',
-        sequencing_dir + '{prefix}/clusters.csv',
+        image = sequencing_input_dir + '{prefix}/raw.tif',
+        bases = sequencing_dir + '{prefix}/bases.csv',
+        #'tmp_dot_greyimage.tif',
+        #sequencing_dir + '{prefix}/clusters.csv',
     output:
         qc_dir + '{prefix}/annotated.tif',
-        qc_dir + '{prefix}/annotated_clusters.tif',
-        qc_dir + '{prefix}/annotated_grey.tif',
+        #qc_dir + '{prefix}/annotated_clusters.tif',
+        #qc_dir + '{prefix}/annotated_grey.tif',
     resources:
         mem_mb = 25000
     run:
@@ -524,16 +552,20 @@ rule annotate_dots:
         import starcall.utils
         import tifffile
         import skimage.draw
+        import starcall.reads
+        import pandas
 
+        reads = starcall.reads.ReadSet.from_table(pandas.read_csv(input.bases, index_col=0))
         #image = tifffile.imread(input[0])
         image = tifffile.memmap(input[0], mode='r')[0]
-        poses = np.loadtxt(input[1], delimiter=',')[:,:2].astype(int)
-        clusters = open(input[3]).read().strip().split()[1:]
-        clusters = np.array([int(cluster) for cluster in clusters])
+        #poses = np.loadtxt(input[1], delimiter=',')[:,:2].astype(int)
+        #clusters = open(input[3]).read().strip().split()[1:]
+        #clusters = np.array([int(cluster) for cluster in clusters])
 
-        marked_image = starcall.utils.mark_dots(image, poses)
+        marked_image = starcall.utils.mark_dots(image, reads.positions.astype(int))
         tifffile.imwrite(output[0], marked_image)
 
+        """
         marked_image[-1] = 0
         for cluster in range(clusters.max()+1):
             cluster_poses = poses[clusters==cluster]
@@ -546,6 +578,7 @@ rule annotate_dots:
 
         greyimage = tifffile.imread(input[2])
         tifffile.imwrite(output[2], starcall.utils.mark_dots(greyimage[None,:,:], poses))
+        """
 
 
 rule tabulate_cells:
@@ -554,7 +587,7 @@ rule tabulate_cells:
     output:
         table = sequencing_output_dir + '{prefix}/{segmentation_type}.csv',
     wildcard_constraints:
-        segmentation_type = 'cells|nuclei'
+        segmentation_type = 'cells|nuclei|cellsbases|nucleibases'
     resources:
         mem_mb = lambda wildcards, input: 5000 + input.size_mb * 1.5
     run:
@@ -598,7 +631,7 @@ rule call_reads:
         sequencing_dir + '{prefix}/{segmentation_type}_reads_partial_old.csv',
         #sequencing_dir + '{prefix}/{segmentation_type}_reads_partial.csv',
     wildcard_constraints:
-        segmentation_type = 'cells|nuclei'
+        segmentation_type = 'cells|nuclei|cellsbases|nucleibases'
     resources:
         mem_mb = lambda wildcards, input: 10000 + input.size_mb * 5
     run:
@@ -667,7 +700,7 @@ rule merge_final_tables:
     output:
         full_table = sequencing_output_dir + '{prefix}/{segmentation_type}_reads.csv',
     wildcard_constraints:
-        segmentation_type = 'cells|nuclei'
+        segmentation_type = 'cells|nuclei|cellsbases|nucleibases'
     resources:
         mem_mb = lambda wildcards, input: 5000 + input.size_mb * 250
     run:
@@ -683,19 +716,21 @@ rule merge_final_tables:
 
         def join_barcode(cell_table, aux_table):
             barcodes = []
+            num_cycles = len(cell_table['read_0'].iloc[0])
+            debug ('num_cycles', num_cycles)
             for barc in aux_table.index:
                 new_barcodes = barc.split('-')
                 for new_barc in new_barcodes:
-                    if len(new_barc) != len(cycles):
-                        warnings.warn('Barcode not the right length {} {}'.format(len(new_barc), len(cycles)))
-                barcodes.append([subbarc[:len(cycles)] for subbarc in new_barcodes])
+                    if len(new_barc) != num_cycles:
+                        warnings.warn('Barcode not the right length {} {}'.format(len(new_barc), num_cycles))
+                barcodes.append([subbarc[:num_cycles] for subbarc in new_barcodes])
 
             barcodes = np.array(barcodes)
             lengths = np.array(list(map(len, barcodes.flat)))
             debug (lengths)
             debug (lengths.min(), lengths.mean(), lengths.max())
 
-            library = starcall.sequencing.BarcodeLibrary(barcodes)
+            #library = starcall.sequencing.BarcodeLibrary(barcodes)
 
             reads = []
             counts = []
@@ -717,17 +752,49 @@ rule merge_final_tables:
             lengths = np.array(list(map(len, reads.flat)))
             debug (reads.dtype)
             debug (barcodes.dtype)
+            reads = reads.astype('U' + str(num_cycles))
+            barcodes = barcodes.astype('U' + str(num_cycles))
+            counts[np.isnan(counts)] = 0
+            counts = counts.astype(int)
+            debug (reads.dtype)
+            debug (barcodes.dtype)
 
             debug ('starting matching')
-            #indices, edit_distances = starcall.sequencing.match_barcodes(reads, counts, barcodes, max_edit_distance=99999, return_distances=True, debug=True, progress=True)
-            edit_distances, indices = library.nearest(reads, counts)
+            indices, read_indices, edit_distances = starcall.sequencing.match_barcodes(reads, counts, barcodes, n_neighbors=2, max_edit_distance=99999, return_distances=True, debug=True, progress=True)
+            #edit_distances, indices = library.nearest(reads, counts)
             debug ('  done')
-            debug (np.sum(indices != -1) / len(indices))
+            debug (np.sum(indices[:,0] != -1) / len(indices))
 
-            new_rows = [pandas.Series(dtype=object) if i == -1 else aux_table.iloc[i,:] for i in indices]
+            multiple_matches = edit_distances[:,0] == edit_distances[:,1]
+            debug (multiple_matches.shape)
+
+            new_rows = [pandas.Series(dtype=object) if i == -1 else aux_table.iloc[i,:] for i in indices[:,0]]
+            #new_rows = [pandas.Series(dtype=object) if (i == -1 and not multiple) else aux_table.iloc[i,:] for i, multiple in zip(indices[:,0], multiple_matches)]
+            debug ('making new table', len(new_rows))
             new_table = pandas.DataFrame(new_rows, index=cell_table.index)
-            new_table['editDistance'] = edit_distances
-            return cell_table.join(new_table)
+            debug ('  done')
+            new_table['editDistance'] = edit_distances[:,0]
+            new_table['edit_distance'] = edit_distances[:,0]
+            new_table['matched_barcode_index'] = indices[:,0]
+            new_table['edit_distance_2'] = edit_distances[:,1]
+            new_table['matched_barcode_index_2'] = indices[:,1]
+            debug ('adding rows to table', read_indices.shape[2])
+            for i in range(read_indices.shape[2]):
+                debug (read_indices[:,0,i].shape)
+                new_table['matched_read_index_{}'.format(i)] = read_indices[:,0,i]
+                debug ( reads[list(range(len(reads))),read_indices[:,0,i]].shape)
+
+                matched_reads = reads[list(range(len(reads))),read_indices[:,0,i]]
+                matched_reads[indices[:,0]==-1] = ''
+                new_table['matched_read_{}'.format(i)] = matched_reads
+
+                matched_barcodes = barcodes[indices[:,0]][:,i]
+                matched_barcodes[indices[:,0]==-1] = ''
+                new_table['matched_barcode_{}'.format(i)] = matched_barcodes
+            debug ('added rows to table')
+            result = cell_table.join(new_table)
+            debug ('joined table')
+            return result
 
         for path in input.aux_data:
             aux_table = pandas.read_csv(path)
@@ -761,7 +828,9 @@ rule merge_final_tables:
 
             debug (cell_table)
 
+        debug ('saving to csv')
         cell_table.to_csv(output.full_table)
+        debug ('  done')
 
 ruleorder: call_reads > merge_grid
 ruleorder: match_masks > merge_grid

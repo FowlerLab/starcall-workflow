@@ -18,6 +18,7 @@ include: "rules/tiles.smk"
 include: "rules/sequencing.smk"
 include: "rules/phenotyping.smk"
 include: "rules/tables.smk"
+include: "rules/qc.smk"
 
 ### target rules ###
 
