@@ -108,7 +108,7 @@ rule merge_phenotype_genotype:
     output:
         table = output_dir + '{prefix}{possible_phenogrid}.{phenotype_type}cells_full.csv'
     resources:
-        mem_mb = lambda wildcards, input: input.size_mb * 2 + 10000
+        mem_mb = lambda wildcards, input: input.size_mb * 5 + 10000
     wildcard_constraints:
         prefix = '((?!_phenogrid)[^.])*',
         possible_phenogrid = '(_phenogrid\d+)|',
