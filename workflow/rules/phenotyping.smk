@@ -142,7 +142,7 @@ rule run_cellprofiler:
         #mark = phenotyping_dir + '{prefix}/cellprofiler/{pipeline,[^./]+}/mark',
         cell_file = phenotyping_dir + '{prefix}/cellprofiler/{pipeline}/Cells.csv'
     resources:
-        mem_mb = lambda wildcards, input, attempt: input.size_mb * ([50, 100, 500][attempt-1]) + 10000 #+ (attempt - 1) * 200000
+        mem_mb = lambda wildcards, input, attempt: input.size_mb * 150 + 10000 #+ (attempt - 1) * 200000
     threads: 2
     conda:
         'cp4'
