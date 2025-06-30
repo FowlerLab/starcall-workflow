@@ -149,7 +149,7 @@ rule run_cellprofiler:
         #'../envs/cellprofiler.yaml'
     #retries: 2
     shell:
-        'cellprofiler -c -r -p {input.pipeline} -i ' + phenotyping_dir + '{wildcards.prefix}/cellprofiler -o ' + phenotyping_dir + '{wildcards.prefix}/cellprofiler/{wildcards.pipeline} || test $? = 0 -o test $? = 1 && echo '""' > {output.cell_file}'
+        'cellprofiler -c -r -p {input.pipeline}.sdjkflsdkjfl -i ' + phenotyping_dir + '{wildcards.prefix}/cellprofiler -o ' + phenotyping_dir + '{wildcards.prefix}/cellprofiler/{wildcards.pipeline} || test $? = 0 -o $? = 1 && echo \'""\' > {output.cell_file}'
         #'~/miniconda3/envs/cp4/bin/cellprofiler -c -r -p {input.pipeline} -i ' + phenotyping_dir + '{wildcards.prefix}/cellprofiler -o ' + phenotyping_dir + '{wildcards.prefix}/cellprofiler/{wildcards.pipeline}'
 
 rule copy_cellprofiler_output:
