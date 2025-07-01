@@ -58,7 +58,7 @@ rule merge_tables_phenotype:
         #cell_table = cell_table.reset_index(drop=True)
         #table = pandas.concat([cell_table] + [pandas.read_csv(path).iloc[:len(cell_table.index),:] for path in input.other_tables], axis=1)
         table = pandas.concat([pandas.read_csv(path).iloc[:len(cell_table.index),:] for path in input.other_tables], axis=1)
-        table = table.set_index(index)
+        table = table.set_index(index[:len(table)])
         table.to_csv(output.table)
 
 
