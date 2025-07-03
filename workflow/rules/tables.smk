@@ -84,12 +84,12 @@ rule merge_grid_pheno_tables:
             row['tile_index'] = i
             row['tile_x'] = i // int(wildcards.grid_size)
             row['tile_y'] = i % int(wildcards.grid_size)
-            row['xpos'] = float(row['xpos']) + box.position[0]
-            row['ypos'] = float(row['ypos']) + box.position[1]
-            row['bbox_x1'] = int(row['bbox_x1']) + box.position[0]
-            row['bbox_x2'] = int(row['bbox_x2']) + box.position[0]
-            row['bbox_y1'] = int(row['bbox_y1']) + box.position[1]
-            row['bbox_y2'] = int(row['bbox_y2']) + box.position[1]
+            #row['xpos'] = float(row['xpos']) + box.position[0]
+            #row['ypos'] = float(row['ypos']) + box.position[1]
+            #row['bbox_x1'] = int(row['bbox_x1']) + box.position[0]
+            #row['bbox_x2'] = int(row['bbox_x2']) + box.position[0]
+            #row['bbox_y1'] = int(row['bbox_y1']) + box.position[1]
+            #row['bbox_y2'] = int(row['bbox_y2']) + box.position[1]
 
         merge_csv_files(input.tables, output.table, extra_columns=['tile_x', 'tile_y', 'tile_index'], row_func=row_func)
 
