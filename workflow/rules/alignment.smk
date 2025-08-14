@@ -2,7 +2,7 @@ import os
 import glob
 
 alignment_channel = config.get('alignment_channel', 0)
-max_constraint_pairs = config.get('max_constraint_pairs', 6)
+max_constraint_pairs = config.get('max_constraint_pairs', 9999)
 
 ##################################################
 ##  Aligning tiles and solving for global positions
@@ -53,7 +53,7 @@ rule calculate_constraints:
         plot = qc_dir + '{prefix}/cycle{cycle1}_cycle{cycle2}_scores_calculated.png',
     resources:
         mem_mb = lambda wildcards, input: input.size_mb + 5000
-    threads: 8
+    threads: 1
     run:
         import tifffile
         import constitch
@@ -62,7 +62,7 @@ rule calculate_constraints:
 
         cycle1, cycle2 = cycles_pt.index(wildcards.cycle1), cycles_pt.index(wildcards.cycle2)
 
-        executor = concurrent.futures.ThreadPoolExecutor(max_workers=threads)
+        executor = concurrent.futures.ThreadPoolExecutor(max_workers=max(2, threads))
         composite = constitch.load(input.composite, debug=True, progress=True, executor=executor)
         images = tifffile.memmap(input.images1, mode='r')[:,alignment_channel]
         composite.layer(cycle1).setimages(images)
@@ -85,7 +85,8 @@ rule calculate_constraints:
                     const.box1.position[2] == cycle1 and const.box2.position[2] == cycle2 and const.overlap_ratio >= 0.1)
 
         debug ('constraints', len(overlapping), cycle1, cycle2, np.unique(composite.boxes.positions[:,2]))
-        constraints = overlapping.calculate()
+        #constraints = overlapping.calculate()
+        constraints = overlapping.calculate(constitch.FFTAligner(upscale_factor=16))
         composite.plot_scores('plots/tmp_scores.png', constraints)
 
         nonoverlapping = composite.constraints(lambda const:
@@ -114,7 +115,7 @@ rule filter_constraints:
         composite = constitch.load(input.composite)
         overlapping, constraints, erroneous_constraints = constitch.load(input.constraints, composite=composite)
 
-        score_threshold = np.percentile([const.score for const in erroneous_constraints], 99)
+        score_threshold = np.percentile([const.score for const in erroneous_constraints], 95) if len(erroneous_constraints) else 0.5
         constraints = constraints.filter(min_score=score_threshold)
 
         modeled = constitch.ConstraintSet()
@@ -137,17 +138,12 @@ def constraints_needed(wildcards):
                 cycle1=cycles_pt[i], cycle2=cycles_pt[j]))
     return paths
 
-rule solve_constraints:
+rule merge_constraints:
     input:
         composite = stitching_dir + '{prefix}/initial_composite.json',
         constraints = constraints_needed,
     output:
-        composite = stitching_dir + '{prefix,[^/]*}/composite.json',
-        plot1 = qc_dir + '{prefix}/presolve.png',
-        plot2 = qc_dir + '{prefix}/solved.png',
-        plot3 = qc_dir + '{prefix}/solved_accuracy.png',
-    resources:
-        mem_mb = lambda wildcards, input: input.size_mb * 1000 + 25000
+        constraints = stitching_dir + '{prefix}/constraints.json',
     run:
         import constitch
 
@@ -161,8 +157,30 @@ rule solve_constraints:
             all_constraints.add(constraints)
             all_modeled.add(modeled)
 
+        constitch.save(output.constraints, all_constraints, all_modeled)
+
+
+rule solve_constraints:
+    input:
+        composite = stitching_dir + '{prefix}/initial_composite.json',
+        constraints = stitching_dir + '{prefix}/constraints.json',
+    output:
+        composite = stitching_dir + '{prefix,[^/]*}/composite.json',
+        plot1 = qc_dir + '{prefix}/presolve.png',
+        plot2 = qc_dir + '{prefix}/solved.png',
+        plot3 = qc_dir + '{prefix}/solved_accuracy.png',
+    resources:
+        mem_mb = lambda wildcards, input: input.size_mb * 1000 + 25000
+    run:
+        import constitch
+
+        composite = constitch.load(input.composite)
+
+        all_constraints, all_modeled = constitch.load(input.constraints, composite=composite)
         solving_constraints = all_constraints.merge(all_modeled)
+
         composite.plot_scores(output.plot1, solving_constraints)
+
         solution = solving_constraints.solve(solver='mae')
 
         composite.setpositions(solution)

@@ -180,8 +180,8 @@ rule make_section:
 
         center = np.round((maxes - mins) / 2)
         #low_bound, high_bound = center - tile_radius, center + tile_radius
-        low_bound = center - (tile_size - (tile_size // 2))
-        high_bound = center + (tile_size // 2)
+        low_bound = center - (tile_size // 2)
+        high_bound = center + tile_size - (tile_size // 2)
 
         for i, poses, path in zip(range(len(all_poses)), all_poses, input.images):
             low, high = low_bound, high_bound
@@ -190,11 +190,49 @@ rule make_section:
                 high = high * phenotype_scale
 
             images = tifffile.imread(path)
-            mask = np.all((low <= poses[:,:2]) & (poses[:,:2] <= high), axis=1)
+            mask = np.all((low <= poses[:,:2]) & (poses[:,:2] < high), axis=1)
             debug (path, low, high)
             debug (poses[mask,:2])
 
             np.savetxt(output.positions[i], poses[mask], delimiter=',', fmt='%d')
             tifffile.imwrite(output.images[i], images[mask])
             del images
+
+
+rule make_noisy_well:
+    input:
+        images = expand(input_dir + '{prefix}/cycle{cycle}/raw.tif', cycle=cycles_pt, allow_missing=True),
+        positions = expand(input_dir + '{prefix}/cycle{cycle}/positions.csv', cycle=cycles_pt, allow_missing=True),
+    output:
+        images = expand(input_dir + '{prefix}_noise{size}/cycle{cycle}/raw.tif', cycle=cycles_pt, allow_missing=True),
+        positions = expand(input_dir + '{prefix}_noise{size}/cycle{cycle}/positions.csv', cycle=cycles_pt, allow_missing=True),
+    resources:
+        mem_mb = lambda wildcards, input: input.size_mb * 16 / len(cycles_pt) + 5000
+    run:
+        import tifffile
+        import numpy as np
+        import skimage.util
+
+        variance = float(wildcards.size)
+
+        for i, pos_path, image_path in zip(range(len(input.images)), input.positions, input.images):
+            poses = np.loadtxt(pos_path, delimiter=',', dtype=int)
+            images = tifffile.imread(image_path)
+            images_dtype = images.dtype
+
+            debug (np.mean(images), np.max(images), images.dtype)
+            rng = np.random.default_rng(abs(hash(image_path)))
+
+            noise = rng.normal(scale=variance, size=images.shape)
+            images = images + noise
+            np.clip(images, 0, np.iinfo(images_dtype).max, out=images)
+            images = images.astype(images_dtype)
+
+            debug (np.mean(images), np.max(images), images.dtype)
+
+            #images = skimage.util.random_noise(images.astype(np.float32), mode='gaussian', seed=rng, var=variance)
+            #images = images.astype(images_dtype)
+
+            np.savetxt(output.positions[i], poses, delimiter=',', fmt='%d')
+            tifffile.imwrite(output.images[i], images)
 

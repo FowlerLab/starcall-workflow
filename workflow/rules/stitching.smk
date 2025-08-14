@@ -220,7 +220,7 @@ rule stitch_well:
     output:
         stitching_output_dir + '{prefix}/{corrected,raw|corrected}.tif'
     resources:
-        mem_mb = lambda wildcards, input: input.size_mb / len(cycles) * 3 + 10000
+        mem_mb = lambda wildcards, input: input.size_mb / len(cycles) * 3.5 + 10000
     wildcard_constraints:
         prefix = '((?!tile).)*'
     run:
