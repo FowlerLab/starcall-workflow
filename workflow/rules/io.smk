@@ -24,15 +24,18 @@ def filter_edge_tiles(positions):
 
     return ~np.array(edge_tiles)
 
-def get_nd2filename(wildcards):
-    if wildcards.cycle in phenotype_cycles:
-        date = phenotype_dates[phenotype_cycles.index(wildcards.cycle)]
+def get_nd2filename(wildcards=None, cycle=None, well=None):
+    if cycle is None: cycle = wildcards.cycle
+    if well is None: well = wildcards.well
+
+    if cycle in phenotype_cycles:
+        date = phenotype_dates[phenotype_cycles.index(cycle)]
     else:
-        index = cycles.index(wildcards.cycle)
+        index = cycles.index(cycle)
         if index >= len(dates):
             return ['not_found']
         date = dates[index]
-    path = rawinput_dir + date + '/Well{well}_*.nd2'.format(**wildcards)
+    path = rawinput_dir + date + '/Well{well}_*.nd2'.format(well=well)
     paths = glob.glob(path)
     if len(paths) == 0:
         return ['not_found']
