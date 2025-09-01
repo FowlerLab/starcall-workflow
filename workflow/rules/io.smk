@@ -96,16 +96,41 @@ rule extract_nd2_positions:
         import nd2
 
         with nd2.ND2File(input[0]) as images:
-            meta = images.ome_metadata().images[0].dict()
-            #debug(meta)
+            full_meta = images.ome_metadata()
 
-            size_x = meta['pixels']['physical_size_x']# * meta['pixels']['size_x']
-            size_y = meta['pixels']['physical_size_y']# * meta['pixels']['size_y']
-            xposes = np.array([plane['position_x'] for plane in meta['pixels']['planes'] if plane['the_c'] == 0]) / size_x
-            yposes = np.array([plane['position_y'] for plane in meta['pixels']['planes'] if plane['the_c'] == 0]) / size_y
-            
+            if len(full_meta.images) == 1:
+                meta = full_meta.images[0].dict()
+                #debug(meta)
+
+                size_x = meta['pixels']['physical_size_x']# * meta['pixels']['size_x']
+                size_y = meta['pixels']['physical_size_y']# * meta['pixels']['size_y']
+                xposes = np.array([plane['position_x'] for plane in meta['pixels']['planes'] if plane['the_c'] == 0]) / size_x
+                yposes = np.array([plane['position_y'] for plane in meta['pixels']['planes'] if plane['the_c'] == 0]) / size_y
+                assert len(xposes) > 1
+
+            else:
+                xposes, yposes = [], []
+
+                for i in range(len(full_meta.images)):
+                    meta = full_meta.images[i].dict()
+                    #debug(meta)
+
+                    size_x = meta['pixels']['physical_size_x']# * meta['pixels']['size_x']
+                    size_y = meta['pixels']['physical_size_y']# * meta['pixels']['size_y']
+                    cur_xposes = [plane['position_x'] for plane in meta['pixels']['planes'] if plane['the_c'] == 0]
+                    cur_yposes = [plane['position_y'] for plane in meta['pixels']['planes'] if plane['the_c'] == 0]
+                    assert len(cur_xposes) == 1 and len(cur_yposes) == 1
+                    xposes.append(cur_xposes[0] / size_x)
+                    yposes.append(cur_yposes[0] / size_y)
+                    #debug (i, cur_xposes, cur_yposes)
+
+                xposes, yposes = np.array(xposes), np.array(yposes)
+
             #positions = np.array([-xposes, -yposes]).T
             positions = np.array([yposes, -xposes]).T
+            #debug (positions)
+            #debug (positions.shape)
+            #debug (np.array([plane['position_x'] for plane in meta['pixels']['planes']]) / size_x)
 
             shift_dist = max(abs(positions[0,0] - positions[1,0]), abs(positions[0,1] - positions[1,1]))
             shift_dist = np.median(np.linalg.norm(positions[1:] - positions[:-1], axis=1))
