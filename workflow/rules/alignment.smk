@@ -170,7 +170,7 @@ rule solve_constraints:
         plot2 = qc_dir + '{prefix}/solved.png',
         plot3 = qc_dir + '{prefix}/solved_accuracy.png',
     resources:
-        mem_mb = lambda wildcards, input: input.size_mb * 1000 + 25000
+        mem_mb = lambda wildcards, input: input.size_mb * 5000 + 25000
     run:
         import constitch
 
