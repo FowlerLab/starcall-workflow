@@ -459,7 +459,7 @@ rule combine_reads:
     output:
         table = sequencing_dir + '{prefix}/{segmentation_type}_clustered_reads.csv',
     resources:
-        mem_mb = lambda wildcards, input: 5000 + input.size_mb * 10
+        mem_mb = lambda wildcards, input: 5000 + input.size_mb * 25
     run:
         import tifffile
         import numpy as np

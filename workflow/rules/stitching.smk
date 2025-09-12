@@ -220,7 +220,7 @@ rule stitch_well:
     output:
         stitching_output_dir + '{prefix}/{corrected,raw|corrected}.tif'
     resources:
-        mem_mb = lambda wildcards, input: input.size_mb / len(cycles) * 3 + 10000
+        mem_mb = lambda wildcards, input: input.size_mb / len(cycles) * 3.5 + 10000
     wildcard_constraints:
         prefix = '((?!tile).)*'
     run:
@@ -454,4 +454,21 @@ rule stitch_tile_well_pt:
 
         tifffile.imwrite(output.image, stitch_well_section(input.images_pt, input.composites_pt, box.point1, box.point2))
 
+
+
+##################################################
+## stitching with ASHLAR
+##################################################
+
+rule stitch_well_ashlar:
+    input:
+        images = lambda wildcards: [get_nd2filename(well=wildcards.well, cycle=cycle) for cycle in cycles]
+    output:
+        image = stitching_output_dir + 'well{well}/raw_ashlar.ome.tif',
+    resources:
+        mem_mb = 16000
+    conda:
+        'stitching'
+    shell:
+        'ashlar {input.images} -o {output.image} -c 1 --flip-x --flip-y -m 500'
 

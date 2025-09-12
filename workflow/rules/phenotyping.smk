@@ -142,14 +142,14 @@ rule run_cellprofiler:
         #mark = phenotyping_dir + '{prefix}/cellprofiler/{pipeline,[^./]+}/mark',
         cell_file = phenotyping_dir + '{prefix}/cellprofiler/{pipeline}/Cells.csv'
     resources:
-        mem_mb = lambda wildcards, input, attempt: input.size_mb * ([50, 100, 500][attempt-1]) + 10000 #+ (attempt - 1) * 200000
+        mem_mb = lambda wildcards, input, attempt: input.size_mb * 150 + 10000 #+ (attempt - 1) * 200000
     threads: 2
     conda:
         'cp4'
         #'../envs/cellprofiler.yaml'
     #retries: 2
     shell:
-        'cellprofiler -c -r -p {input.pipeline} -i ' + phenotyping_dir + '{wildcards.prefix}/cellprofiler -o ' + phenotyping_dir + '{wildcards.prefix}/cellprofiler/{wildcards.pipeline}'
+        'cellprofiler -c -r -p {input.pipeline} -i ' + phenotyping_dir + '{wildcards.prefix}/cellprofiler -o ' + phenotyping_dir + '{wildcards.prefix}/cellprofiler/{wildcards.pipeline} || (test $? = 1 -o $? = 137 && echo \'""\' > {output.cell_file} )'
         #'~/miniconda3/envs/cp4/bin/cellprofiler -c -r -p {input.pipeline} -i ' + phenotyping_dir + '{wildcards.prefix}/cellprofiler -o ' + phenotyping_dir + '{wildcards.prefix}/cellprofiler/{wildcards.pipeline}'
 
 rule copy_cellprofiler_output:

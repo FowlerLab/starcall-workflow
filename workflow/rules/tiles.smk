@@ -34,12 +34,10 @@ rule split_grid_table:
 
         contained = []
         for i, cell in table.iterrows():
-            cellbox = constitch.BBox([cell.bbox_x1, cell.bbox_y1], [cell.bbox_x2, cell.bbox_y2])
+            cellbox = constitch.BBox(point1=[cell.bbox_x1, cell.bbox_y1], point2=[cell.bbox_x2, cell.bbox_y2])
             is_contained = box.contains(cellbox)
-            if i == 15336: debug(is_contained, cellbox, box)
             for j in range(x*grid_size+y):
                 is_contained = is_contained and not composite.boxes[j].contains(cellbox)
-            if i == 15336: debug(is_contained, cellbox, box)
             contained.append(is_contained)
 
         table = table[contained]

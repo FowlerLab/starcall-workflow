@@ -58,7 +58,7 @@ rule merge_tables_phenotype:
         #cell_table = cell_table.reset_index(drop=True)
         #table = pandas.concat([cell_table] + [pandas.read_csv(path).iloc[:len(cell_table.index),:] for path in input.other_tables], axis=1)
         table = pandas.concat([pandas.read_csv(path).iloc[:len(cell_table.index),:] for path in input.other_tables], axis=1)
-        table = table.set_index(index)
+        table = table.set_index(index[:len(table)])
         table.to_csv(output.table)
 
 
@@ -84,12 +84,12 @@ rule merge_grid_pheno_tables:
             row['tile_index'] = i
             row['tile_x'] = i // int(wildcards.grid_size)
             row['tile_y'] = i % int(wildcards.grid_size)
-            row['xpos'] = float(row['xpos']) + box.position[0]
-            row['ypos'] = float(row['ypos']) + box.position[1]
-            row['bbox_x1'] = int(row['bbox_x1']) + box.position[0]
-            row['bbox_x2'] = int(row['bbox_x2']) + box.position[0]
-            row['bbox_y1'] = int(row['bbox_y1']) + box.position[1]
-            row['bbox_y2'] = int(row['bbox_y2']) + box.position[1]
+            #row['xpos'] = float(row['xpos']) + box.position[0]
+            #row['ypos'] = float(row['ypos']) + box.position[1]
+            #row['bbox_x1'] = int(row['bbox_x1']) + box.position[0]
+            #row['bbox_x2'] = int(row['bbox_x2']) + box.position[0]
+            #row['bbox_y1'] = int(row['bbox_y1']) + box.position[1]
+            #row['bbox_y2'] = int(row['bbox_y2']) + box.position[1]
 
         merge_csv_files(input.tables, output.table, extra_columns=['tile_x', 'tile_y', 'tile_index'], row_func=row_func)
 
@@ -108,7 +108,7 @@ rule merge_phenotype_genotype:
     output:
         table = output_dir + '{prefix}{possible_phenogrid}.{phenotype_type}cells_full.csv'
     resources:
-        mem_mb = lambda wildcards, input: input.size_mb * 2 + 10000
+        mem_mb = lambda wildcards, input: input.size_mb * 5 + 10000
     wildcard_constraints:
         prefix = '((?!_phenogrid)[^.])*',
         possible_phenogrid = '(_phenogrid\d+)|',
