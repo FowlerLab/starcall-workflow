@@ -309,7 +309,7 @@ rule find_dots:
         values = values.transpose(1,0,2)
         """
 
-        reads.to_table().to_csv(output[0])
+        reads.to_csv(output[0])
 
         ##values = values.reshape(image.shape[0] * image.shape[1], -1).T
         #values = values.reshape(values.shape[0], -1)
@@ -338,12 +338,12 @@ rule call_raw_reads:
         import starcall.reads
 
         cells = tifffile.imread(input.cells)
-        reads = starcall.reads.ReadSet.from_table(pandas.read_csv(input.bases, index_col=0))
+        table = pandas.read_csv(input.bases, index_col=0)
 
-        xposes, yposes = np.round(reads.positions.T).astype(int)
-        reads.attrs['cell'] = cells[xposes,yposes]
+        xposes, yposes = np.round(table.reads.position.T).astype(int)
+        table['cell'] = cells[xposes,yposes]
 
-        reads.to_table().to_csv(output.table)
+        table.to_csv(output.table)
 
         """
         cells_table = pandas.read_csv(input.cells_table, index_col=0)
@@ -392,14 +392,14 @@ rule calculate_distance_matrix:
         value_weight = 0
         sequence_weight = 1
 
-        reads = starcall.reads.ReadSet.from_table(pandas.read_csv(input.bases, index_col=0))
+        table = pandas.read_csv(input.bases, index_col=0)
         cells = tifffile.imread(input.cells)
 
         if normalization != 'none':
-            reads.normalize(method=normalization)
+            table.reads.normalize(method=normalization)
 
         distance_matrix = starcall.reads.distance_matrix(
-            reads, cells=cells,
+            table, cells=cells,
             distance_cutoff=50,
             positional_weight=positional_weight,
             value_weight=value_weight,
@@ -468,21 +468,16 @@ rule combine_reads:
         import matplotlib.pyplot as plt
         import starcall.reads
 
-        reads = starcall.reads.ReadSet.from_table(pandas.read_csv(input.raw_reads, index_col=0))
+        table = pandas.read_csv(input.raw_reads, index_col=0)
         clusters = np.loadtxt(input.clusters, skiprows=1, dtype=int, delimiter=',').reshape(-1)
-        reads.attrs['cluster'] = clusters
-        reads.attrs['count'] = np.ones(len(clusters))
+        table['cluster'] = clusters
+        table['count'] = np.ones(len(clusters))
 
-        read_sets = reads.groupby('cluster')
-        combined = read_sets.combine(method=dict(
-            count='sum',
-            cell='mode',
-        ))
-        combined.normalize()
+        combined = table.groupby('cluster')
+        combined = combined.agg(**table.reads.aggfuncs(position='mean', values='sum', count='sum', cell=pandas.Series.mode))
+        combined.reads.normalize()
 
-        del combined.attrs['cluster']
-
-        combined.to_table().to_csv(output.table)
+        combined.to_csv(output.table)
 
 #def get_barcode_files(wildcards):
     #prefixes = []
@@ -513,16 +508,16 @@ rule combine_cell_reads:
 
         max_reads = 2
 
-        reads = starcall.reads.ReadSet.from_table(pandas.read_csv(input.table))
-        reads.attrs['read_index'] = np.arange(len(reads))
+        table = pandas.read_csv(input.table)
+        table = table.loc[table['cell']!=0,:]
 
-        reads = starcall.reads.ReadSet([read for read in reads if read.attrs['cell'] != 0])
-
-        cell_reads = reads.groupby('cell')
-        read_table = cell_reads.head(max_reads).to_table(columns=['cell', 'read', 'count', 'quality', 'read_index'], sequences=True, qualities=True)
-        read_table = read_table.set_index('cell')
-        read_table['total_count'] = [read_set.attrs['count'].sum() for read_set in cell_reads]
-        read_table.to_csv(output.table)
+        cell_reads = table.sort_values(['cell', 'count'], ascending=False).groupby('cell')
+        cell_reads = cell_reads.head(max_reads)
+        cell_reads = cell_reads.reads.to_cell_table()
+        #read_table = cell_reads.head(max_reads).to_table(columns=['cell', 'read', 'count', 'quality', 'read_index'], sequences=True, qualities=True)
+        #read_table = read_table.set_index('cell')
+        #read_table['total_count'] = [read_set.attrs['count'].sum() for read_set in cell_reads]
+        cell_reads.to_csv(output.table)
 
 
 #ruleorder: merge_grid > find_dots
