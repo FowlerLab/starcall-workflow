@@ -4,25 +4,20 @@ import glob
 import time
 
 rawinput_dir = config.get('rawinput_dir', 'rawinput/')
-log_dir = config.get('log_dir', 'logs/')
 
 input_dir = config.get('input_dir', 'input/')
 stitching_dir = config.get('stitching_dir', 'stitching/')
+segmentation_dir = config.get('segmentation_dir', 'segmentation/')
 sequencing_dir = config.get('sequencing_dir', 'sequencing/')
 phenotyping_dir = config.get('phenotyping_dir', 'phenotyping/')
 output_dir = config.get('output_dir', 'output/')
 qc_dir = config.get('qc_dir', output_dir + 'qc/')
 
-stitching_input_dir = stitching_dir + input_dir
-stitching_output_dir = stitching_dir + output_dir
-sequencing_input_dir = sequencing_dir + input_dir
-sequencing_output_dir = sequencing_dir + output_dir
-phenotyping_input_dir = phenotyping_dir + input_dir
-phenotyping_output_dir = phenotyping_dir + output_dir
-
 phenotype_date = config.get('phenotype_date', 'phenotype')
 #phenotype_cycle = config.get('phenotype_cycle', 'PT')
-phenotype_scale = config.get('phenotype_scale', 2)
+
+phenotype_scale = config['phenotype_scale']
+bases_scale = config['bases_scale']
 
 dates = [] if not os.path.exists(rawinput_dir) else sorted(os.listdir(rawinput_dir))
 dates_pt = dates.copy()
@@ -67,20 +62,20 @@ cellpose_cyto_index = config.get('cellpose_cyto_index', 1)
 cellpose_diameter = config.get('cellpose_diameter', 50)
 cellpose_cycle = config.get('cellpose_cycle', cycles[-1] if len(cycles) else None)
 
-apply_background_correction = config.get('apply_background_correction', False)
-
-if 'subset' in config:
-    tiles = tiles[::len(tiles)//10]
-
 wildcard_constraints:
-    well = '|'.join(wells),
+    well = '(well)?(' + '|'.join(wells) + ')(_subset\d+)?(_noise\d+)?(_section\d+)?',
+    well_stitching = '(well)?(' + '|'.join(wells) + ')(_subset\d+)?(_noise\d+)?',
+    well_nonoise = '(well)?(' + '|'.join(wells) + ')(_subset\d+)?',
+    well_nosubset = '(well)?(' + '|'.join(wells) + ')',
+    well_base = '(well)?(' + '|'.join(wells) + ')',
+
     tile = '\d\d\d\d',
     cycle = '|'.join(cycles_pt),
-    any_input_dir = '|'.join([input_dir, stitching_input_dir, sequencing_input_dir, phenotyping_input_dir]),
-    any_output_dir = '|'.join([output_dir, stitching_output_dir, sequencing_output_dir, phenotyping_output_dir]),
-    any_processing_dir = '|'.join([stitching_dir, sequencing_dir, phenotyping_dir]),
-    filetype = '(\.[^/]+)|(/cycle(' + '|'.join(cycles_pt) + '))|',
-    prefix = '(?!' + input_dir + ')(?!' + output_dir + ')([^/]*/)*[^/.]*',
+
+    path = '([^/]*/)*[^/.]*',
+    path_nogrid = '((?!_grid)[^.])*',
+
+    segmentation_type = 'cells|nuclei|cellsbases|nucleibases',
 
 def debug(*args, **kwargs):
     print (time.asctime() + ':', *args, **kwargs, file=sys.stderr)

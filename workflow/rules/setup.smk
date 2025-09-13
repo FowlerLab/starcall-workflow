@@ -5,6 +5,7 @@ import os
 ## setting up input and output dirs
 ##################################################
 
+"""
 rule link_input_stitching:
     input:
         input_dir + '{file}'
@@ -40,6 +41,7 @@ rule link_input_phenotyping:
     localrule: True
     shell:
         "cp -l {input[0]} {output[0]}"
+"""
 
 """
 rule link_output:

@@ -1,20 +1,113 @@
+# Directory that contains the raw .nd2 microscope files. It should
+# contain one subdirectory for each cycle, each with one nd2 file for each well.
+# For example:
+#   rawinput/
+#   ├── 20231215_180258_893
+#   │   ├── Well1_ChannelDAPI,GFP,G,T,A,C_Seq0000.nd2
+#   │   ├── Well2_ChannelDAPI,GFP,G,T,A,C_Seq0001.nd2
+#   │   ├── Well3_ChannelDAPI,GFP,G,T,A,C_Seq0002.nd2
+#   │   ├── Well4_ChannelDAPI,GFP,G,T,A,C_Seq0005.nd2
+#   │   ├── Well5_ChannelDAPI,GFP,G,T,A,C_Seq0004.nd2
+#   │   └── Well6_ChannelDAPI,GFP,G,T,A,C_Seq0003.nd2
+#   │           ...
+#   ├── 20231219_001028_540
+#   │   ├── Well1_ChannelDAPI,GFP,G,T,A,C_Seq0000.nd2
+#   │   ├── Well2_ChannelDAPI,GFP,G,T,A,C_Seq0001.nd2
+#   │   ├── Well3_ChannelDAPI,GFP,G,T,A,C_Seq0002.nd2
+#   │   ├── Well4_ChannelDAPI,GFP,G,T,A,C_Seq0005.nd2
+#   │   ├── Well5_ChannelDAPI,GFP,G,T,A,C_Seq0004.nd2
+#   │   └── Well6_ChannelDAPI,GFP,G,T,A,C_Seq0003.nd2
+#   └── phenotype
+#       ├── Well1_Channel408 nm,473 nm,545 nm,635 nm_Seq0000.nd2
+#       ├── Well2_Channel408 nm,473 nm,545 nm,635 nm_Seq0001.nd2
+#       ├── Well3_Channel408 nm,473 nm,545 nm,635 nm_Seq0002.nd2
+#       ├── Well4_Channel408 nm,473 nm,545 nm,635 nm_Seq0005.nd2
+#       ├── Well5_Channel408 nm,473 nm,545 nm,635 nm_Seq0004.nd2
+#       └── Well6_Channel408 nm,473 nm,545 nm,635 nm_Seq0003.nd2
 rawinput_dir: 'rawinput/'
+
+# Directory that contains the input in .tif file form. If the data is
+# present in the rawinput dir, this will be automatically filled.
+# The directory should contain one subdirectory for each well, each
+# with a subdirectory for each cycle, containing 'raw.tif' with the unstitched
+# tile images and 'positions.csv' with the positions of each tile.
+# An additional subdirectory 'auxdata' can be provided containing a barcode
+# library.
+# For example:
+#    input/
+#    ├── auxdata
+#    │   └── barcodes.csv
+#    └── well1
+#        ├── cycle00
+#        │   ├── positions.csv
+#        │   └── raw.tif
+#        │      ...
+#        ├── cycle11
+#        │   ├── positions.csv
+#        │   └── raw.tif
+#        └── cyclePT
+#            ├── positions.csv
+#            └── raw.tif
+#       ...
 input_dir: 'input/'
-processing_dir: 'process/'
-plots_dir: 'plots/'
-log_dir: 'logs/'
+
+# Directory that contains all files generated when stitching unstitched
+# tiled image sets. If your input images are already stitched, you can
+# place them in this directory, following the pattern 'well{well}/raw.tif'
+stitching_dir: 'stitching/'
+
+# Directory containing all files generated when performing cell segmentation
+segmentation_dir: 'segmentation/'
+
+# Directory that contains all files generated when sequencing the in situ
+# sequencing reads
+sequencing_dir: 'sequencing/'
+
+# Directory that contains all files generated when calculating features and
+# phenotyping cells
+phenotyping_dir: 'phenotyping/'
+
+# Folder for final output
+output_dir: 'output/'
+
 
 phenotype_date: 'phenotype'
 phenotype_cycle: 'PT'
-phenotype_scale: 2
+
+# Scale of objective used to image phenotyping and genotyping images.
+# The absolute value of each is not important, but the relative ratio
+# is used to scale up and down images. Both should be integers.
+phenotype_scale: 20
+bases_scale: 10
 
 #wells: ['B2', 'C2']
 #cycles: ['00', '01', '02']
 
+
+# Grid size for different processing steps. Input images are split
+# into an X by X grid, the processing is run, then resulting images are
+# merged back together.
+# This can be disabled by setting the size to 1 or not setting the variable
+segmentation_grid_size: 2
+sequencing_grid_size: 2
+phenotyping_grid_size: 3
+# Segmentation grid sizes can be further specified, this is really only useful if
+# you are running segmentation on the gpu and need very fine grain control
+#segmentation_cells_grid_size: 6
+#segmentation_nuclei_grid_size: 3
+
 cellpose_cyto_index: 2
-cellpose_diameter: 50
-#cellpose_cycle: '01'
+# Diameter passed to cellpose, in pixels of the phenotype images.
+cellpose_diameter: 100
 
+# Whether the cell and nuclei masks should be linked together.
+# Only necessary if you are going to use the nuclei masks, for example
+# in phenotyping
+match_masks: True
+
+# Whether cell segmentation and feature extraction should be performed on background corrected images
+segment_corrected_pt: False
+phenotype_corrected_pt: True
+
+# The channel used to align images
 alignment_channel: 0
-
-apply_background_correction: False

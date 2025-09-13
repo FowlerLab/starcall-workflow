@@ -12,12 +12,12 @@ include: "rules/config.smk"
 ### load rules ###
 include: "rules/setup.smk"
 include: "rules/io.smk"
+include: "rules/merging.smk"
 include: "rules/alignment.smk"
 include: "rules/stitching.smk"
-include: "rules/tiles.smk"
+include: "rules/segmentation.smk"
 include: "rules/sequencing.smk"
 include: "rules/phenotyping.smk"
-include: "rules/tables.smk"
 include: "rules/qc.smk"
 
 ### target rules ###

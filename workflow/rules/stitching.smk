@@ -12,9 +12,9 @@ make the wildcards for rules that read in both of them more simple
 """
 rule link_input_stitching_raw:
     input:
-        input_dir + '{prefix}/cycle{cycle}/raw.tif'
+        input_dir + '{well_stitching}/cycle{cycle}/raw.tif'
     output:
-        stitching_dir + '{prefix}/cycle{cycle}/raw.tif'
+        stitching_dir + '{well_stitching}/cycle{cycle}/raw_tiles.tif'
     localrule: True
     shell:
         "cp -l {input[0]} {output[0]}"
@@ -23,13 +23,13 @@ rule link_input_stitching_raw:
 """
 rule calc_background:
     input:
-        lambda wildcards: expand(input_dir + 'well{well}/cycle{cycle}/raw.tif',
-                well=wells, cycle=phenotype_cycles if wildcards.ispt == '_pt' else cycles),
-        #expand(input_dir + 'well{well}/cycle{cycle}/raw.tif', cycle=cycles_pt, allow_missing=True),
-        #input_dir + 'well{well}/cycle{cycle}/raw.tif',
+        lambda wildcards: expand(input_dir + 'well{well_stitching}/cycle{cycle}/raw.tif',
+                well_stitching=wells, cycle=phenotype_cycles if wildcards.ispt == '_pt' else cycles),
+        #expand(input_dir + 'well{well_stitching}/cycle{cycle}/raw.tif', cycle=cycles_pt, allow_missing=True),
+        #input_dir + 'well{well_stitching}/cycle{cycle}/raw.tif',
     output:
         background = stitching_dir + 'background{ispt,_pt|}.tif',
-        #background = stitching_dir + 'well{well}/background.tif',
+        #background = stitching_dir + 'well{well_stitching}/background.tif',
     resources:
         mem_mb = lambda wildcards, input: input.size_mb + 5000
         #mem_mb = 1000000
@@ -110,10 +110,10 @@ rule calc_background:
 
 rule correct_background:
     input:
-        images = stitching_input_dir + '{prefix}/cycle{cycle}/raw.tif',
+        images = input_dir + '{well_stitching}/cycle{cycle}/raw.tif',
         background = lambda wildcards: stitching_dir + 'background{}.tif'.format('_pt' if wildcards.cycle in phenotype_cycles else '')
     output:
-        images = stitching_dir + '{prefix}/cycle{cycle}/corrected.tif',
+        images = stitching_dir + '{well_stitching}/cycle{cycle}/corrected_tiles.tif',
     resources:
         mem_mb = lambda wildcards, input: input.size_mb * 1.5 + 10000
     run:
@@ -142,11 +142,11 @@ def get_background_pt(wildcards):
 
 rule stitch_cycle:
     input:
-        images = stitching_input_dir + '{prefix}/cycle{cycle}/{corrected}.tif',
-        positions = stitching_dir + '{prefix}/cycle{cycle}/positions.csv',
-        composite = stitching_dir + '{prefix}/composite.json',
+        images = stitching_dir + '{well_stitching}/cycle{cycle}/{corrected}_tiles.tif',
+        positions = stitching_dir + '{well_stitching}/cycle{cycle}/positions.csv',
+        composite = stitching_dir + '{well_stitching}/composite.json',
     output:
-        image = stitching_output_dir + '{prefix}/cycle{cycle}/{corrected,raw|corrected}.tif',
+        image = stitching_dir + '{well_stitching}/cycle{cycle}/{corrected,raw|corrected}.tif',
     resources:
         mem_mb = lambda wildcards, input: input.size_mb * 2.4 + 10000
     run:
@@ -215,14 +215,12 @@ rule stitch_cycle:
 
 rule stitch_well:
     input:
-        images = expand(stitching_input_dir + '{prefix}/cycle{cycle}/{corrected}.tif', cycle=cycles, allow_missing=True),
-        composite = stitching_dir + '{prefix}/composite.json',
+        images = expand(stitching_dir + '{well_stitching}/cycle{cycle}/{corrected}_tiles.tif', cycle=cycles, allow_missing=True),
+        composite = stitching_dir + '{well_stitching}/composite.json',
     output:
-        stitching_output_dir + '{prefix}/{corrected,raw|corrected}.tif'
+        stitching_dir + '{well_stitching}/{corrected,raw|corrected}.tif'
     resources:
         mem_mb = lambda wildcards, input: input.size_mb / len(cycles) * 3.5 + 10000
-    wildcard_constraints:
-        prefix = '((?!tile).)*'
     run:
         import numpy as np
         import tifffile
@@ -313,15 +311,13 @@ def stitch_well_section(image_paths, composite_paths, mins, maxes):
 
 rule stitch_well_pt:
     input:
-        images_pt = expand(stitching_dir + '{prefix}/cycle{cycle}/{corrected}.tif', cycle=phenotype_cycles, allow_missing=True),
-        composites_pt = expand(stitching_dir + '{prefix}/cycle{cycle}/composite.json', cycle=phenotype_cycles, allow_missing=True),
-        full_composite = stitching_dir + '{prefix}/composite.json',
+        images_pt = expand(stitching_dir + '{well_stitching}/cycle{cycle}/{corrected}_tiles.tif', cycle=phenotype_cycles, allow_missing=True),
+        composites_pt = expand(stitching_dir + '{well_stitching}/cycle{cycle}/composite.json', cycle=phenotype_cycles, allow_missing=True),
+        full_composite = stitching_dir + '{well_stitching}/composite.json',
     output:
-        image = stitching_output_dir + '{prefix}/{corrected,raw|corrected}_pt.tif',
+        image = stitching_dir + '{well_stitching}/{corrected,raw|corrected}_pt.tif',
     resources:
         mem_mb = lambda wildcards, input: 5000 + input.size_mb * 1.5
-    wildcard_constraints:
-        prefix = '((?!tile).)*'
     run:
         import numpy as np
         import tifffile
@@ -329,19 +325,23 @@ rule stitch_well_pt:
 
         full_composite = constitch.load(input.full_composite, constraints=False)
         mins, maxes = full_composite.boxes.points1.min(axis=0)[:2], full_composite.boxes.points2.max(axis=0)[:2]
+
+        # scale from base images to phenotype
         mins *= phenotype_scale
+        mins //= bases_scale
         maxes *= phenotype_scale
+        maxes // bases_scale
 
         tifffile.imwrite(output.image, stitch_well_section(input.images_pt, input.composites_pt, mins, maxes))
 
 
 rule stitch_well_section:
     input:
-        images = expand(stitching_dir + '{prefix}/cycle{cycle}/{corrected}.tif', cycle=cycles, allow_missing=True),
-        composites = expand(stitching_dir + '{prefix}/cycle{cycle}/composite.json', cycle=cycles, allow_missing=True),
-        full_composite = stitching_dir + '{prefix}/composite.json',
+        images = expand(stitching_dir + '{well_stitching}/cycle{cycle}/{corrected}_tiles.tif', cycle=cycles, allow_missing=True),
+        composites = expand(stitching_dir + '{well_stitching}/cycle{cycle}/composite.json', cycle=cycles, allow_missing=True),
+        full_composite = stitching_dir + '{well_stitching}/composite.json',
     output:
-        image = stitching_output_dir + '{prefix}_section{size,\d+}/{corrected,raw|corrected}.tif'
+        image = stitching_dir + '{well_stitching}_section{size,\d+}/{corrected,raw|corrected}.tif'
     run:
         import constitch
         import numpy as np
@@ -357,11 +357,11 @@ rule stitch_well_section:
 
 rule stitch_well_section_pt:
     input:
-        images = expand(stitching_dir + '{prefix}/cycle{cycle}/{corrected}.tif', cycle=phenotype_cycles, allow_missing=True),
-        composites = expand(stitching_dir + '{prefix}/cycle{cycle}/composite.json', cycle=phenotype_cycles, allow_missing=True),
-        full_composite = stitching_dir + '{prefix}/composite.json',
+        images = expand(stitching_dir + '{well_stitching}/cycle{cycle}/{corrected}_tiles.tif', cycle=phenotype_cycles, allow_missing=True),
+        composites = expand(stitching_dir + '{well_stitching}/cycle{cycle}/composite.json', cycle=phenotype_cycles, allow_missing=True),
+        full_composite = stitching_dir + '{well_stitching}/composite.json',
     output:
-        image = stitching_output_dir + '{prefix}_section{size,\d+}/{corrected,raw|corrected}_pt.tif'
+        image = stitching_dir + '{well_stitching}_section{size,\d+}/{corrected,raw|corrected}_pt.tif'
     run:
         import constitch
         import numpy as np
@@ -372,8 +372,12 @@ rule stitch_well_section_pt:
         center = mins + ((maxes - mins) // 2)
         radius = int(wildcards.size) // 2
         mins, maxes = center - radius, center + radius
+
+        # scale from base images to phenotype
         mins *= phenotype_scale
+        mins //= bases_scale
         maxes *= phenotype_scale
+        maxes // bases_scale
 
         tifffile.imwrite(output.image, stitch_well_section(input.images, input.composites, mins, maxes))
 
@@ -384,10 +388,10 @@ rule stitch_well_section_pt:
 
 rule split_grid_composite:
     input:
-        composite = stitching_dir + '{prefix}/composite.json'
+        composite = stitching_dir + '{well_stitching}/composite.json'
     output:
-        composite = stitching_output_dir + '{prefix}_seqgrid{grid_size,\d+}/grid_composite.json',
-        table = stitching_output_dir + '{prefix}_seqgrid{grid_size,\d+}/grid_positions.csv',
+        composite = stitching_dir + '{well_stitching}_grid{grid_size,\d+}/grid_composite.json',
+        table = stitching_dir + '{well_stitching}_grid{grid_size,\d+}/grid_positions.csv',
     resources:
         mem_mb = 5000
     run:
@@ -410,11 +414,11 @@ rule split_grid_composite:
 
 rule stitch_tile_well:
     input:
-        images = expand(stitching_dir + '{prefix}/cycle{cycle}/{corrected}.tif', cycle=cycles, allow_missing=True),
-        composites = expand(stitching_dir + '{prefix}/cycle{cycle}/composite.json', cycle=cycles, allow_missing=True),
-        grid_composite = stitching_output_dir + '{prefix}_seqgrid{grid_size}/grid_composite.json',
+        images = expand(stitching_dir + '{well_stitching}/cycle{cycle}/{corrected}_tiles.tif', cycle=cycles, allow_missing=True),
+        composites = expand(stitching_dir + '{well_stitching}/cycle{cycle}/composite.json', cycle=cycles, allow_missing=True),
+        grid_composite = stitching_dir + '{well_stitching}_grid{grid_size}/grid_composite.json',
     output:
-        image = stitching_output_dir + '{prefix}_seqgrid{grid_size,\d+}/tile{x,\d+}x{y,\d+}y/{corrected,raw|corrected}.tif',
+        image = stitching_dir + '{well_stitching}_grid{grid_size,\d+}/tile{x,\d+}x{y,\d+}y/{corrected,raw|corrected}.tif',
     resources:
         mem_mb = lambda wildcards, input: 5000 + input.size_mb * 2.2 / (int(wildcards.grid_size)**2)
     run:
@@ -432,11 +436,11 @@ rule stitch_tile_well:
 
 rule stitch_tile_well_pt:
     input:
-        images_pt = expand(stitching_dir + '{prefix}/cycle{cycle}/{corrected}.tif', cycle=phenotype_cycles, allow_missing=True),
-        composites_pt = expand(stitching_dir + '{prefix}/cycle{cycle}/composite.json', cycle=phenotype_cycles, allow_missing=True),
-        grid_composite = stitching_output_dir + '{prefix}_seqgrid{grid_size}/grid_composite.json',
+        images_pt = expand(stitching_dir + '{well_stitching}/cycle{cycle}/{corrected}_tiles.tif', cycle=phenotype_cycles, allow_missing=True),
+        composites_pt = expand(stitching_dir + '{well_stitching}/cycle{cycle}/composite.json', cycle=phenotype_cycles, allow_missing=True),
+        grid_composite = stitching_dir + '{well_stitching}_grid{grid_size}/grid_composite.json',
     output:
-        image = stitching_output_dir + '{prefix}_seqgrid{grid_size,\d+}/tile{x,\d+}x{y,\d+}y/{corrected,raw|corrected}_pt.tif',
+        image = stitching_dir + '{well_stitching}_grid{grid_size,\d+}/tile{x,\d+}x{y,\d+}y/{corrected,raw|corrected}_pt.tif',
     resources:
         mem_mb = lambda wildcards, input: 5000 + input.size_mb * 2.2 / (int(wildcards.grid_size)**2)
     run:
@@ -448,8 +452,12 @@ rule stitch_tile_well_pt:
         grid_size, x, y = int(wildcards.grid_size), int(wildcards.x), int(wildcards.y)
         box = grid_composite.boxes[x*grid_size+y]
         debug(box)
+
+        # scale from bases images to phenotype
         box.position *= phenotype_scale
+        box.position //= bases_scale
         box.size *= phenotype_scale
+        box.size //= bases_scale
         debug(box)
 
         tifffile.imwrite(output.image, stitch_well_section(input.images_pt, input.composites_pt, box.point1, box.point2))
@@ -464,7 +472,7 @@ rule stitch_well_ashlar:
     input:
         images = lambda wildcards: [get_nd2filename(well=wildcards.well, cycle=cycle) for cycle in cycles]
     output:
-        image = stitching_output_dir + 'well{well}/raw_ashlar.ome.tif',
+        image = stitching_dir + '{well_stitching}/raw_ashlar.ome.tif',
     resources:
         mem_mb = 16000
     conda:

@@ -26,19 +26,23 @@ def filter_edge_tiles(positions):
 
 def get_nd2filename(wildcards=None, cycle=None, well=None):
     if cycle is None: cycle = wildcards.cycle
-    if well is None: well = wildcards.well
+    if well is None: well = wildcards.well_base
 
     if cycle in phenotype_cycles:
         date = phenotype_dates[phenotype_cycles.index(cycle)]
     else:
         index = cycles.index(cycle)
         if index >= len(dates):
-            return ['not_found']
+            raise FileNotFoundError('Error: not enough directories found in {}, needed {} to get cycle{}'.format(rawinput_dir, index+1, cycle))
         date = dates[index]
-    path = rawinput_dir + date + '/Well{well}_*.nd2'.format(well=well)
-    paths = glob.glob(path)
+
+    if well[:4] == 'well':
+        well = '[wW]ell' + well[4:]
+
+    glob_path = rawinput_dir + date + '/{well}_*.nd2'.format(well=well)
+    paths = glob.glob(glob_path)
     if len(paths) == 0:
-        return ['not_found']
+        raise FileNotFoundError('Error: no nd2 files found for "{}"'.format(glob_path))
     return paths[0]
 
 
@@ -46,9 +50,9 @@ rule extract_nd2:
     input:
         get_nd2filename
     output:
-        #expand(input_dir + 'well{well}/cycle{cycle}/tile{tile}.tif', tile=tiles, allow_missing=True)
-        #input_dir + 'well{well}/cycle{cycle}/tile{tile}.tif'
-        input_dir + 'well{well}/tile{tile}/cycle{cycle}.tif',
+        #expand(input_dir + '{well_base}/cycle{cycle}/tile{tile}.tif', tile=tiles, allow_missing=True)
+        #input_dir + '{well_base}/cycle{cycle}/tile{tile}.tif'
+        input_dir + '{well_base}/tile{tile}/cycle{cycle}.tif',
     resources:
         mem_mb = 10000
     run:
@@ -68,9 +72,9 @@ rule extract_nd2:
 
 rule extract_tile:
     input:
-        input_dir + 'well{well}/cycle{cycle}.tif'
+        input_dir + '{well}/cycle{cycle}.tif'
     output:
-        input_dir + 'well{well}/tile{tile}/cycle{cycle}.tif'
+        input_dir + '{well}/tile{tile}/cycle{cycle}.tif'
     run:
         import tifffile
 
@@ -87,7 +91,7 @@ rule extract_nd2_positions:
     input:
         get_nd2filename
     output:
-        input_dir + 'well{well}/cycle{cycle}/positions.csv'
+        input_dir + '{well_base}/cycle{cycle}/positions.csv'
     resources:
         mem_mb = 2000
     run:
@@ -154,7 +158,7 @@ rule copy_nd2_image:
     input:
         get_nd2filename
     output:
-        input_dir + 'well{well}/cycle{cycle}/raw.tif'
+        input_dir + '{well_base}/cycle{cycle}/raw.tif'
     resources:
         mem_mb = lambda wildcards, input: input.size_mb * 2 + 5000
     run:
@@ -172,11 +176,11 @@ rule copy_nd2_image:
 
 rule make_section:
     input:
-        images = expand(input_dir + 'well{well}/cycle{cycle}/raw.tif', cycle=cycles_pt, allow_missing=True),
-        positions = expand(input_dir + 'well{well}/cycle{cycle}/positions.csv', cycle=cycles_pt, allow_missing=True),
+        images = expand(input_dir + '{well_nosubset}/cycle{cycle}/raw.tif', cycle=cycles_pt, allow_missing=True),
+        positions = expand(input_dir + '{well_nosubset}/cycle{cycle}/positions.csv', cycle=cycles_pt, allow_missing=True),
     output:
-        images = expand(input_dir + 'well{well}_subset{size,\d+}/cycle{cycle}/raw.tif', cycle=cycles_pt, allow_missing=True),
-        positions = expand(input_dir + 'well{well}_subset{size,\d+}/cycle{cycle}/positions.csv', cycle=cycles_pt, allow_missing=True),
+        images = expand(input_dir + '{well_nosubset}_subset{size,\d+}/cycle{cycle}/raw.tif', cycle=cycles_pt, allow_missing=True),
+        positions = expand(input_dir + '{well_nosubset}_subset{size,\d+}/cycle{cycle}/positions.csv', cycle=cycles_pt, allow_missing=True),
     resources:
         mem_mb = lambda wildcards, input: input.size_mb * 4 / len(cycles_pt) + 5000
     run:
@@ -189,8 +193,8 @@ rule make_section:
             poses = np.loadtxt(path, delimiter=',', dtype=int)
             cur_mins, cur_maxes = poses[:,:2].min(axis=0), poses[:,:2].max(axis=0)
             if any(path.count('cycle' + cycle) for cycle in phenotype_cycles):
-                cur_mins = np.round(cur_mins / phenotype_scale)
-                cur_maxes = np.round(cur_maxes / phenotype_scale)
+                cur_mins = np.round(cur_mins * bases_scale / phenotype_scale)
+                cur_maxes = np.round(cur_maxes * bases_scale / phenotype_scale)
             all_poses.append(poses)
             mins.append(cur_mins)
             maxes.append(cur_maxes)
@@ -214,8 +218,8 @@ rule make_section:
         for i, poses, path in zip(range(len(all_poses)), all_poses, input.images):
             low, high = low_bound, high_bound
             if any(path.count('cycle' + cycle) for cycle in phenotype_cycles):
-                low = low * phenotype_scale
-                high = high * phenotype_scale
+                low = round(low * phenotype_scale / bases_scale)
+                high = round(high * phenotype_scale / bases_scale)
 
             images = tifffile.imread(path)
             mask = np.all((low <= poses[:,:2]) & (poses[:,:2] < high), axis=1)
@@ -229,11 +233,11 @@ rule make_section:
 
 rule make_noisy_well:
     input:
-        images = expand(input_dir + '{prefix}/cycle{cycle}/raw.tif', cycle=cycles_pt, allow_missing=True),
-        positions = expand(input_dir + '{prefix}/cycle{cycle}/positions.csv', cycle=cycles_pt, allow_missing=True),
+        images = expand(input_dir + '{well_nonoise}/cycle{cycle}/raw.tif', cycle=cycles_pt, allow_missing=True),
+        positions = expand(input_dir + '{well_nonoise}/cycle{cycle}/positions.csv', cycle=cycles_pt, allow_missing=True),
     output:
-        images = expand(input_dir + '{prefix}_noise{size}/cycle{cycle}/raw.tif', cycle=cycles_pt, allow_missing=True),
-        positions = expand(input_dir + '{prefix}_noise{size}/cycle{cycle}/positions.csv', cycle=cycles_pt, allow_missing=True),
+        images = expand(input_dir + '{well_nonoise}_noise{size}/cycle{cycle}/raw.tif', cycle=cycles_pt, allow_missing=True),
+        positions = expand(input_dir + '{well_nonoise}_noise{size}/cycle{cycle}/positions.csv', cycle=cycles_pt, allow_missing=True),
     resources:
         mem_mb = lambda wildcards, input: input.size_mb * 16 / len(cycles_pt) + 5000
     run:

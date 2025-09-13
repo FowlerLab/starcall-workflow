@@ -9,11 +9,11 @@ import time
 
 rule make_qc_read_plots:
     input:
-        full_table = sequencing_output_dir + '{prefix}/{segmentation_type}_reads.csv',
+        full_table = sequencing_dir + '{path}/{segmentation_type}_reads.csv',
         barcodes = get_aux_data,
     output:
-        plot = qc_dir + '{prefix}/{segmentation_type}_reads.svg',
-        plots = [qc_dir + '{prefix}/{segmentation_type}_reads_plot' + str(i) + '.svg' for i in range(16)],
+        plot = qc_dir + '{path}/{segmentation_type}_reads.svg',
+        plots = [qc_dir + '{path}/{segmentation_type}_reads_plot' + str(i) + '.svg' for i in range(16)],
     resources:
         mem_mb = lambda wildcards, input: 5000 + input.size_mb * 10
     run:
@@ -93,7 +93,7 @@ rule make_qc_read_plots:
             axes[0,0].set_xlabel('Cycle')
             axes[0,0].set_ylim(ymin=0)
             axes[0,0].legend(loc='upper left')
-            #if 'blainey' in wildcards.prefix:
+            #if 'blainey' in wildcards.path:
                 #axes[0,0].set_title('Image set 1.1: Feldman method')
             #else:
                 #axes[0,0].set_title('Image set 1.1: STARCall')
@@ -110,7 +110,7 @@ rule make_qc_read_plots:
             axes[0,1].set_ylabel('Count')
             axes[0,1].set_xlabel('Total read count per cell' if double_barcode else 'Read count per cell') # total read count for double barcode
             axes[0,1].ticklabel_format(axis='y', style='sci', scilimits=(0,0))
-            if 'blainey' in wildcards.prefix:
+            if 'blainey' in wildcards.path:
                 axes[0,1].set_title('Image set 2.1: Feldman method')
             else:
                 axes[0,1].set_title('Image set 2.1: STARCall')

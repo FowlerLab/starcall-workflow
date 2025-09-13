@@ -1,6 +1,6 @@
 #!/bin/bash
 
-conda activate ops 2> /dev/null
+#conda activate ops 2> /dev/null
 
 test -e logs || mkdir logs
 test -e logs/latest && rm -r logs/latest
@@ -26,7 +26,7 @@ configfile=
 if test -f config.yaml; then
     configfile='--configfile  config.yaml'
 fi
-if test -t default-config.yaml; then
+if test -f default-config.yaml; then
     configfile='--configfile  default-config.yaml'
 fi
 
