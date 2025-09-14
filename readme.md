@@ -4,6 +4,85 @@ This repository is a full data pipeline for the analysis of FISSEQ (Flourescent 
 This readme will give an overview of the pipeline and how to run it, for more information there is documentation
 for the starcall python package
 
+## Quick start
+
+To get the pipeline up and running quickly there is a small example dataset available here:
+<https://visseq.gs.washington.edu/data_download/> under Example testing dataset.
+
+### Installation
+
+To install the workflow, simply clone this repository, making sure to clone recursively so that
+we get both packages.
+
+	git clone https://github.com/FowlerLab/starcall-workflow.git
+	cd starcall-workflow
+
+The packages needed for STARCall are listed in requirements.txt, and can be installed with pip.
+It is recommended that you create a conda or virtual environment, as there are a good amount
+of packages needed
+
+	conda create -n ops
+	conda activate ops
+	# or
+	# python3 -m venv ops
+	# source ops/bin/activate
+
+	pip3 install -r requirements.txt
+
+### Download testing dataset
+
+Once cloned, we can download the testing dataset. Although this is a very small subset of the image
+data, it still will take up ~10GB of storage once extracted. In total, downloading, extracting, 
+and running the pipeline will require ~20GB of data.
+
+	wget https://visseq.gs.washington.edu/data_download/LMNA_T3_testing_image_set.tar.gz
+	tar -xf LMNA_T3_testing_image_set.tar.gz
+	mv LMNA_T3_testing_image_set/* ./
+
+### Run pipeline
+
+With the files in the correct place, we can run the pipeline with the command below.
+Some steps will be memory/cpu intensive, its recommended to have 16GB of ram
+when running this image set. The number of cores can be adjusted, if the process
+is killed for using too much ram it may be necessary to reduce ir.
+If you are on a cluster environment, the command can be modified
+as shown below:
+
+	snakemake --configfile default-config.yaml output/well1_subset3_grid.cellprofiler_022525.cells_full.csv --cores 4
+
+For a cluster with qsub/qdel a shell script is provided
+
+	./run.sh output/well1_subset3_grid.cellprofiler_022525.cells_full.csv --jobs 4
+
+For slurm clusters snakemake has a built-in flag
+
+	snakemake --slurm --configfile default-config.yaml output/well1_subset3_grid.cellprofiler_022525.cells_full.csv --cores 4
+
+It may take a couple hours to run, depending on the machine you are running on.
+Cell segmentation can especially take a long time if you don't have a gpu
+available. While snakemake is running, it will print out what jobs
+are currently running.
+
+### Expected output
+
+When it finishes, the output of the pipeline should be in output,
+`output/well1_subset3_grid.cellprofiler_022525.cells_full.csv`.
+An example of the
+output is contained in the testing set that was downloaded as
+`expected_output/well1_subset3_grid.cellprofiler_022525.cells_full.csv`.
+Comparing the reads in the generated table to the reads in this output
+is a good way to make sure the pipeline is running as expected.
+
+In addition to the output the pipeline can generate summary plots, obtained getting
+snakemake to generate the file `output/well1_subset3_grid/cells_reads.svg` the same
+way as with the output table. These plots are also included in `expected_output/`,
+and comparing these plots can make sure the pipeline ran properly. More information
+on the specific plots can be found further down.
+
+If everything ran well, you should be ready to run the pipeline with your own data.
+The next section goes into more information on how the different steps work, and
+how to get your data into the right format and run it.
+
 ## Structure
 
 The pipeline is split into two main parts, one being a python package that encapsulates the major steps
@@ -11,9 +90,9 @@ involved in FISSEQ data analysis. This is meant to be applicable to any data sou
 experiment, and tries to provide a general solution for the analysis.
 
 The other part is a Snakemake pipeline that brings together all the functions of the python package
-into a concrete data pipeline. This is specific for the analysis and experiments being done in the
-Fowler lab, specifically it assumes a Nikon microscope, 8-12 sequencing cycles and 1 phenotype cycle,
-4 sequencing channels, etc. If you are adapting this code for a different setup, you can modify this
+into a concrete data pipeline. This is more specific to the analysis of VIS-seq experiments, but it
+is still meant to be applicable to other in situ sequencing datasets.
+If you are adapting this code for a different setup, you can modify this
 pipeline or write your own using the python library.
 
 This readme will describe running the Snakemake pipeline, for an overview of the python library see the
@@ -21,31 +100,29 @@ docs at <https://fowlerlab.github.io/starcall-docs/starcall.html>
 
 ### General file structure:
 
-The pipeline uses five main directories to hold data, being input/, stitching/, sequencing/, phenotyping/, and output/.
-Additionally rawinput/ is used to hold the raw images from the microscope. The specific names of each folder can
-be changed in the config file. The names of the directories generally describe the purpose of each one, input/ holds
+The pipeline uses six main directories to hold data, being
+`input/`, `stitching/`, `segmentation/`, `sequencing/`, `phenotyping/`, and `output/`.
+Additionally rawinput/ is used to hold the raw images from the microscope.
+The names of the directories generally describe the purpose of each one, input/ holds
 the input files to the pipeline in a microscope independent format, stitching/ holds all files related to the
 stitching and alignment of the microscope images, sequencing/ contains files used to detect and call reads and
 segment cells, phenotyping/ holds files that measure the visual phenotypes of cells, and output/ holds the combined
 output of all these steps. The below sections go into more detail with each section of the pipeline.
 
-All of the processing directories (stitching/, sequencing/, phenotyping/) follow a similar structure. Each has its own
-input/ and output/ folder (eg stitching/output/ contains fully stitched images which are then copied into sequencing/input/
-and phenotyping/input/ for further processing). In each of these folders the files contain nested directories following
+All of the processing directories (`stitching/`, `segmentation/`, `sequencing/`, `phenotyping/`) follow a similar structure.
+In each of these folders the files contain nested directories following
 a similar pattern, including well??/, well??/tile??/, and well??/tile??/cycle??/.
 
 The first level of directories is always
 organized by well, with any well specific files residing in well??/, an example would be the raw image files for
-well 1, which would be at well1/raw.tif.
+well 1, which would be at `input/well1/raw.tif`.
 Well names are found from input files, either the raw .nd2 files in rawinput/ or the .tif files in input/.
 
 The next common level of organization are tiles, which are created by dividing up a well into an arbitrary grid of smaller
 sections. This is normally necessary to reduce memory requirements and allow for better parallelization, as full well images
 can reach 100k pixels square. A grid of tiles is represented in files by adding on `_grid{gridsize}` to the end of the
-well name, for example `well1_grid5`. However, it is necessary to mark at what point in the pipeline the grid is being used, as
-sequencing and phenotyping typically use different grid sizes depending on what analysis is needed in each step. Because of
-this, either `_seqgrid` or `_phenogrid` is used. Tile filenames follow the pattern `tile??x??y/` with the x and y grid position
-specified. To use the previous example, the raw image file for a single tile would be `well1_seqgrid5/tile02x02y/raw.tif`.
+well name, for example `well1_grid5`. Tile filenames follow the pattern `tile??x??y/` with the x and y grid position
+specified. To use the previous example, the raw image file for a single tile would be `stitching/well1_grid5/tile02x02y/raw.tif`.
 A more in depth description of tile splitting and merging can be found at the section Tiles below.
 
 A less common but still possible level of organization is a subset of a well, which follows the pattern `well??_subset{size}`.
@@ -109,18 +186,18 @@ correct order alphabetically. The exception to this is the phenotype cycle, whic
 "phenotype". 
 
 This is normally the same structure that the microscope saves the files as, so you can simply copy
-them into the rawinput directory, and rename the phenotype cycle to "phenotype". If you have multiple
-phenotype cycles you can name them "phenotype1", "phenotype_20240107...", or however you want as long as each begins
-with "phenotype".
+them into the rawinput directory, and rename the phenotype cycle to `phenotype`. If you have multiple
+phenotype cycles you can name them `phenotype1`, `phenotype_20240107...`, or however you want as long as each begins
+with `phenotype`.
 
 ### General Input
 
 If your input is not in .nd2 images, you can transform it into this format and place it in the `input/` folder.
 Each well should have a directory, inside of which are directories for each cycle. Each of these subdirectories
 should have a `raw.tif` file containing the raw unstitched images, and a `positions.csv` file containing the tile positions
-of each of these tiles. If your microscope outputs stitched images you can place them directly in the `stitching/output/`
-folder (eg `stitching/output/well1/raw.tif`), however this will only work if they are also aligned between cycles which most
-microscopes will not do. It is reccomended to provide unstitched images so the stitching algorithm can align across cycles
+of each of these tiles. If your microscope outputs stitched images you can place them directly in the `stitching/`
+folder (eg `stitching/well1/raw.tif`), however this will only work if they are also aligned between cycles which most
+microscopes will not do. It is recomended to provide unstitched images so the stitching algorithm can align across cycles
 as well as across wells at the same time.
 
 An example `input/` folder is shown below:
@@ -161,13 +238,13 @@ are the positions of each tile in pixels.
 #### Auxillary Barcode Input
 
 When performing FISSEQ experiments, it is common to use barcodes to represent a more complex change to
-the cell, in the case of VISSEQ this is a certain variant. To add this information to the output
+the cell, in the case of VIS-seq this is a certain variant. To add this information to the output
 data table, you can add a `barcodes.csv` file in the folder `input/auxdata/`. All that is required is
 the first column contains the barcodes that should be used to match to cells. This table will be merged
 with the output table and cells that contain a barcode will have the remaining columns added to their table.
 An individual file for each well can also be specified by placing it in `input/well1/auxdata/`.
 
-If you would like to match multiple barcodes, you can separate them with a '-' and only cells with both will
+If you would like to match multiple barcodes, you can separate them with a '-' and only cells with both barcodes will
 be matched.
 
 ### Outputs
@@ -190,9 +267,9 @@ cell images can be obtained from `raw_pt.tif` or `corrected_pt.tif`, but if retr
 
 The first main section is the sequencing data, and contains all the reads sequenced in the cell, in the format:
 ```
-count_0, read_0,    quality_0,    count_1, read_1,    quality_1,    count_2, read_2,    quality_2,    count_3, read_3,    quality_3,    total_count
-2,		 TATTAATTGTGT, i_ag]_MVbV2U, 2,       TATTAATTGTTT, Offde_l`oYNA, 2,       TATTAATTGTAT, j^ge\M_fYb,_, 1,       TATTAATTGTCT, _%\hF8jg+60Z, 5
-4,		 TGCTTCACTGCT, eWjngSWHYICX, 1,       TCGTTAAATTTT, eFO!a:L3V>7Q, 1,       TCGGTTACTTTT, aUIHe$Q&VJJC, 1,       TCGGTCATTTTT, d9W9`2T*`6bb, 3
+num_reads, count_0, read_0,    quality_0,    count_1, read_1,    quality_1,    count_2, read_2,    quality_2,    count_3, read_3,    quality_3,    total_count
+3		   2,		 TATTAATTGTGT, i_ag]_MVbV2U, 2,       TATTAATTGTTT, Offde_l`oYNA, 2,       TATTAATTGTAT, j^ge\M_fYb,_, 1,       TATTAATTGTCT, _%\hF8jg+60Z, 5
+3		   4,		 TGCTTCACTGCT, eWjngSWHYICX, 1,       TCGTTAAATTTT, eFO!a:L3V>7Q, 1,       TCGGTTACTTTT, aUIHe$Q&VJJC, 1,       TCGGTCATTTTT, d9W9`2T*`6bb, 3
 ```
 Each read has a count, the sequence, and a quality string. Because the table has to contain a fixed number
 of columns cells with less than the max number of reads will not fill all columns and have some reads
@@ -237,41 +314,60 @@ is generated for each well, eg `output/well1.features.cells_full.csv`.
 ### Log files
 
 Log files are kept for all jobs that create a file, and their path is the same as the file being created with `logs/` prepended. For example,
-if I am trying to create the file `input/well1/composite.json`, the log file for that would be `logs/input/well1/composite.json.err` and `logs/input/well1/composite.json.out`
+if you are trying to create the file `input/well1/composite.json`,
+the log file for that would be `logs/input/well1/composite.json.err` and `logs/input/well1/composite.json.out`
 
 In the case of an error snakemake will print out a message showing which job failed, as well as the log file for it.
 
-### Quickstart
+### Config files
 
-#### Installation
+After cloning the repo and installing the pipeline, the next step to run the pipeline is
+properly configuring it to work on your data. Snakemake uses yaml files for configuration,
+and the file `default-config.yaml` contains all the options that the pipeline uses with documentation.
+It is recommended to make a copy of this file named `config.yaml` and edit it with your
+parameters.
 
-To get this pipeline up and running, it should be as simple as running `pip install -r requirements.txt` after cloning
-this repo. Some dependencies that can cause difficulties are tensorflow which is required for cell segmentation, and
-cellprofiler, which can be used for calculating phenotypes. If they are not able to be installed refer to their respective
-documentations on how to best install them on your platform.
+Important parameters that should be set include:
+- `phenotype_scale` and `bases_scale`, the objective used to image the phenotyping and sequencing images
+- `sequencing_channels` and `phenotyping_channels`, the names of the channels imaged, it is important
+to ensure the 'G', 'T', 'A', and 'C' channels are in the right order as those will be used to generate
+read sequences. Additionally make note of a channel that can be used for alignment between cycles,
+such as DAPI or GFP.
+- `segmentation_grid_size`, `sequencing_grid_size`, and `phenotyping_grid_size` specify the size of the
+grid used for the different steps of the pipeline. This depends on the size of your input images, for
+a 6 well plate we found that 5 was a good grid size for segmentation and sequencing, while cellprofiler
+needed a larger grid of 20.
+- `stitching.channel`, this is the channel that is used for alignment, it should not change between cycles
+and has to be imaged in both the sequencing and phenotyping images
+- `segmentation.diameter` and `segmentation.channels` specify the inputs to Cellpose,
+diameter is the estimated size of cells in pixels and channels is the nuclear and cytoplasm
+channels to run cell segmentation on
+- `segmentation.use_corrected` and `phenotyping.use_corrected` both determine whether
+segmentation and phenotyping should be run on background corrected images, produced
+by running BaSiC (<https://github.com/marrlab/BaSiC>). If your images need background correction
+both of these should be set to True, but make sure to inspect the resulting images
+and make sure they look good.
 
-#### Running the pipeline
+These highlighted parameters are the important ones to make sure are correct, but there are many
+more in the config file that can be adjusted.
+
+### Running the pipeline
 
 The pipeline uses Snakemake for organization, and the way snakemake works is you invoke it requesting certain output files.
 A simple command that should work well for a standard 6 well experiment is:
 ```
-./run.sh output/well{1..6}_seqgrid5.features.cells_full.csv
+./run.sh output/well{1..6}_grid.features.cells_full.csv
 ```
 
 If you are not on a compatible SGE cluster, don't use the provided run.sh command and instead invoke snakemake directly, replacing
 './run.sh' with 'snakemake'
 
-In the command above, there are a couple different parameters you can tweak. The first is the grid size, when I
-specified seqgrid5 I indicated that the pipeline should split up the well into a 5x5 grid. You can change this to any number,
-or remove it entirely to not do any splitting. You can also add phenogrid5 to split the well during phenotyping as well. For example,
-if you found that memory usage was too high during phenotyping with the previous command, you could try:
-```
-./run.sh output/well{1..6}_seqgrid5_phenogrid5.features.cells_full.csv
-```
+In the command above, there are a couple different parameters you can tweak in the file path.
+The first is `_grid`, which means that the images will be split into the grid size specified in the config file.
 
 When splitting the well into tiles, you can request only one tile:
 ```
-./run.sh output/well{1..6}_seqgrid5/tile02x02y.features.cells_full.csv
+./run.sh output/well{1..6}_grid5/tile02x02y.features.cells_full.csv
 ```
 
 Instead of only requesting one tile, you can request a small section of the well to test out the pipeline and get some example data:
@@ -282,10 +378,8 @@ Instead of only requesting one tile, you can request a small section of the well
 Finally, you can also change what type of phenotyping you do. If you would like to run the cellprofiler pipeline 'pipeline.cppipe'
 to generate phenotype data, you can use the command:
 ```
-./run.sh output/well{1..6}_seqgrid5_phenogrid20.cellprofiler_pipeline.cells_full.csv
+./run.sh output/well{1..6}_grid.cellprofiler_pipeline.cells_full.csv
 ```
-Notice that I increased the phenotype grid to 20x20, cellprofiler does not usually run well with large images so it is necessary
-to split it up more than ususal.
 
 ### Complete options for output files
 
@@ -296,16 +390,14 @@ changing parameters without rerunning the proper steps, resulting in outdated fi
 specifying parameters are described below
 
 ```
-output/well{well} [_subset{size}] [_section{size}] [_seqgrid{grid_size}] [_phenogrid{grid_size}] [/tile{x}x{y}] [.features] [.cellprofiler_{pipeline}] [.{custom_phenotyping}] .cells_full.csv 
+output/well{well} [_subset{size}] [_section{size}] [_grid] [/tile{x}x{y}] [.features] [.cellprofiler_{pipeline}] .cells_full. (csv|parquet)
 ```
 
 #### Subset
 
 When adding `_subset{size}` to a well, this means that only a size by size tile section of the input microscope tiles are included,
 taken from the center of the well. This is useful to do a test run of the pipeline, as it greatly reduces the computation
-necessary for all steps. This is similar to requesting a single tile, such as `output/well1_seqgrid20/tile09x09y/cells_full.csv`,
-which also greatly reduces computation, but using a subset also eliminates the need to stitch the whole well together, saving
-even more time.
+necessary for all steps.
 
 #### Section
 
@@ -320,8 +412,7 @@ be merged at, the end of the sequencing section or the end of the phenotyping se
 sequencing section of the pipeline is important to consolidate the different cells found during cell segmentation, making
 sure there are no duplicate cells and that all cells are labeled uniquely. Grids of tiles are split creating equal size
 tiles that completely cover the original image, so the resulting merged image will be exactly the same size as the original.
-The overlap between tiles is possible to change, however it defaults to double the cell size, making sure that each cell
-is fully in at least one tile.
+The overlap between tiles is possible to change in the config file, as the parameter `stitching.overlap`.
 
 The main use of tile grids is to reduce memory usage of the processing steps that will happen on the tiles. Depending on
 how you are running the pipeline and what resources you have, you should adjust the grid size to avoid any memory issues.
@@ -330,19 +421,16 @@ The main tasks like this in the pipeline currently are cell segmentation and cel
 phenotyping steps this may apply to them too. With these tasks many tiles can be run in parallel.
 
 If you do not want to worry about the individual tiles you shouldn't need to, the splitting and merging are all taken
-care of by the pipeline. Simply adding `_seqgrid` or `_phenogrid` into the filename will cause the input images to
+care of by the pipeline. Simply adding `_grid` into the filename will cause the input images to
 be split up and merged at the end of the pipeline. However if you do want to inspect the different tiles or request
-a single tile the format is quite simple, each well directory such as `well1_seqgrid5` will contain directories
+a single tile the format is quite simple, each well directory such as `well1_grid5` will contain directories
 `tile00x00y` up to `tile05x05y`. Each of these directories will hold the same files that a normal well directory would,
 such as `raw_pt.tif`, `cells_mask.tif`, or `features.cells.csv`.
 
-If you request a single tile output file such as `output/well1_seqgrid5_phenogrid5/tile02x02y/features.cells_full.csv`, the pipeline will
+If you request a single tile output file such as `output/well1_grid5/tile02x02y.features.cells_full.csv`, the pipeline will
 only generate the output files for that specific tile. However it will still run all tiles through the sequencing section of
-the pipeline, because as explained above the sequencing grid needs to be merged back together before a phenotyping grid
-can be split. If you only want to run one tile through both processing steps, you would request `output/well1_seqgrid5/tile02x02y/features.cells_full.csv`.
-By not specifying a phenotype grid, the sequencing grid is never merged together and only the tile you requested is processed.
-The result of this is that this resulting file can never be merged back together into a final file for the whole well because
-a phenotyping grid was never created for it.
+the pipeline, because as explained above the segmentation grid needs to be merged back together before a phenotyping grid
+can be split.
 
 #### Phenotyping options
 
@@ -359,13 +447,35 @@ for any files matching `*{pipeline}.cppipe`. A common pattern is to date differe
 the second pipeline will be ran. Cellprofiler is a proven method to extract many different features from cell images,
 for visualization or analyis. More info on what a pipeline should look like is included in the Cellprofiler section below.
 
+## Parameters
+
+As explained before snakemake uses yaml files to store configuration about the pipeline and data.
+However another feature that is included in the pipeline is being able to
+change these parameters in the file path, by requesting different files from
+snakemake. For example, the diameter that is given to cellpose is a common parameter
+that needs to be tuned, and it is specified in the config file. When you generate the file
+`segmentation/well1_section1000/cells_mask.tif`, it will use the diameter specified in this file.
+However, if you generate the file `segmentation/well1_section1000/cells_mask_diameter50.tif`,
+the diameter will be set to 50, ignoring the value in the config file. Thus you can generate many
+different files with different diameter values, and compare them to find the best one.
+
+This is true for many steps in the pipeline, and many also pass forward parameters from earlier steps.
+For example, the dot detection step has three parameters, min, max, and num that specify the
+range of gaussian sigmas to check when detecting sequencing dots. The final read calling step
+has the parameter maxreads, and we can adjust them all by generating the file
+`sequencing/well1_section1000/cells_reads_min1_max5_num10_maxreads8`.
+
+One thing to be careful about is the order in which parameters are specified, if they
+are not in the correct order they wont be split out properly. Below when the general steps
+of the pipeline are explained, parameters are listed as well.
+
 ## Steps of the pipeline
 
 ### Extraction from the nd2 file
 
 Inputs:
 
-- `rawinput/{date}/Well*.nd2`
+- `rawinput/{date}/well*.nd2`
 
 Outputs:
 
@@ -380,28 +490,35 @@ in the `input/` folder according to the format specified above in the Input sect
 
 Inputs:
 
-- `stitching/input/well{well}/cycle{cycle}/raw.tif`
-- `stitching/input/well{well}/cycle{cycle}/positions.csv`
+- `input/well{well}/cycle{cycle}/raw.tif`
+- `input/well{well}/cycle{cycle}/positions.csv`
 
 Outputs:
 
 - `stitching/well{well}/composite.json`
 
+Params:
+
+- `channel`: The channel that is used to align between and across cycles. Can be an integer index
+or one of the names of the channels specified in the config file
+- `subpix`: The level to which images are aligned below 1 pixel, so if this is 8 images are aligned
+to 1/8th of a pixel. The benefit of this is usually small over 16.
+
 In this step all the tiles for the well are registered together, and the global position for each
-is solved. This is normally a very intensive part of the pipeline, taking up to 6 hours.
+is solved. This is normally a very intensive part of the pipeline, taking up to multiple hours.
 The progress can be checked in the log files for the job, at `logs/input/well{well}/composite.json.err`
 
 ### Stitching (full well)
 
 Inputs:
 
-- `stitching/input/well{well}/cycle{cycle}/raw.tif`
+- `input/well{well}/cycle{cycle}/raw.tif`
 - `stitching/well{well}/composite.json`
 
 Outputs:
 
-- `stitching/output/well{well}/raw.tif`
-- `stitching/output/well{well}/raw_pt.tif`
+- `stitching/well{well}/raw.tif`
+- `stitching/well{well}/raw_pt.tif`
 
 This step combines all the tiles and their global positions from registration into a single
 image. This is normally not necessary as the entire well image is too large to be processed
@@ -411,13 +528,13 @@ at once, and instead the image is split into smaller tiles.
 
 Inputs:
 
-- `stitching/well{well}/cycle{cycle}/raw.tif`
+- `input/well{well}/cycle{cycle}/raw.tif`
 - `stitching/well{well}/composite.json`
 
 Outputs:
 
-- `stitching/output/well{well}_seqgrid{grid_size}/tile{x}x{y}y/raw.tif`
-- `stitching/output/well{well}_seqgrid{grid_size}/tile{x}x{y}y/raw_pt.tif`
+- `stitching/well{well}_grid{grid_size}/tile{x}x{y}y/raw.tif`
+- `stitching/well{well}_grid{grid_size}/tile{x}x{y}y/raw_pt.tif`
 
 Instead of stitching the tiles into one full image for the well, they can be stitched
 into smaller tiles that are sections of the well. This is important because the whole
@@ -435,7 +552,7 @@ are a couple benefits from this:
   wastes compute by calculating stuff for those areas multiple times. The overlap
   for these tiles is the minimum required to combine them back together.
 
-The parameter `grid_size` determines how many tiles to split the well into, for example `well1_seqgrid5` means
+The parameter `grid_size` determines how many tiles to split the well into, for example `well1_grid5` means
 the there will be 25 tiles in a 5 by 5 grid.
 
 Phenotyping images are stitched separately into another file, as they are taken at a different
@@ -445,12 +562,13 @@ scale.
 
 Inputs:
 
-- `sequencing/input/{prefix}/raw_pt.tif`
+- `stitching/{path}/raw_pt.tif`
 
 Outputs:
 
-- `sequencing/output/{prefix}/cells_mask.tif`
-- `sequencing/output/{prefix}/nuclei_mask.tif`
+- `segmentation/{path}/cells_mask.tif`
+- `segmentation/{path}/nuclei_mask.tif`
+- `segmentation/{path}/cells.csv`
 
 One of the important processing steps is cell segmentation, which happens on the phenotyping image.
 In the input and output you can see there are no real set paths, instead cell segmentation can be
@@ -460,91 +578,139 @@ This is also one of the more intensive processing steps of the pipeline, the mem
 for it can get quite large. If memory becomes an issue the size of each tile can be adjusted when
 splitting up the grid.
 
-### Finding dots
+In addition to segmenting the cells, each cell is listed in the cells.csv table with its
+x and y centroid position and its bounding box. These coordinates are in pixels in the phenotype
+image.
+
+### Merging the segmentation grid
 
 Inputs:
 
-- `sequencing/input/{prefix}/raw.tif`
+- `segmentation/well{well}_grid{grid_size}/tile{x}x{y}y/cells_mask.tif`
+- `segmentation/well{well}_grid{grid_size}/tile{x}x{y}y/nuclei_mask.tif`
+- `segmentation/well{well}_grid{grid_size}/tile{x}x{y}y/cells.csv`
 
 Outputs:
 
-- `sequencing/{prefix}/bases.csv`
+- `segmentation/well{well}_grid/cells_mask.tif`
+- `segmentation/well{well}_grid/nuclei_mask.tif`
+- `segmentation/well{well}_grid/cells.csv`
 
-This is the other main processing step in the pipeline, where the flourescent dots are detected.
-The output is a csv file where the first two columns are the xy position of each dot, and the rest
-of the columns are the values of the dot in each of the 4 flourescent base channels.
+The segmentation is merged into a full well image, combining any cells that were in the
+overlapping regions between tiles.
 
-### Merging sequencing grid
+### Splitting the segmentation grid
 
 Inputs:
 
-- `sequencing/well{well}_seqgrid{grid_size}/tile{x}x{y}y/bases.csv`
-- `sequencing/output/well{well}_seqgrid{grid_size}/tile{x}x{y}y/cells_mask.tif`
-- `sequencing/output/well{well}_seqgrid{grid_size}/tile{x}x{y}y/nuclei_mask.tif`
+- `segmentation/{path}_grid/cells.csv`
+- `segmentation/{path}_grid/cells_mask.tif`
 
 Outputs:
 
-- `sequencing/well{well}_seqgrid{grid_size}/bases.csv`
-- `sequencing/output/well{well}_seqgrid{grid_size}/cells_mask.tif`
-- `sequencing/output/well{well}_seqgrid{grid_size}/nuclei_mask.tif`
+- `segmentation/{path}_grid{grid_size}/tile{x}x{y}y/cells.csv`
+- `segmentation/{path}_grid{grid_size}/tile{x}x{y}y/cells_mask.tif`
 
-If the grid was split previously, now it is combined back together to get the final bases.csv table and cell segmentation for the
-whole well. This doesn''t modify the table much, however it does update all xy positions to be global for
-the well as well as adding a tile column that records which tile the cell was originally from. The cell segmentations are merged together,
-combining any cells in the overlapping regions.
+Like the segmentation step, the sequencing and phenotyping steps can be run on smaller tiles split from the whole well. To make this
+work we have to split the files generated from the segmentation section of the pipeline.
+It may seem redundant to join these together then split them back up, but other than
+allowing for different grid sizes in these two sections there are many benefits from doing it this way. Because
+the cell segmentation was run on multiple tiles with overlap, it can be difficult to reconcile the different segmentations
+of the tiles in these overlapping regions. However once this is done, we can split the cells back up making sure that
+each cell is in exactly one tile, with no overlap between tiles. This makes merging the results of
+the sequencing and phenotyping sections trivial as we can just concatenate the results for each tile together,
+knowing that there are no duplicate cells between tiles.
 
 ### Calling reads
 
 Inputs:
 
-- `sequencing/output/{prefix}/cells_mask.tif`
-- `sequencing/{prefix}/bases.csv`
+- `segmentation/{path}/cells_mask.tif`
+- `stitching/{path}/raw.tif`
 
 Outputs:
 
-- `sequencing/output/{prefix}/cells.csv`
-- `sequencing/output/{prefix}/cells_reads.csv`
+- `sequencing/{path}/cells_raw_reads.csv`
 
-This is the final output of the processing section of the pipeline, where the flourescent dots
-are collected in cells and the sequences are read out. The structure of this file is described in the Outputs
-section in more detail, but it contains the sequencing results from all the cells in the well.
-The `cells.csv` file contains only positional information about cells while the `cells_reads.csv` file contains
-the reads found for each cell.
+This is the other main processing step in the pipeline, where the flourescent dots are detected,
+and their sequencing values are read out. This table contains each sequencing colony that was
+detected, with its position, raw image values, sequence, and cell that it is contained in.
 
-
-### Splitting phenotyping grid
+### Combining reads
 
 Inputs:
 
-- `sequencing/output/{prefix}/cells.csv`
-- `sequencing/output/{prefix}/cells_mask.tif`
+- `segmentation/{path}/cells_mask.tif`
+- `sequencing/{path}/cells_raw_reads.csv`
 
 Outputs:
 
-- `phenotyping/input/{prefix}_phenogrid{grid_size}/tile{x}x{y}y/cells.csv`
-- `phenotyping/input/{prefix}_phenogrid{grid_size}/tile{x}x{y}y/cells_mask.tif`
+- `sequencing/{path}/cells_reads_partial.csv`
 
-Like the sequencing step, the phenotyping step can be run on smaller tiles split from the whole well. To make this
-work we have to split the files generated from the sequencing section of the pipeline, notably the cell table
-and the cell mask image. It may seem redundant to join these together then split them back up, but other than
-allowing for different grid sizes in these two sections there are many benefits from doing it this way. Because
-the cell segmentation was run on multiple tiles with overlap, it can be difficult to reconcile the different segmentations
-of the tiles in these overlapping regions. However once this is done, we can split the cells back up making sure that
-each cell is in exactly one tile, with no overlap between phenotype tiles. This makes merging the results of
-the phenotyping section trivial as we can just concatenate the results for each tile together, knowing that there are no
-duplicate cells between tiles.
+Typically there are many of the same reads next to each other, and to combine these reads
+we cluster reads together. Right now we only cluster reads that have the same sequence
+and are in the same cell, but by changing the config params in the section `read_clustering`,
+reads can be combined in many different ways. Once reads with the same sequence have been
+combined, we aggregate all the reads in each cell together. The resulting table has a row
+for each cell, and has the top 5 reads found in the cell.
+
+### Matching reads to barcodes
+
+Inputs:
+
+- `input/auxdata/barcodes.csv`
+- `sequencing/{path}/cells_reads_partial.csv`
+
+Outputs:
+
+- `sequencing/{path}/cells_reads.csv`
+
+Here we link reads in cells to the barcode lookup table provided. For each cell, we search
+for the match between one of the reads and a barcode in the lookup table with minimal edit distance.
+If there is a single match with minimum edit distance, we link that cell with the barcode.
+If there are multiple matches with the same edit distance, it is ambiguous which barcode
+the cell should be linked to. This can happen for multiple reasons, errors in sequencing may
+have caused the barcode to change enough where it is now equal edit distance between two barcodes.
+Alternatively the cell could have two reads that both map to a barcode, either because
+multiple barcodes are actually present in the cell, or because the segmentation of the cell
+is not perfectly accurate and a neighboring cells reads are being misassigned. Either way,
+we are unsure which barcode to map to and we dont link the cell with either.
+
+Some experiments actually expect there to be multiple barcodes in cells, and use them
+to map cells more accurately with less cycles. In this case, the barcodes.csv file should
+have the sets of barcodes separated by '-'. Matches between sets of reads and sets of barcodes
+are searched for, with the individual edit distances added together. The same procedure
+is used, where if multiple matches have the same edit distance, the cell cannot be linked.
+
+The result of this process is that some cells are linked to a barcode and thus a row in the
+barcode table. All the columns of this barcode table are added to the reads table, and the values
+for linked barcodes are copied to their respective cells. 
+
+### Merging phenotype tables
+
+Input:
+
+- `sequencing/{path}_grid{grid_size}/tile{x}x{y}/cells_reads.csv`
+
+Output:
+
+- `phenotyping/{path}_grid{grid_size}/cells_reads.csv`
+
+The last step is to merge any tiles that were split for sequencing. As described in the splitting section,
+this is very simple and only consists of concatenating the different tables together. Because
+no cells are contained in multiple tiles, we know there will be no duplicates.
 
 ### Calculating simple features
 
 Inputs:
 
-- `phenotyping/input/{prefix}/raw_pt.tif`
-- `phenotyping/input/{prefix}/cells.csv`
-- `phenotyping/input/{prefix}/cells_mask.tif`
+- `phenotyping/input/{path}/raw_pt.tif`
+- `phenotyping/input/{path}/cells.csv`
+- `phenotyping/input/{path}/cells_mask.tif`
 
 Outputs:
 
-- `phenotyping/output/{prefix}/features.cells.csv`
+- `phenotyping/{path}/features.cells.csv`
 
 This is the simple phenotyping solution contained in the pipeline, which calculates a handful of useful features
 that can be used to determine simple phenotypes. These features include the shape, eccentricity, area and such of the
@@ -553,19 +719,19 @@ phenotyping channel. If you are only looking at, for example intensity in channe
 these features should be enough for you to generate useful phenotype data. However if you are looking for more complicated
 phenotypes or would like to use a more unsupervised approach to find different phenotypes, this solution is probably not
 enough. The main benefit of using this is the low computational cost, it runs fast and usually does not require the images
-to be split into tiles, so you can run the pipeline without `_phenogrid??`.
+to be split into tiles, so you can set the `phenotyping_grid_size` parameter in the config file to 1
 
 ### Calculating features with cellprofiler
 
 Inputs:
 
-- `phenotyping/input/{prefix}/raw_pt.tif`
-- `phenotyping/input/{prefix}/cells.csv`
-- `phenotyping/input/{prefix}/cells_mask.tif`
+- `phenotyping/input/{path}/raw_pt.tif`
+- `phenotyping/input/{path}/cells.csv`
+- `phenotyping/input/{path}/cells_mask.tif`
 
 Outputs:
 
-- `phenotyping/output/{prefix}/cellprofiler_{pipeline}.cells.csv`
+- `phenotyping/{path}/cellprofiler_{pipeline}.cells.csv`
 
 Cellprofiler is a much more robust and proven method for generating many features of cells, to the level where much more complex
 analysis is possible. If you would like to run a cellprofiler pipeline, you can provide one in a specific format and the 
@@ -580,53 +746,163 @@ the default output folder, and it should output a file called `Cells.csv`.
 Although a bit rigid, once these requirements are satisfied any typical cellprofiler analysis can be preformed, greatly
 increasing the possible downstream data analysis.
 
-### Calculating custom features
-
-
 ### Merging calculated features
 
 Inputs:
 
-- `phenotyping/output/{prefix}/cells.csv`
-- `phenotyping/output/{prefix}/features.cells.csv`
-- `phenotyping/output/{prefix}/cellprofiler_pipeline.cells.csv`
+- `phenotyping/{path}/cells.csv`
+- `phenotyping/{path}/features.cells.csv`
+- `phenotyping/{path}/cellprofiler_pipeline.cells.csv`
 		(any other phenotyping tables that have been generated)
 
 Output:
 
-- `phenotyping/output/{prefix}/cellprofiler_pipeline.features.cells_phenotype.csv`
+- `phenotyping/{path}/cellprofiler_pipeline.features.cells_phenotype.csv`
 															 (any additional table names would be included here)
 
 Once all the desired phenotyping analysis has been run, the resulting features can be combined with the cell table,
 creating the final table. The filename of this table reflects the different methods of feature generation used, so
 by requesting a different filename you can alter which methods run.
 
-### Merging phenotype tiles
+### Merging phenotype tables
 
 Input:
 
-- `phenotyping/output/{prefix}_phenogrid{grid_size}/tile{x}x{y}/features.cells_phenotype.csv`
+- `phenotyping/{path}_grid{grid_size}/tile{x}x{y}/features.cells_phenotype.csv`
 
 Output:
 
-- `phenotyping/output/{prefix}_phenogrid{grid_size}/features.cells_phenotype.csv`
+- `phenotyping/{path}_grid{grid_size}/features.cells_phenotype.csv`
 
 The last step is to merge any tiles that were split for phenotyping. As described in the splitting section,
-this is very simple and only consists of concatenating the different tiles and updating cell x and y positions.
-If you do not care about the positional information, you can even do this step yourself with pandas.
+this is very simple and only consists of concatenating the different tables together. Because
+no cells are contained in multiple tiles, we know there will be no duplicates.
 
 ### Merging phenotype and genotype
 
 Input:
 
-- `phenotyping/output/{prefix}/features.cells_phenotype.csv`
-- `sequencing/output/{prefix}/features.cells_reads.csv`
+- `segmentation/{path}/cells.csv`
+- `sequencing/{path}/cells_reads.csv`
+- `phenotyping/{path}/features.cells_phenotype.csv`
 
 Output:
 
-- `output/{prefix}.features.cells_full.csv`
+- `output/{path}.features.cells_full.csv`
 
 The final step is merging the phenotype and genotype of cells into the final table. This is simply a join on
-the cell ids shared between the two tables, contained in the `cells.csv` table created from the cell segmentation.
+the cell ids shared between the tables. Every cell in the cells.csv file will have a row in the final table,
+if the cell has no reads or phenotyping those columns will be missing.
 
+## Quality control steps
+
+There are multiple ways to make sure that the different steps in the pipeline are performing as desired.
+Many of these are additional processing steps in the pipeline that can be run by requesting
+the specific file with snakemake. This combined with the ability to change parameters in file paths mean
+that finding the right values for different parameters is quite simple. For example, if you want to try a couple
+different possible values for the diameter given to cellpose, you could request the followin files as so:
+
+	snakemake output/qc/well1_section1000/cells_overlay_diameter{25,50,75,100}.png
+
+Upon inspecting these 4 files, you can select the best diameter value and set it in the config file,
+making it the default. This can be done with many of the qc plots and images below.
+
+### Stitching plots
+
+Outputs:
+
+- `output/qc/{path}/cycle{cycle}_cycle{cycle}_scores_calculated.png`
+- `output/qc/{path}/cycle{cycle}_cycle{cycle}_scores_filtered.png`
+- `output/qc/{path}/presolve.png`
+- `output/qc/{path}/solve.png`
+- `output/qc/{path}/solve_accuracy.png`
+
+Params:
+- `channel`: The channel that is used to align between and across cycles. Can be an integer index
+or one of the names of the channels specified in the config file
+- `subpix`: The level to which images are aligned below 1 pixel, so if this is 8 images are aligned
+to 1/8th of a pixel. The benefit of this is usually small over 16.
+
+These plots are generated while stitching happens, and show the pairwise alignment between
+overlapping tiles. The stitching algorithm works by calculating many of these pairwise alignments
+between neighboring tiles in the same cycle and overlapping tiles in different cycles.
+They are plotted as an arrow placed between the two tiles, pointing in the direction of the
+estimated alignment, and marked with a dot that is colored by its score.
+
+The plots between cycles show the alignments of only those two cycles, and the presolve plot
+shows all alignments before they are all solved. When they are solved, the stitching algorithm
+finds global positions for each image, and these are shown in the solve.png plot. solve_accuracy.png
+shows the same image alignments, but they are colored instead by the error in the estimated alignment.
+
+When looking at these plots, it can be quite hard to tell if the stitching worked well. The best plot
+to inspect is the solve_accuracy.png plot, making sure that the images are in the general shape of a well.
+If there is a catastrophic failure, it will be aparent, and the images will be scattered all over or
+bunched up in one location.
+
+### Read quality plots
+
+Inputs:
+
+- `sequencing/{path}/cells_reads.csv`
+
+Output:
+
+- `output/{path}/cells_reads.svg`
+
+Params:
+
+- min, max, num: The range of sigmas to search for blobs, passed to `skimage.feature.blob_log`
+- norm, posweight, valweight, seqweight: Parameters used to calculate distances between reads, used for clustering.
+- linkage, thresh: Parameters used to combine reads using the distances calculated.
+- max_reads: The number of reads to keep per cell.
+
+This figure contains a collection of quality control plots based on the reads generated.
+The first row shows general stats including nucleotide frequencies, read count per cell, and edit distances
+of matches. The next row shows stats on error rates, based on the mappings made to the library.
+Note that these error rates are not true error rates, as they are only the mappings that were
+able to be made to the library with minimal edit distance.
+The next row contains a very useful plot which shows the edit distance to the best matching
+barcode and the second best matching barcode. This plot shows what percent of cells didnt
+have an ambiguous match, as all cells that are not on the diagonal were able to be matched.
+The final row contains a couple more miscelanious plots showing edit distance and total error
+rate over cycles.
+
+### Cell segmentation overlay
+
+Input:
+	
+- `stitching/{path}/raw_pt.tif`
+- `segmentation/{path}/cells_mask.tif`
+
+Output:
+
+- `output/qc/{path}/cells_overlay.tif`
+- `output/qc/{path}/cells_overlay.png`
+
+Params:
+
+- diameter: approximate pixel size of the cells
+- nuclearchannel: the channel to use as the nuclear stain
+- cytochannel: the channel to use as the cytoplasm stain
+
+This generates an overlay image with the phenotype image that was used for cell segmentation and
+the resulting labels. This can be useful to ensure cell segmentation is working, as all steps rely
+on high quality cell segmentation.
+
+### Highlight detected sequencing colonies
+
+Input:
+
+- `stitching/{path}/raw.tif`
+- `sequencing/{path}/bases.csv`
+
+Output:
+
+- `output/qc/{path}/annotated.tif`
+
+Params:
+	min, max, num: The range of sigmas to search for blobs, passed to skimage.feature.blob_log
+
+This labels each dot detected in the sequencing images by drawing an x at its location in an extra channel.
+This is very useful to make sure that dots are being identified properly.
 

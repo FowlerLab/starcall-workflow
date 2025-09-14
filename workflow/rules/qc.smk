@@ -83,9 +83,9 @@ rule make_qc_read_plots:
 
             for i,let in enumerate('GTAC'):
                 if has_library:
-                    axes[0,0].plot(np.mean(barcode_mat == let, axis=0), '--C' + str(i))
+                    axes[0,0].plot(np.mean(barcode_mat == let, axis=0), '--', color='mbgr'[i])
                     debug ('axis.plot({}, "--C{}", label="{}")'.format(np.mean(barcode_mat == let, axis=0).tolist(), i, let))
-                axes[0,0].plot(np.mean(read_mat == let, axis=0), '-C' + str(i), label=let)
+                axes[0,0].plot(np.mean(read_mat == let, axis=0), '-', color='mbgr'[i], label=let)
                 debug ('axis.plot({}, "-C{}", label="{}")'.format(np.mean(read_mat == let, axis=0).tolist(), i, let))
 
             #axes[0,0].set_title('Nucleotide frequencies' + ('\n(dashed is library)' if has_library else ''))
@@ -163,6 +163,8 @@ rule make_qc_read_plots:
                 matched_barcs = []
                 for i in read_table.index:
                     matched_index = read_table.loc[i,'matched_read_index_0']
+                    debug (read_table['matched_read_index_0'])
+                    debug ('matched_index', i, matched_index)
                     if matched_index != -1:
                         matched_reads.append(read_table.loc[i,'read_{}'.format(matched_index)])
                         matched_barcs.append((read_table.loc[i,'matched_barcode_0'] + '????????????')[:num_cycles])
@@ -186,13 +188,15 @@ rule make_qc_read_plots:
                 axes[1,2].set_title('Errors by library nucleotide')
                 axes[1,3].set_title('Errors by library nucleotide to read nucleotide')
 
-                for let in 'GTAC':
-                    axes[1,1].plot(np.sum((matched_reads != matched_barcs) & (matched_reads == let), axis=0), label=let)
-                    axes[1,2].plot(np.sum((matched_reads != matched_barcs) & (matched_barcs == let), axis=0), label=let)
-                    for let2 in 'GTAC':
+                for i, let in enumerate('GTAC'):
+                    axes[1,1].plot(np.sum((matched_reads != matched_barcs) & (matched_reads == let), axis=0), label=let, color='mbgr'[i])
+                    axes[1,2].plot(np.sum((matched_reads != matched_barcs) & (matched_barcs == let), axis=0), label=let, color='mbgr'[i])
+                    for j, let2 in enumerate('GTAC'):
                         axes[1,3].plot(np.sum((matched_reads != matched_barcs)
-                                & (matched_barcs == let) & (matched_reads == let2), axis=0),
-                                label=let + '->' + let2)
+                                & (matched_barcs == let) & (matched_reads == let2), axis=0), ls='-', color='mbgr'[i])
+                        axes[1,3].plot(np.sum((matched_reads != matched_barcs)
+                                & (matched_barcs == let) & (matched_reads == let2), axis=0), ls=':', color='mbgr'[j])
+                                #label=let + '->' + let2)
 
                 axes[1,0].set_ylim(ymin=0)
                 axes[1,1].set_ylim(ymin=0)

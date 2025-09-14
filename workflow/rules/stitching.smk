@@ -3,6 +3,9 @@ import sys
 import glob
 import time
 
+wildcard_constraints:
+    params_alignment = params_regex('channel', 'subpix', 'solver'),
+
 ##################################################
 ## Background calculation / correction
 ##################################################
@@ -216,9 +219,9 @@ rule stitch_cycle:
 rule stitch_well:
     input:
         images = expand(stitching_dir + '{well_stitching}/cycle{cycle}/{corrected}_tiles.tif', cycle=cycles, allow_missing=True),
-        composite = stitching_dir + '{well_stitching}/composite.json',
+        composite = stitching_dir + '{well_stitching}/composite{params_alignment}.json',
     output:
-        stitching_dir + '{well_stitching}/{corrected,raw|corrected}.tif'
+        stitching_dir + '{well_stitching}/{corrected,raw|corrected}{params_alignment}.tif'
     resources:
         mem_mb = lambda wildcards, input: input.size_mb / len(cycles) * 3.5 + 10000
     run:
@@ -338,10 +341,10 @@ rule stitch_well_pt:
 rule stitch_well_section:
     input:
         images = expand(stitching_dir + '{well_stitching}/cycle{cycle}/{corrected}_tiles.tif', cycle=cycles, allow_missing=True),
-        composites = expand(stitching_dir + '{well_stitching}/cycle{cycle}/composite.json', cycle=cycles, allow_missing=True),
-        full_composite = stitching_dir + '{well_stitching}/composite.json',
+        composites = expand(stitching_dir + '{well_stitching}/cycle{cycle}/composite{params_alignment}.json', cycle=cycles, allow_missing=True),
+        full_composite = stitching_dir + '{well_stitching}/composite{params_alignment}.json',
     output:
-        image = stitching_dir + '{well_stitching}_section{size,\d+}/{corrected,raw|corrected}.tif'
+        image = stitching_dir + '{well_stitching}_section{size,\d+}/{corrected,raw|corrected}{params_alignment}.tif'
     run:
         import constitch
         import numpy as np

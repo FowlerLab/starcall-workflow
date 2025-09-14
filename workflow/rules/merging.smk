@@ -35,19 +35,19 @@ def merge_csv_files(input_paths, output_path, extra_columns=tuple(), row_func=No
 def find_phenotype_table(wildcards):
     if wildcards.phenotype_type == '':
         return []
-    return [phenotyping_dir + '{path_nogrid}/{phenotype_type}cells_phenotype.csv']
+    return [phenotyping_dir + '{well}{possible_grid}/{phenotype_type}cells_phenotype.csv']
 
 rule merge_phenotype_genotype:
     input:
-        cell_table = segmentation_dir + '{path_nogrid}/cells.csv',
-        reads = sequencing_dir + '{path_nogrid}/cells_reads.csv',
+        cell_table = segmentation_dir + '{well}{possible_grid}/cells.csv',
+        reads = sequencing_dir + '{well}{possible_grid}/cells_reads.csv',
         phenotype_tables = find_phenotype_table,
     output:
-        table = output_dir + '{path_nogrid}.{phenotype_type}cells_full.csv'
+        table = output_dir + '{well}{possible_grid}.{phenotype_type}cells_full.csv'
     resources:
         mem_mb = lambda wildcards, input: input.size_mb * 5 + 10000
     wildcard_constraints:
-        path_nogrid = '((?!_grid)[^.])*',
+        possible_grid = '(_grid)?',
         phenotype_type = '[^/]*',
     run:
         import pandas
@@ -56,7 +56,12 @@ rule merge_phenotype_genotype:
         #table = pandas.concat(tables, axis=1)
         table = pandas.read_csv(input[0], index_col=0)
         for path in input[1:]:
-            table = table.join(pandas.read_csv(path, index_col=0))
+            cur_table = pandas.read_csv(path, index_col=0)
+            if 'file_index' in cur_table.columns:
+                cur_table = cur_table.drop(columns='file_index')
+            if 'file_path' in cur_table.columns:
+                cur_table = cur_table.drop(columns='file_path')
+            table = table.join(cur_table)
         table.to_csv(output.table)
 
 rule merge_all_well_tables:

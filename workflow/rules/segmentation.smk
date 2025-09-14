@@ -2,9 +2,10 @@ import os
 import glob
 import re
 
+
 def get_segmentation_pt(wildcards):
     path = wildcards.path_nogrid.replace('_cellgrid', '_grid')
-    if config['segment_corrected_pt']:
+    if config['segmentation']['use_corrected']:
         return stitching_dir + path + '/corrected_pt.tif'
     else:
         return stitching_dir + path + '/raw_pt.tif'
@@ -13,21 +14,28 @@ rule segment_nuclei:
     input:
         get_segmentation_pt,
     output:
-        segmentation_dir + '{path_nogrid}/nuclei_mask_unmatched.tif',
+        segmentation_dir + '{path_nogrid}/nuclei{nuclearchannel}_mask_unmatched.tif',
+    params:
+        nuclearchannel = parse_param('nuclearchannel', config['segmentation']['channels'][0])
+    wildcard_constraints:
+        nuclearchannel = '|_nuclearchannel' + phenotyping_channel_regex,
     resources:
         mem_mb = lambda wildcards, input: input.size_mb * 64 + 10000,
+        #cuda = 1,
     threads: 2
     run:
         import numpy as np
         import tifffile
         import starcall.segmentation
 
+        nuclearchannel = channel_index(params.nuclearchannel, kind='phenotyping')
+
         data = tifffile.memmap(input[0], mode='r')
         if data.shape[3] < 32:
             data = data.transpose(3,0,1,2)
         data = data.reshape(-1, *data.shape[2:])
 
-        dapi = data[0]
+        dapi = data[nuclearchannel]
         if np.all(dapi == 0):
             tifffile.imwrite(output[0], data[0])
         else:
@@ -41,10 +49,18 @@ rule segment_cells:
     input:
         get_segmentation_pt,
     output:
-        segmentation_dir + '{path_nogrid}/cells_mask_unmatched.tif',
+        segmentation_dir + '{path_nogrid}/cells{diameter}{nuclearchannel}{cytochannel}_mask_unmatched.tif',
     resources:
-        mem_mb = lambda wildcards, input: input.size_mb * 16 + 10000,
-        #cuda = 1,
+        mem_mb = lambda wildcards, input: input.size_mb * 16 + 6000,
+        cuda = 1,
+    params:
+        diameter = parse_param('diameter', config['segmentation']['diameter']),
+        nuclearchannel = parse_param('nuclearchannel', config['segmentation']['channels'][0]),
+        cytochannel = parse_param('cytochannel', config['segmentation']['channels'][1]),
+    wildcard_constraints:
+        diameter = '|_diameter\d+',
+        nuclearchannel = '|_nuclearchannel' + phenotyping_channel_regex,
+        cytochannel = '|_cytochannel' + phenotyping_channel_regex,
     threads: 2
     run:
         import numpy as np
@@ -52,6 +68,16 @@ rule segment_cells:
         import tifffile
         import logging
         import skimage.segmentation
+
+        diameter = int(wildcards.diameter)
+        nuclearchannel = channel_index(params.nuclearchannel, kind='phenotyping')
+        cytochannel = channel_index(params.cytochannel, kind='phenotyping')
+
+        if type(nuclearchannel) == str:
+            nuclearchannel = config['phenotyping_channels'].index(nuclearchannel)
+
+        if type(cytochannel) == str:
+            cytochannel = config['phenotyping_channels'].index(cytochannel)
 
         logging.basicConfig(level=logging.INFO)
 
@@ -64,18 +90,110 @@ rule segment_cells:
 
         debug(data.shape)
 
-        dapi = data[0]
-        cyto = data[2]
+        dapi = data[nuclearchannel]
+        cyto = data[cytochannel]
         if np.all(dapi == 0) or np.all(cyto == 0):
             tifffile.imwrite(output[0], data[0])
         else:
             del data
             #del full_well
 
-            cells = starcall.segmentation.segment_cyto_cellpose(cyto, dapi, diameter=cellpose_diameter)
+            cells = starcall.segmentation.segment_cyto_cellpose(
+                cyto, dapi,
+                diameter = config['segmentation']['diameter'],
+                gpu=resources.cuda==1,
+            )
+
             debug ('Found', cells.max(), 'cells')
 
             tifffile.imwrite(output[0], cells)#, compression='deflate')
+
+
+def get_segmentation_bases(wildcards):
+    path = wildcards.path_nogrid.replace('_cellgrid', '_grid')
+    return stitching_dir + path + '/raw.tif'
+
+rule segment_cells_bases:
+    input:
+        get_segmentation_bases,
+    output:
+        segmentation_dir + '{path_nogrid}/cellsbases{diameter}{nuclearchannel}_mask_unmatched.tif',
+    params:
+        diameter = parse_param('diameter', config['segmentation']['diameter']),
+        nuclearchannel = parse_param('nuclearchannel', config['segmentation']['channels'][0])
+    wildcard_constraints:
+        diameter = '|_diameter\d+',
+        nuclearchannel = '|_nuclearchannel' + sequencing_channel_regex,
+    resources:
+        mem_mb = lambda wildcards, input: input.size_mb * 8 + 10000,
+        cuda = 1,
+    threads: 8
+    run:
+        import numpy as np
+        import starcall.segmentation
+        import tifffile
+
+        diameter = params.diameter
+        nuclearchannel = channel_index(params.nuclearchannel, kind='sequencing')
+
+        full_well = tifffile.memmap(input[0], mode='r')
+        data = full_well[cycles.index(cellpose_cycle)].astype(np.float32)
+
+        if np.all(data == 0):
+            tifffile.imwrite(output[0], data[0])
+            tifffile.imwrite(output[1], data[0])
+        else:
+            dapi = data[nuclearchannel]
+            #cyto = data[2]
+            cyto = starcall.segmentation.estimate_cyto(data[sequencing_channels_slice])
+            del data
+            del full_well
+
+            cells = starcall.segmentation.segment_cyto_cellpose(
+                cyto, dapi,
+                diameter = config['segmentation']['diameter'] * bases_scale // phenotype_scale,
+                gpu=resources.cuda==1,
+            )
+
+            debug(f'found {cells.max()} cells ')
+            tifffile.imwrite(output[1], cells)#, compression='deflate')
+
+
+rule segment_nuclei_bases:
+    input:
+        get_segmentation_bases,
+    output:
+        segmentation_dir + '{path_nogrid}/nucleibases{nuclearchannel}_mask_unmatched.tif',
+    params:
+        nuclearchannel = parse_param('nuclearchannel', config['segmentation']['channels'][0])
+    wildcard_constraints:
+        nuclearchannel = '|_nuclearchannel' + sequencing_channel_regex,
+    resources:
+        mem_mb = lambda wildcards, input: input.size_mb * 8 + 10000
+    threads: 8
+    run:
+        import numpy as np
+        import starcall.segmentation
+        import tifffile
+
+        nuclearchannel = channel_index(params.nuclearchannel, kind='sequencing')
+
+        full_well = tifffile.memmap(input[0], mode='r')
+        data = full_well[-1]
+
+        if np.all(data == 0):
+            tifffile.imwrite(output[0], data[0])
+            tifffile.imwrite(output[1], data[0])
+        else:
+            dapi = data[nuclearchannel]
+            del data
+            del full_well
+
+            nuclei = starcall.segmentation.segment_nuclei(dapi)
+            debug(f'found {nuclei.max()} nuclei ')
+
+            tifffile.imwrite(output[0], nuclei)#, compression='deflate')
+
 
 rule downscale_segmentation:
     input:
@@ -88,61 +206,21 @@ rule downscale_segmentation:
 
         mask = tifffile.imread(input[0])
 
-        if wildcards.mask in ('cellsbases', 'nucleibases'):
+        if wildcards.segmentation_type in ('cellsbases', 'nucleibases'):
             tifffile.imwrite(output[0], mask)
         else:
             tifffile.imwrite(output[0], skimage.transform.rescale(mask, bases_scale/phenotype_scale, order=0))
 
 
-def get_segmentation_bases(wildcards):
-    path = wildcards.path_nogrid.replace('_cellgrid', '_grid')
-    return stitching_dir + path + '/raw.tif'
-
-rule segment_cells_bases:
-    input:
-        get_segmentation_bases,
-    output:
-        segmentation_dir + '{path_nogrid}/nucleibases_mask.tif',
-        segmentation_dir + '{path_nogrid}/cellsbases_mask.tif',
-    resources:
-        mem_mb = lambda wildcards, input: input.size_mb * 8 + 10000
-    threads: 8
-    run:
-        import numpy as np
-        import starcall.segmentation
-        import tifffile
-
-        full_well = tifffile.memmap(input[0], mode='r')
-        data = full_well[cycles.index(cellpose_cycle)].astype(np.float32)
-
-        if np.all(data == 0):
-            tifffile.imwrite(output[0], data[0])
-            tifffile.imwrite(output[1], data[0])
-        else:
-            dapi = data[0]
-            #cyto = data[2]
-            cyto = starcall.segmentation.estimate_cyto(data[2:])
-            del data
-            del full_well
-
-            nuclei = starcall.segmentation.segment_nuclei(dapi)
-            cells = starcall.segmentation.segment_cyto_cellpose(cyto, dapi, diameter=cellpose_diameter * bases_scale // phenotype_scale)
-
-            debug(f'found {cells.max()} {nuclei.max()} nuclei/cells ')
-            cells, nuclei = starcall.segmentation.match_segmentations(cells, nuclei)
-            debug(f'found {cells.max()} nuclei/cells after reconciling')
-
-            tifffile.imwrite(output[0], nuclei)#, compression='deflate')
-            tifffile.imwrite(output[1], cells)#, compression='deflate')
-
-
 rule make_cell_overlay:
     input:
         image = get_segmentation_pt,
-        cells = segmentation_dir + '{path_nogrid}/{segmentation_type}_mask.tif',
+        cells = segmentation_dir + '{path_nogrid}/{segmentation_type}_mask{params}.tif',
     output:
-        qc_dir + '{path_nogrid}/{segmentation_type}_overlay.tif',
-        qc_dir + '{path_nogrid}/{segmentation_type}_overlay.png',
+        qc_dir + '{path_nogrid}/{segmentation_type}_overlay{params}.tif',
+        qc_dir + '{path_nogrid}/{segmentation_type}_overlay{params}.png',
+    wildcard_constraints:
+        params = params_regex('diameter', 'nuclearchannel', 'cytochannel'),
     resources:
         mem_mb = lambda wildcards, input: input.size_mb * 15 + 10000
     run:
@@ -172,7 +250,7 @@ rule make_cell_overlay:
         tifffile.imwrite(output[1], rgbimage)
 
 
-if config.get('match_masks', False):
+if config['segmentation'].get('match_masks', False):
     rule match_masks:
         input:
             cells = segmentation_dir + '{path_nogrid}/cells_mask_unmatched.tif',
@@ -323,43 +401,42 @@ rule merge_grid_segmentation:
         for i,path in enumerate(input.images):
             composite.images[i] = tifffile.imread(path)
 
-        merger = constitch.LastMerger()
-        if wildcards.type.endswith('_mask_downscaled.tif'):
-            merger = constitch.MaskMerger()
-        if wildcards.type.endswith('_mask.tif'):
-            # scaling from base images to phenotype
-            composite.boxes.positions[:,:2] *= phenotype_scale
-            composite.boxes.positions[:,:2] //= bases_scale
-            composite.boxes.sizes[:,:2] *= phenotype_scale
-            composite.boxes.sizes[:,:2] //= bases_scale
-            merger = constitch.MaskMerger()
+        # scaling from base images to phenotype
+        composite.boxes.positions[:,:2] *= phenotype_scale
+        composite.boxes.positions[:,:2] //= bases_scale
+        composite.boxes.sizes[:,:2] *= phenotype_scale
+        composite.boxes.sizes[:,:2] //= bases_scale
+        merger = constitch.MaskMerger()
 
         full_image = composite.stitch(merger=merger)
         del composite
         tifffile.imwrite(output.image, full_image)
 
 
-if config.get('segmentation_grid_size', 1) != 1:
-    def get_grid_size_file(wildcards):
-        grid_size = config.get('segmentation_{}_grid_size'.format(wildcards.segmentation_type), config['segmentation_grid_size'])
-        return segmentation_dir + '{well}_cellgrid' + str(grid_size) + '/{segmentation_type}_mask_unmatched.tif',
+segmentation_grid_size = config.get('segmentation_grid_size', 1)
 
-    rule link_merged_grid:
-        input:
-            get_grid_size_file,
-        output:
-            segmentation_dir + '{well}/{segmentation_type}_mask_unmatched.tif',
-        localrule: True
-        shell:
-            "cp -l {input[0]} {output[0]}"
+def get_grid_size_file(wildcards):
+    grid_size = config.get('segmentation_{}_grid_size'.format(wildcards.segmentation_type), segmentation_grid_size)
+    if grid_size == 1:
+        return segmentation_dir + '{well}/{segmentation_type}_mask_unmatched.tif'
+    return segmentation_dir + '{well}_cellgrid' + str(grid_size) + '/{segmentation_type}_mask_unmatched.tif',
 
-    ruleorder: link_merged_grid > segment_cells
-    ruleorder: link_merged_grid > segment_nuclei
+rule link_merged_grid:
+    input:
+        get_grid_size_file,
+    output:
+        segmentation_dir + '{well}_grid/{segmentation_type}_mask_unmatched.tif',
+    localrule: True
+    shell:
+        "cp -l {input[0]} {output[0]}"
+
+ruleorder: link_merged_grid > segment_cells
+ruleorder: link_merged_grid > segment_nuclei
 
 
 rule split_grid_table:
     input:
-        table = segmentation_dir + '{well}/cells.csv',
+        table = segmentation_dir + '{well}_grid/cells.csv',
         composite = stitching_dir + '{well}_grid{grid_size}/grid_composite.json',
     output:
         table = segmentation_dir + '{well}_grid{grid_size,\d+}/tile{x,\d+}x{y,\d+}y/cells.csv'
@@ -374,22 +451,28 @@ rule split_grid_table:
         composite = constitch.load(input.composite)
         grid_size, x, y = int(wildcards.grid_size), int(wildcards.x), int(wildcards.y)
 
+        composite.boxes.positions[:,:2] *= phenotype_scale
+        composite.boxes.positions[:,:2] //= bases_scale
+        composite.boxes.sizes[:,:2] *= phenotype_scale
+        composite.boxes.sizes[:,:2] //= bases_scale
         box = composite.boxes[x*grid_size+y]
-        box.position *= phenotype_scale
-        box.position //= bases_scale
-        box.size *= phenotype_scale
-        box.size //= bases_scale
 
         contained = []
         for i, cell in table.iterrows():
             cellbox = constitch.BBox(point1=[cell.bbox_x1, cell.bbox_y1], point2=[cell.bbox_x2, cell.bbox_y2])
 
-            closest = np.linalg.norm(box.center() - cellbox.center())
+            closest = np.linalg.norm(box.center - cellbox.center)
             closest_box = box
+            #if i == 5487:
+                #debug ('begin', box, cellbox, box.contains(cellbox), closest)
             for j in range(len(composite.boxes)):
-                dist = np.linalg.norm(composite.boxes[j].center() - cellbox.center())
-                if dist < closest:
+                dist = np.linalg.norm(composite.boxes[j].center - cellbox.center)
+                #if i == 5487:
+                    #debug (composite.boxes[j], cellbox, composite.boxes[j].contains(cellbox), dist)
+                if dist <= closest:
                     closest, closest_box = dist, composite.boxes[j]
+
+            assert closest_box.contains(cellbox)
 
             contained.append(closest_box is box)
 
@@ -410,7 +493,7 @@ rule split_grid_table:
 
 rule split_grid_segmentation:
     input:
-        image = segmentation_dir + '{well}/{segmentation_type}.tif',
+        image = segmentation_dir + '{well}_grid/{segmentation_type}.tif',
         composite = stitching_dir + '{well}_grid{grid_size}/grid_composite.json',
         table = segmentation_dir + '{well}_grid{grid_size}/tile{x}x{y}y/cells.csv',
     output:
@@ -450,7 +533,7 @@ rule split_grid_segmentation:
 
         if (wildcards.segmentation_type.count('cells') > 0
                 or (wildcards.segmentation_type.count('nuclei') > 0
-                and config.get('match_masks', False))):
+                and config['segmentation'].get('match_masks', False))):
             for newindex, (index, cell) in enumerate(table.iterrows()):
                 x1, y1, x2, y2 = int(cell.bbox_x1), int(cell.bbox_y1), int(cell.bbox_x2), int(cell.bbox_y2)
                 if downscaled:
@@ -458,10 +541,10 @@ rule split_grid_segmentation:
                     x2, y2 = x2 * bases_scale // phenotype_scale + 1, y2 * bases_scale // phenotype_scale + 1
                     # adding 1 to prevent rounding down cutting off segmentation
 
-                debug (x1, x2, y1, y2)
+                debug (x1, x2, y1, y2, box.point1, box.point2)
                 mask = section[x1:x2,y1:y2] == index
                 debug (x1, x2, y1, y2, mask.max(), mask.sum(), index, np.sum(section == index))
-                debug (' ', props[index].bbox)
+                #debug (' ', props[index].bbox)
                 newimage[x1:x2,y1:y2][mask] = newindex + 1
         else:
             newimage, mapping, reverse_mapping = skimage.segmentation.relabel_sequential(section)

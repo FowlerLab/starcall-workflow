@@ -1,9 +1,6 @@
 import os
 import glob
 
-alignment_channel = config.get('alignment_channel', 0)
-max_constraint_pairs = config.get('max_constraint_pairs', 9999)
-
 ##################################################
 ##  Aligning tiles and solving for global positions
 ##################################################
@@ -28,7 +25,7 @@ rule make_initial_composite:
 
             poses = np.loadtxt(input.rawposes[i], delimiter=',', dtype=int)
             poses = poses[:,:2]
-            images = tifffile.memmap(input.images[i], mode='r')[:,alignment_channel]
+            images = tifffile.memmap(input.images[i], mode='r')[:,0]
             debug(poses.shape, images.shape)
 
             subcomposite.add_images(images, poses, scale='tile')
@@ -52,8 +49,14 @@ rule calculate_constraints:
         images1 = input_dir + '{well_stitching}/cycle{cycle1}/raw.tif',
         images2 = input_dir + '{well_stitching}/cycle{cycle2}/raw.tif',
     output:
-        constraints = stitching_dir + '{well_stitching}/cycle{cycle1}/cycle{cycle2}/constraints.json',
-        plot = qc_dir + '{well_stitching}/cycle{cycle1}_cycle{cycle2}_scores_calculated.png',
+        constraints = stitching_dir + '{well_stitching}/cycle{cycle1}/cycle{cycle2}/constraints{channel}{subpix}.json',
+        plot = qc_dir + '{well_stitching}/cycle{cycle1}_cycle{cycle2}_scores_calculated{channel}{subpix}.png',
+    params:
+        channel = parse_param('channel', config['stitching']['channel']),
+        subpixel_alignment = parse_param('subpix', config['stitching']['subpixel_alignment']),
+    wildcard_constraints:
+        channel = '|_channel' + any_channel_regex,
+        subpix = '|_subpix\d+',
     resources:
         mem_mb = lambda wildcards, input: input.size_mb + 5000
     threads: 1
@@ -63,15 +66,20 @@ rule calculate_constraints:
         import concurrent.futures
         import numpy as np
 
+        alignment_channel = params.channel
+
         cycle1, cycle2 = cycles_pt.index(wildcards.cycle1), cycles_pt.index(wildcards.cycle2)
 
         executor = concurrent.futures.ThreadPoolExecutor(max_workers=max(2, threads))
         composite = constitch.load(input.composite, debug=True, progress=True, executor=executor)
-        images = tifffile.memmap(input.images1, mode='r')[:,alignment_channel]
+        images = tifffile.memmap(input.images1, mode='r')
+        images = images[:,channel_index(alignment_channel,cycle=cycles_pt[cycle1])]
+
         composite.layer(cycle1).setimages(images)
 
         if cycle1 != cycle2:
-            images = tifffile.memmap(input.images2, mode='r')[:,alignment_channel]
+            images = tifffile.memmap(input.images2, mode='r')
+            images = images[:,channel_index(alignment_channel,cycle=cycles_pt[cycle2])]
             composite.layer(cycle2).setimages(images)
 
             def constraint_filter(const):
@@ -88,27 +96,31 @@ rule calculate_constraints:
                     const.box1.position[2] == cycle1 and const.box2.position[2] == cycle2 and const.overlap_ratio >= 0.1)
 
         debug ('constraints', len(overlapping), cycle1, cycle2, np.unique(composite.boxes.positions[:,2]))
-        #constraints = overlapping.calculate()
-        constraints = overlapping.calculate(constitch.FFTAligner(upscale_factor=16))
-        composite.plot_scores('plots/tmp_scores.png', constraints)
+
+        calculate_params = {}
+        if params.subpixel_alignment != 1:
+            calculate_params['aligner'] = constitch.FFTAligner(upscale_factor=params.subpixel_alignment)
+
+        constraints = overlapping.calculate(**calculate_params)
 
         nonoverlapping = composite.constraints(lambda const:
                 const.box1.position[2] == cycle1 and const.box2.position[2] == cycle2
                 and const.overlap_x < -3000 and const.overlap_y < -3000, limit=100, random=True)
-        erroneous_constraints = nonoverlapping.calculate()
+        erroneous_constraints = nonoverlapping.calculate(**calculate_params)
 
         composite.plot_scores(output.plot, constraints)
-
         constitch.save(output.constraints, overlapping, constraints, erroneous_constraints)
 
 
 rule filter_constraints:
     input:
         composite = stitching_dir + '{well_stitching}/initial_composite.json',
-        constraints = stitching_dir + '{well_stitching}/cycle{cycle1}/cycle{cycle2}/constraints.json',
+        constraints = stitching_dir + '{well_stitching}/cycle{cycle1}/cycle{cycle2}/constraints{params}.json',
     output:
-        constraints = stitching_dir + '{well_stitching}/cycle{cycle1}/cycle{cycle2}/filtered_constraints.json',
-        plot = qc_dir + '{well_stitching}/cycle{cycle1}_cycle{cycle2}_scores_filtered.png',
+        constraints = stitching_dir + '{well_stitching}/cycle{cycle1}/cycle{cycle2}/filtered_constraints{params}.json',
+        plot = qc_dir + '{well_stitching}/cycle{cycle1}_cycle{cycle2}_scores_filtered{params}.png',
+    wildcard_constraints:
+        params = params_regex('channel', 'subpix')
     resources:
         mem_mb = lambda wildcards, input: input.size_mb + 5000
     run:
@@ -136,8 +148,8 @@ rule filter_constraints:
 def constraints_needed(wildcards):
     paths = []
     for i in range(len(cycles_pt)):
-        for j in range(i, min(i + max_constraint_pairs, len(cycles_pt))):
-            paths.append(stitching_dir + '{well_stitching}/' + 'cycle{cycle1}/cycle{cycle2}/filtered_constraints.json'.format(
+        for j in range(i, min(i + config['stitching'].get('max_cycle_pairs', 16), len(cycles_pt))):
+            paths.append(stitching_dir + '{well_stitching}/' + 'cycle{cycle1}/cycle{cycle2}/filtered_constraints{params}.json'.format(
                 cycle1=cycles_pt[i], cycle2=cycles_pt[j]))
     return paths
 
@@ -146,7 +158,9 @@ rule merge_constraints:
         composite = stitching_dir + '{well_stitching}/initial_composite.json',
         constraints = constraints_needed,
     output:
-        constraints = stitching_dir + '{well_stitching}/constraints.json',
+        constraints = stitching_dir + '{well_stitching}/constraints{params}.json',
+    wildcard_constraints:
+        params = params_regex('channel', 'subpix')
     run:
         import constitch
 
@@ -166,12 +180,17 @@ rule merge_constraints:
 rule solve_constraints:
     input:
         composite = stitching_dir + '{well_stitching}/initial_composite.json',
-        constraints = stitching_dir + '{well_stitching}/constraints.json',
+        constraints = stitching_dir + '{well_stitching}/constraints{params}.json',
     output:
-        composite = stitching_dir + '{well_stitching}/composite.json',
-        plot1 = qc_dir + '{well_stitching}/presolve.png',
-        plot2 = qc_dir + '{well_stitching}/solved.png',
-        plot3 = qc_dir + '{well_stitching}/solved_accuracy.png',
+        composite = stitching_dir + '{well_stitching}/composite{params}{solver}.json',
+        plot1 = qc_dir + '{well_stitching}/presolve{params}{solver}.png',
+        plot2 = qc_dir + '{well_stitching}/solved{params}{solver}.png',
+        plot3 = qc_dir + '{well_stitching}/solved_accuracy{params}{solver}.png',
+    params:
+        solver = parse_param('solver', config['stitching']['solver']),
+    wildcard_constraints:
+        params = params_regex('channel', 'subpix'),
+        solver = '|_solver(mse|mae|spantree)',
     resources:
         mem_mb = lambda wildcards, input: input.size_mb * 5000 + 25000
     run:
@@ -184,7 +203,7 @@ rule solve_constraints:
 
         composite.plot_scores(output.plot1, solving_constraints)
 
-        solution = solving_constraints.solve(solver='mae')
+        solution = solving_constraints.solve(solver=params.solver)
 
         composite.setpositions(solution)
         composite.plot_scores(output.plot2, solving_constraints)
@@ -195,9 +214,11 @@ rule solve_constraints:
 
 rule split_composite:
     input:
-        composite = stitching_dir + '{well_stitching}/composite.json',
+        composite = stitching_dir + '{well_stitching}/composite{params}.json',
     output:
-        composite = stitching_dir + '{well_stitching}/cycle{cycle}/composite.json',
+        composite = stitching_dir + '{well_stitching}/cycle{cycle}/composite{params}.json',
+    wildcard_constraints:
+        params = params_regex('channel', 'subpix', 'solver'),
     run:
         import constitch
 

@@ -28,17 +28,6 @@ if 'phenotype_cycles' not in config:
 else:
     phenotype_cycles = config['phenotype_cycles']
 
-if 'phenotype_channels' not in config:
-    if phenotype_date in dates:
-        import nd2
-        phenotype_file = nd2.ND2File(glob.glob(rawinput_dir + '/phenotype/*.nd2')[0])
-        phenotype_channels = phenotype_file.shape[1]
-        phenotype_file.close()
-        del phenotype_file
-    else:
-        phenotype_channels = 0
-else:
-    phenotype_channels = config['phenotype_channels']
 
 if 'wells' not in config:
     #wells = sorted([path.replace('Well', '').partition('_')[0] for path in os.listdir(rawinput_dir + '/' + dates[0])])
@@ -73,9 +62,29 @@ wildcard_constraints:
     cycle = '|'.join(cycles_pt),
 
     path = '([^/]*/)*[^/.]*',
-    path_nogrid = '((?!_grid)[^.])*',
+    path_nogrid = '((?!_grid\d)[^.])*',
 
     segmentation_type = 'cells|nuclei|cellsbases|nucleibases',
+
+# Regex for use with wildcard constraints
+phenotyping_channel_regex = '(' + '|'.join('{}|{}'.format(i, re.escape(name))
+            for i, name in enumerate(config['phenotyping_channels'])) + ')'
+sequencing_channel_regex = '(' + '|'.join('{}|{}'.format(i, name)
+            for i, name in enumerate(config['sequencing_channels'])) + ')'
+# only matches channels in both sequencing and phenotyping
+any_channel_regex = ('(' + '|'.join(map(str, range(min(len(config['sequencing_channels']), len(config['sequencing_channels'])))))
+    + '|' + '|'.join(map(re.escape, set(config['sequencing_channels']) & set(config['phenotyping_channels']))) + ')')
+
+assert all(let in config['sequencing_channels'] for let in 'GTAC')
+
+# slice that will extract all sequencing channels from sequencing images
+sequencing_channels_slice = [config['sequencing_channels'].index(let) for let in 'GTAC']
+if max(sequencing_channels_slice) - min(sequencing_channels_slice) == 3:
+    sequencing_channels_slice = slice(min(sequencing_channels_slice), max(sequencing_channels_slice) + 1)
+
+# order of sequencing channels
+sequencing_channels_order = [chan for chan in config['sequencing_channels'] if chan in 'GTAC']
+
 
 def debug(*args, **kwargs):
     print (time.asctime() + ':', *args, **kwargs, file=sys.stderr)
@@ -91,6 +100,31 @@ def print_mem(name, mem_limit):
     mem = psutil.Process().memory_info().rss / 1000000
     debug ("Rule", name, "Limit", mem_limit, starcall.utils.human_readable(mem_limit * 1000000),
                     "Using", mem, starcall.utils.human_readable(mem * 1000000))
+
+def parse_param(name, default_value):
+    def func(wildcards):
+        val = getattr(wildcards, name)
+        if val == '':
+            return default_value
+        val = val[len(name)+1:]
+        try: return int(val)
+        except: pass
+        try: return float(val)
+        except: pass
+        return val
+
+def param_constraint(name, pattern):
+    return '(_' + name + '(' + pattern + '))?'
+
+def params_regex(*params):
+    return '(' + ''.join('(_{}[^_]+)?'.format(name) for name in params) + ')'
+
+def channel_index(channel, kind=None, cycle=None):
+    if kind is None and cycle is not None:
+        kind = 'phenotyping' if cycle in phenotype_cycles else 'sequencing'
+    if type(channel) == str:
+        return config[kind+'_channels'].index(channel)
+    return channel
 
 def coredump():
     if os.fork() == 0:

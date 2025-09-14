@@ -7,8 +7,16 @@ rule find_dots:
     input:
         stitching_dir + '{path}/raw.tif'
     output:
-        sequencing_dir + '{path}/bases.csv',
+        sequencing_dir + '{path}/bases{min}{max}{num}.csv',
         #sequencing_dir + '{path}/dot_filter.tif',
+    params:
+        min_sigma = parse_param('min', config['dotdetection']['min_sigma']),
+        max_sigma = parse_param('max', config['dotdetection']['max_sigma']),
+        num_sigma = parse_param('num', config['dotdetection']['num_sigma']),
+    wildcard_constraints:
+        min = '|_min\d+(.\d+)?',
+        max = '|_max\d+(.\d+)?',
+        num = '|_num\d+(.\d+)?',
     resources:
         mem_mb = lambda wildcards, input: input.size_mb * 10 + 15000
     threads: 4
@@ -19,12 +27,12 @@ rule find_dots:
         import starcall.correction
         import skimage.morphology
 
-        min_sigma = 1#2
-        max_sigma = 2#3
-        num_sigma = 7
+        #min_sigma = 1#2
+        #max_sigma = 2#3
+        #num_sigma = 7
 
         full_well = tifffile.memmap(input[0], mode='r')
-        image = full_well[...,2:,:,:].astype(np.float32, copy=True)
+        image = full_well[...,sequencing_channels_slice,:,:].astype(np.float32, copy=True)
         del full_well
 
         if np.all(image == 0):
@@ -34,21 +42,25 @@ rule find_dots:
             #tifffile.imwrite(output[1], dot_filter)
             reads = starcall.dotdetection.detect_dots(
                 image,
-                min_sigma = min_sigma,
-                max_sigma = max_sigma,
-                num_sigma = num_sigma,
+                min_sigma = params.min_sigma,
+                max_sigma = params.max_sigma,
+                num_sigma = params.num_sigma,
                 copy = False,
+                channels = sequencing_channels_order,
             )
 
         reads.to_csv(output[0])
 
-
 rule call_raw_reads:
     input:
-        bases = sequencing_dir + '{path}/bases.csv',
+        bases = sequencing_dir + '{path}/bases{params}.csv',
         cells = segmentation_dir + '{path}/{segmentation_type}_mask_downscaled.tif',
+        #cells_table = segmentation_dir + '{path}/{segmentation_type}.csv',
     output:
-        table = sequencing_dir + '{path}/{segmentation_type}_raw_reads.csv',
+        table = sequencing_dir + '{path}/{segmentation_type}_raw_reads{params}.csv',
+    wildcard_constraints:
+        params = params_regex('min', 'max', 'num'),
+        #params = '_min\d+',
     resources:
         mem_mb = lambda wildcards, input: 5000 + input.size_mb * 10
     run:
@@ -61,19 +73,35 @@ rule call_raw_reads:
 
         cells = tifffile.imread(input.cells)
         table = pandas.read_csv(input.bases, index_col=0)
+        #cells_table = pandas.read_csv(input.cells_table, index_col=0)
 
-        xposes, yposes = np.round(table.reads.position.T).astype(int)
+        xposes, yposes = np.round(table.reads.positions.T).astype(int)
         table['cell'] = cells[xposes,yposes]
+        #cell_indices = cells[xposes,yposes]
+        #cells_mapping = np.zeros(len(cells_table.index) + 1, dtype=int)
+        #cells_mapping[1:] = cells_table.index.to_numpy()
+        #table['cell'] = cells_mapping[cell_indices]
 
         table.to_csv(output.table)
 
 
 rule calculate_distance_matrix:
     input:
-        bases = sequencing_dir + '{path}/bases.csv',
+        bases = sequencing_dir + '{path}/bases{params}.csv',
         cells = segmentation_dir + '{path}/{segmentation_type}_mask_downscaled.tif',
     output:
-        table = sequencing_dir + '{path}/{segmentation_type}_reads_distance_matrix.csv'
+        table = sequencing_dir + '{path}/{segmentation_type}_reads_distance_matrix{params}{norm}{posweight}{valweight}{seqweight}.csv',
+    params:
+        params = params_regex('min', 'max', 'num'),
+        normalization = parse_param('norm', config['read_clustering']['normalization']),
+        positional_weight = parse_param('posweight', config['read_clustering']['positional_weight']),
+        value_weight = parse_param('valweight', config['read_clustering']['value_weight']),
+        sequence_weight = parse_param('seqweight', config['read_clustering']['sequence_weight']),
+    wildcard_constraints:
+        norm = '|_norm(none|full|large|sub)',
+        posweight = '|_posweight\d+(.\d+)?',
+        valweight = '|_valweight\d+(.\d+)?',
+        seqweight = '|_seqweight\d+(.\d+)?',
     resources:
         mem_mb = lambda wildcards, input: 15000 + input.size_mb * 10
     run:
@@ -83,23 +111,23 @@ rule calculate_distance_matrix:
         import starcall.reads
         import csv
 
-        normalization = 'none'
-        positional_weight = 100
-        value_weight = 0
-        sequence_weight = 1
+        #normalization = 'none'
+        #positional_weight = 100
+        #value_weight = 0
+        #sequence_weight = 1
 
         table = pandas.read_csv(input.bases, index_col=0)
         cells = tifffile.imread(input.cells)
 
-        if normalization != 'none':
-            table.reads.normalize(method=normalization)
+        if params.normalization != 'none':
+            table.reads.normalize(method=params.normalization)
 
         distance_matrix = starcall.reads.distance_matrix(
             table, cells=cells,
             distance_cutoff=50,
-            positional_weight=positional_weight,
-            value_weight=value_weight,
-            sequence_weight=sequence_weight,
+            positional_weight=params.positional_weight,
+            value_weight=params.value_weight,
+            sequence_weight=params.sequence_weight,
             debug=True, progress=True,
         )
 
@@ -113,9 +141,16 @@ rule calculate_distance_matrix:
 
 rule cluster_reads:
     input:
-        distances = sequencing_dir + '{path}/{segmentation_type}_reads_distance_matrix.csv'
+        distances = sequencing_dir + '{path}/{segmentation_type}_reads_distance_matrix{params}.csv'
     output:
-        clusters = sequencing_dir + '{path}/{segmentation_type}_reads_clusters.csv',
+        clusters = sequencing_dir + '{path}/{segmentation_type}_reads_clusters{params}{thresh}{linkage}.csv',
+    params:
+        threshold = parse_param('thresh', config['read_clustering']['threshold']),
+        linkage = parse_param('linkage', config['read_clustering']['linkage']),
+    wildcard_constraints:
+        params = params_regex('min', 'max', 'num', 'norm', 'posweight', 'valweight', 'seqweight'),
+        thresh = '|_thresh\d+(.\d+)?',
+        linkage = '|_linkage(min|max|mean)',
     resources:
         mem_mb = lambda wildcards, input: 5000 + input.size_mb * 10
     run:
@@ -123,8 +158,8 @@ rule cluster_reads:
         import csv
         import starcall.reads
 
-        threshold = 0.5
-        linkage = 'min'
+        #threshold = 0.5
+        #linkage = 'min'
 
         distance_matrix = {}
         with open(input.distances) as ifile:
@@ -135,8 +170,8 @@ rule cluster_reads:
 
         cluster_indices = starcall.reads.cluster_reads(
             distance_matrix,
-            threshold=threshold,
-            linkage=linkage,
+            threshold=params.threshold,
+            linkage=params.linkage,
             debug=True, progress=True,
         )
 
@@ -148,10 +183,13 @@ rule cluster_reads:
 
 rule combine_reads:
     input:
-        raw_reads = sequencing_dir + '{path}/{segmentation_type}_raw_reads.csv',
-        clusters = sequencing_dir + '{path}/{segmentation_type}_reads_clusters.csv',
+        raw_reads = sequencing_dir + '{path}/{segmentation_type}_raw_reads{params_dots}.csv',
+        clusters = sequencing_dir + '{path}/{segmentation_type}_reads_clusters{params_cluster}.csv',
     output:
-        table = sequencing_dir + '{path}/{segmentation_type}_clustered_reads.csv',
+        table = sequencing_dir + '{path}/{segmentation_type}_clustered_reads{params_dots}{params_cluster}.csv',
+    wildcard_constraints:
+        params_dots = params_regex('min', 'max', 'num'),
+        params_cluster = params_regex('norm', 'posweight', 'valweight', 'seqweight', 'thresh', 'linkage'),
     resources:
         mem_mb = lambda wildcards, input: 5000 + input.size_mb * 25
     run:
@@ -176,9 +214,15 @@ rule combine_reads:
 
 rule combine_cell_reads:
     input:
-        table = sequencing_dir + '{path}/{segmentation_type}_clustered_reads.csv',
+        table = sequencing_dir + '{path}/{segmentation_type}_clustered_reads{params}.csv',
+        cell_table = segmentation_dir + '{path}/{segmentation_type}.csv',
     output:
-        table = sequencing_dir + '{path}/{segmentation_type}_reads_partial.csv',
+        table = sequencing_dir + '{path}/{segmentation_type}_reads_partial{params}{maxreads}.csv',
+    params:
+        max_reads = parse_param('maxreads', config['sequencing']['max_reads']),
+    wildcard_constraints:
+        params = params_regex('min', 'max', 'num', 'norm', 'posweight', 'valweight', 'seqweight', 'thresh', 'linkage'),
+        maxreads = '|_maxreads\d+',
     resources:
         mem_mb = lambda wildcards, input: 5000 + input.size_mb * 50
     run:
@@ -187,15 +231,18 @@ rule combine_cell_reads:
         import starcall.utils
         import starcall.reads
 
-        max_reads = 2
+        #max_reads = 2
 
-        table = pandas.read_csv(input.table)
+        table = pandas.read_csv(input.table, index_col=0)
         table = table.loc[table['cell']!=0,:]
 
+        cell_table = pandas.read_csv(input.cell_table, index_col=0)
+
         cell_reads = table.sort_values(['cell', 'count'], ascending=False).groupby('cell')
-        cell_reads = cell_reads.head(max_reads)
-        cell_reads = cell_reads.reads.to_cell_table()
-        #read_table = cell_reads.head(max_reads).to_table(columns=['cell', 'read', 'count', 'quality', 'read_index'], sequences=True, qualities=True)
+        cell_reads = cell_reads.head(params.max_reads)
+        cell_reads = cell_reads.reads.to_cell_table(cell_index=range(1, len(cell_table.index) + 1))
+        cell_reads = cell_reads.set_index(cell_table.index)
+        #read_table = cell_reads.head(params.max_reads).to_table(columns=['cell', 'read', 'count', 'quality', 'read_index'], sequences=True, qualities=True)
         #read_table = read_table.set_index('cell')
         #read_table['total_count'] = [read_set.attrs['count'].sum() for read_set in cell_reads]
         cell_reads.to_csv(output.table)
@@ -212,13 +259,15 @@ ruleorder: segment_cells > segment_cells_bases
 rule annotate_dots:
     input:
         image = stitching_dir + '{path}/raw.tif',
-        bases = sequencing_dir + '{path}/bases.csv',
+        bases = sequencing_dir + '{path}/bases{params}.csv',
         #'tmp_dot_greyimage.tif',
         #sequencing_dir + '{path}/clusters.csv',
     output:
-        qc_dir + '{path}/annotated.tif',
+        qc_dir + '{path}/annotated{params}.tif',
         #qc_dir + '{path}/annotated_clusters.tif',
         #qc_dir + '{path}/annotated_grey.tif',
+    wildcard_constraints:
+        params = params_regex('min', 'max', 'num'),
     resources:
         mem_mb = 25000
     run:
@@ -229,14 +278,14 @@ rule annotate_dots:
         import starcall.reads
         import pandas
 
-        reads = starcall.reads.ReadSet.from_table(pandas.read_csv(input.bases, index_col=0))
+        table = pandas.read_csv(input.bases, index_col=0)
         #image = tifffile.imread(input[0])
         image = tifffile.memmap(input[0], mode='r')[0]
         #poses = np.loadtxt(input[1], delimiter=',')[:,:2].astype(int)
         #clusters = open(input[3]).read().strip().split()[1:]
         #clusters = np.array([int(cluster) for cluster in clusters])
 
-        marked_image = starcall.utils.mark_dots(image, reads.positions.astype(int))
+        marked_image = starcall.utils.mark_dots(image, table.reads.positions.astype(int))
         tifffile.imwrite(output[0], marked_image)
 
         """
@@ -282,10 +331,12 @@ def get_aux_data(wildcards, path=None):
 
 rule merge_final_tables:
     input:
-        cell_table = sequencing_dir + '{path}/{segmentation_type}_reads_partial.csv',
+        cell_table = sequencing_dir + '{path}/{segmentation_type}_reads_partial{params}.csv',
         aux_data = get_aux_data,
     output:
-        full_table = sequencing_dir + '{path}/{segmentation_type}_reads.csv',
+        full_table = sequencing_dir + '{path}/{segmentation_type}_reads{params}.csv',
+    wildcard_constraints:
+        params = params_regex('min', 'max', 'num', 'norm', 'posweight', 'valweight', 'seqweight', 'thresh', 'linkage', 'maxreads'),
     resources:
         mem_mb = lambda wildcards, input: 5000 + input.size_mb * 250
     run:
@@ -301,7 +352,10 @@ rule merge_final_tables:
 
         def join_barcode(cell_table, aux_table):
             barcodes = []
-            num_cycles = len(cell_table['read_0'].iloc[0])
+            for tmp_read in cell_table['read_0']:
+                if type(tmp_read) == str: break
+            num_cycles = len(tmp_read)
+            #num_cycles = len(cell_table['read_0'].iloc[0])
             debug ('num_cycles', num_cycles)
             for barc in aux_table.index:
                 new_barcodes = barc.split('-')
@@ -442,31 +496,30 @@ rule merge_grid_read_tables:
         #mem_mb = lambda wildcards, input: input.size_mb * 50 + 5000
         mem_mb = 5000
     run:
-        import constitch
-
-        #composite = constitch.load(input.composite)
-
         def row_func(row):
             i = row['file_index']
-            #box = composite.boxes[i]
-            row['tile_index'] = i
-            row['tile_x'] = i // int(wildcards.grid_size)
-            row['tile_y'] = i % int(wildcards.grid_size)
+            row['seq_file_path'] = row['file_path']
+            row['seq_tile_index'] = i
+            row['seq_tile_x'] = i // int(wildcards.grid_size)
+            row['seq_tile_y'] = i % int(wildcards.grid_size)
 
-        merge_csv_files(input.tables, output.table, extra_columns=['tile_x', 'tile_y', 'tile_index'], row_func=row_func)
+        merge_csv_files(input.tables, output.table, extra_columns=['seq_file_path', 'seq_tile_index', 'seq_tile_x', 'seq_tile_y'], row_func=row_func)
 
 
-if config.get('sequencing_grid_size', 1) != 1:
-    rule link_merged_grid_reads:
-        input:
-            sequencing_dir + '{path_nogrid}_grid' + str(config['sequencing_grid_size']) + '/{segmentation_type}_reads.csv',
-        output:
-            sequencing_dir + '{path_nogrid}/{segmentation_type}_reads.csv',
-        localrule: True
-        wildcard_constraints:
-            path_nogrid = '((?!_grid)[^.])*',
-        shell:
-            "cp -l {input[0]} {output[0]}"
+sequencing_grid_size = config.get('sequencing_grid_size', 1)
 
-    ruleorder: link_merged_grid_reads > merge_final_tables
+rule link_merged_grid_reads:
+    input:
+        ((sequencing_dir + '{well}_grid' + str(sequencing_grid_size) + '/{segmentation_type}_reads.csv')
+                if sequencing_grid_size != 1 else
+                (sequencing_dir + '{well}/{segmentation_type}_reads.csv')),
+    output:
+        sequencing_dir + '{well}_grid/{segmentation_type}_reads.csv',
+    localrule: True
+    wildcard_constraints:
+        path_nogrid = '((?!_grid)[^.])*',
+    shell:
+        "cp -l {input[0]} {output[0]}"
+
+ruleorder: link_merged_grid_reads > merge_final_tables
 

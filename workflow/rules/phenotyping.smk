@@ -6,12 +6,18 @@ import glob
 ## Phenotyping
 ##################################################
 
+def get_phenotyping_pt(wildcards):
+    if config['phenotyping']['use_corrected']:
+        return stitching_dir + '{path}/corrected_pt.tif'
+    else:
+        return stitching_dir + '{path}/raw_pt.tif'
+
 rule calc_features:
     input:
         cell_table = segmentation_dir + '{path}/cells.csv',
         cells = segmentation_dir + '{path}/cells_mask.tif',
         nuclei = segmentation_dir + '{path}/nuclei_mask.tif',
-        image = stitching_dir + '{path}/corrected_pt.tif',
+        image = get_phenotyping_pt,
     output:
         features = phenotyping_dir + '{path}/features.csv'
     run:
@@ -44,7 +50,7 @@ rule calc_features:
                     features.setdefault(prop, []).append(props[prop])
 
             for maskname, mask in [('cell', cell_mask), ('nucleus', nucleus_mask), ('cytoplasm', cell_mask & ~nucleus_mask)]:
-                for channel in range(phenotype_channels):
+                for channel in range(len(config['phenotyping_channels'])):
                     basename = '{}_ch{}'.format(maskname, channel)
                     masked_section = image_section[channel,mask]
 
@@ -75,14 +81,14 @@ rule calc_features:
 rule copy_cellprofiler_files:
     input:
         #image = stitching_dir + '{path}/cycle' + phenotype_cycle + '.tif',
-        image = stitching_dir + '{path}/corrected_pt.tif',
+        image = get_phenotyping_pt,
         cells = segmentation_dir + '{path}/cells_mask.tif',
         nuclei = segmentation_dir + '{path}/nuclei_mask.tif',
         #puncta = phenotyping_dir + '{path}/puncta_mask.tif',
         #lines = phenotyping_dir + '{path}/line_mask.tif',
     output:
         file_list = phenotyping_dir + '{path}/cellprofiler/files.csv',
-        images = expand(phenotyping_dir + '{path}/cellprofiler/channel{channel}.tif', channel=range(phenotype_channels), allow_missing=True),
+        images = expand(phenotyping_dir + '{path}/cellprofiler/channel{channel}.tif', channel=range(len(config['phenotyping_channels'])), allow_missing=True),
         cells = phenotyping_dir + '{path}/cellprofiler/cells.tif',
         nuclei = phenotyping_dir + '{path}/cellprofiler/nuclei.tif',
         #puncta = phenotyping_dir + '{path}/cellprofiler/puncta.tif',
@@ -99,9 +105,9 @@ rule copy_cellprofiler_files:
 
         with open(output.file_list, 'w') as ofile:
             if len(input) > 3:
-                ofile.write(','.join(['FileName_CH{}'.format(i) for i in range(phenotype_channels)]) + ',FileName_Cells,FileName_Nuclei,FileName_Puncta,FileName_Line\n')
+                ofile.write(','.join(['FileName_CH{}'.format(i) for i in range(len(config['phenotyping_channels']))]) + ',FileName_Cells,FileName_Nuclei,FileName_Puncta,FileName_Line\n')
             else:
-                ofile.write(','.join(['FileName_CH{}'.format(i) for i in range(phenotype_channels)]) + ',FileName_Cells,FileName_Nuclei\n')
+                ofile.write(','.join(['FileName_CH{}'.format(i) for i in range(len(config['phenotyping_channels']))]) + ',FileName_Cells,FileName_Nuclei\n')
             for i,path in enumerate(output.images):
                 ofile.write(os.path.basename(path) + ',')
                 tifffile.imwrite(path, image[i])
@@ -130,7 +136,7 @@ def find_pipeline(wildcards):
 rule run_cellprofiler:
     input:
         file_list = phenotyping_dir + '{path}/cellprofiler/files.csv',
-        images = expand(phenotyping_dir + '{path}/cellprofiler/channel{channel}.tif', channel=range(phenotype_channels), allow_missing=True),
+        images = expand(phenotyping_dir + '{path}/cellprofiler/channel{channel}.tif', channel=range(len(config['phenotyping_channels'])), allow_missing=True),
         cells = phenotyping_dir + '{path}/cellprofiler/cells.tif',
         nuclei = phenotyping_dir + '{path}/cellprofiler/nuclei.tif',
         #puncta = phenotyping_dir + '{path}/cellprofiler/puncta.tif',
@@ -188,7 +194,7 @@ rule copy_cellprofiler_output:
 rule run_special_segmentation:
     input:
         segmentation_dir + '{path}/cells.csv',
-        stitching_dir + '{path}/corrected_pt.tif',
+        get_phenotyping_pt,
         segmentation_dir + '{path}/cells_mask.tif',
         segmentation_dir + '{path}/nuclei_mask.tif',
     output:
@@ -246,33 +252,31 @@ rule merge_grid_pheno_tables:
         #possible_output_dir = '(' + output_dir + ')|',
         type = '[^/]+',
     run:
-        import constitch
-
-        #composite = constitch.load(input.composite)
-
         def row_func(row):
             i = row['file_index']
-            #box = composite.boxes[i]
-            row['tile_index'] = i
-            row['tile_x'] = i // int(wildcards.grid_size)
-            row['tile_y'] = i % int(wildcards.grid_size)
+            row['pheno_file_path'] = row['file_path']
+            row['pheno_tile_index'] = i
+            row['pheno_tile_x'] = i // int(wildcards.grid_size)
+            row['pheno_tile_y'] = i % int(wildcards.grid_size)
 
-        merge_csv_files(input.tables, output.table, extra_columns=['tile_x', 'tile_y', 'tile_index'], row_func=row_func)
+        merge_csv_files(input.tables, output.table, extra_columns=['pheno_file_path', 'pheno_tile_x', 'pheno_tile_y', 'pheno_tile_index'], row_func=row_func)
 
 
-if config.get('phenotyping_grid_size', 1) != 1:
-    rule link_merged_grid_phenotype:
-        input:
-            phenotyping_dir + '{well}_grid' + str(config['phenotyping_grid_size']) + '/{type}.cells_phenotype.csv',
-        output:
-            phenotyping_dir + '{well}/{type,[^/]*}.cells_phenotype.csv',
-        localrule: True
-        wildcard_constraints:
-            type = '[^/]+',
-            path_nogrid = '((?!_grid)[^.])*',
-        shell:
-            "cp -l {input[0]} {output[0]}"
+phenotyping_grid_size = config.get('phenotyping_grid_size', 1)
 
-    ruleorder: link_merged_grid_phenotype > merge_tables_phenotype
+rule link_merged_grid_phenotype:
+    input:
+        ((phenotyping_dir + '{well}_grid' + str(phenotyping_grid_size) + '/{type}.cells_phenotype.csv')
+                if phenotyping_grid_size != 1 else
+                (phenotyping_dir + '{well}/{type}.cells_phenotype.csv')),
+    output:
+        phenotyping_dir + '{well}_grid/{type,[^/]*}.cells_phenotype.csv',
+    localrule: True
+    wildcard_constraints:
+        type = '[^/]+',
+    shell:
+        "cp -l {input[0]} {output[0]}"
+
+ruleorder: link_merged_grid_phenotype > merge_tables_phenotype
 
 

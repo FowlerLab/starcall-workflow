@@ -160,7 +160,7 @@ rule copy_nd2_image:
     output:
         input_dir + '{well_base}/cycle{cycle}/raw.tif'
     resources:
-        mem_mb = lambda wildcards, input: input.size_mb * 2 + 5000
+        mem_mb = lambda wildcards, input: input.size_mb + 5000
     run:
         import tifffile
         import nd2
@@ -218,8 +218,8 @@ rule make_section:
         for i, poses, path in zip(range(len(all_poses)), all_poses, input.images):
             low, high = low_bound, high_bound
             if any(path.count('cycle' + cycle) for cycle in phenotype_cycles):
-                low = round(low * phenotype_scale / bases_scale)
-                high = round(high * phenotype_scale / bases_scale)
+                low = np.round(low * phenotype_scale / bases_scale)
+                high = np.round(high * phenotype_scale / bases_scale)
 
             images = tifffile.imread(path)
             mask = np.all((low <= poses[:,:2]) & (poses[:,:2] < high), axis=1)
