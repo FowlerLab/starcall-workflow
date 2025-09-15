@@ -13,15 +13,15 @@ bases_scale: 10
 # Channels for each base should be labeled as such so bases
 # are called properly. 
 sequencing_channels: ['DAPI', 'GFP', 'G', 'T', 'A', 'C']
-phenotyping_channels: ['DAPI', 'GFP', 'Ph-WGA', 'Mito']
+phenotyping_channels: ['DAPI', 'GFP', 'Ph+WGA', 'Mito']
 
 # Grid size for different processing steps. Input images are split
 # into an X by X grid, the processing is run, then resulting images are
 # merged back together.
 # This can be disabled by setting the size to 1 or not setting the variable
-segmentation_grid_size: 2
-sequencing_grid_size: 2
-phenotyping_grid_size: 2
+segmentation_grid_size: 4
+sequencing_grid_size: 4
+phenotyping_grid_size: 12
 # Segmentation grid sizes can be further specified, this is really only useful if
 # you are running segmentation on the gpu and need very fine grain control
 #segmentation_cells_grid_size: 6
@@ -106,7 +106,7 @@ phenotyping:
     # Whether cell segmentation is run on background corrected images
     # if both this and sequencing.use_corrected are false, background correction
     # will not be run
-    use_corrected: True
+    use_corrected: False
 
 
 # Directory that contains the raw .nd2 microscope files. It should

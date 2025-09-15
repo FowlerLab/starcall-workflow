@@ -10,7 +10,6 @@ def read_nd2(path):
     import nd2
     return nd2.imread(path)
 
-
 def filter_edge_tiles(positions):
     import numpy as np
     edge_tiles = []
@@ -83,11 +82,11 @@ rule extract_tile:
         image = images[min(tile, len(images)-1)]
         tifffile.imwrite(output[0], image)
 
-""" This rule reads the nd2 files and gets the position for each tile.
-The output file has 4 columns, the first two are the grid position of the tile,
-and the second two are the estimated pixel position of each tile.
-"""
 rule extract_nd2_positions:
+    """ This rule reads the nd2 files and gets the position for each tile.
+    The output file has 4 columns, the first two are the grid position of the tile,
+    and the second two are the estimated pixel position of each tile.
+    """
     input:
         get_nd2filename
     output:
@@ -155,6 +154,9 @@ rule extract_nd2_positions:
             np.savetxt(output[0], np.concatenate((grid_poses, positions), axis=1), fmt='%d', delimiter=',')
 
 rule copy_nd2_image:
+    """ Converts an nd2 file into a tiff. The resulting tiff should have 4 dimensions,
+    (num_tiles, num_cycles, width, height)
+    """
     input:
         get_nd2filename
     output:
@@ -175,6 +177,14 @@ rule copy_nd2_image:
 ##################################################
 
 rule make_section:
+    """ Splits an existing well in tif format into a smaller section, by taking a subset of
+    tiles from the center of the well. The size parameter determines the number of tiles
+    taken, a size by size grid is taken from the center of the well. This grid is
+    made of tiles from the sequencing images, for phenotyping cycles the size of the
+    grid is adjusted to fit the same area, as much as possible.
+    This is useful to test out different alignment or stitching methods, as
+    it reduces the processing needed to stitch the well dramatically.
+    """
     input:
         images = expand(input_dir + '{well_nosubset}/cycle{cycle}/raw.tif', cycle=cycles_pt, allow_missing=True),
         positions = expand(input_dir + '{well_nosubset}/cycle{cycle}/positions.csv', cycle=cycles_pt, allow_missing=True),
@@ -232,6 +242,11 @@ rule make_section:
 
 
 rule make_noisy_well:
+    """ Add gaussian noise onto an existing well.
+    Creates a copy of another well, adding gaussian noise of size sigma
+    to the pixel intensities of all images.
+    Mostly used to stress test the stitching algorithm
+    """
     input:
         images = expand(input_dir + '{well_nonoise}/cycle{cycle}/raw.tif', cycle=cycles_pt, allow_missing=True),
         positions = expand(input_dir + '{well_nonoise}/cycle{cycle}/positions.csv', cycle=cycles_pt, allow_missing=True),

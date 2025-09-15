@@ -1,10 +1,18 @@
+""" File handling configuration and setup for the snakemake pipeline
+
+The important parameters from the config file are read in, and
+the different wells and cycles are detected from rawinput/ or input.
+Helper functions and wildcard constraints are also declared here
+"""
+
 import os
 import sys
 import glob
 import time
 
-rawinput_dir = config.get('rawinput_dir', 'rawinput/')
 
+# Read in directories from config file
+rawinput_dir = config.get('rawinput_dir', 'rawinput/')
 input_dir = config.get('input_dir', 'input/')
 stitching_dir = config.get('stitching_dir', 'stitching/')
 segmentation_dir = config.get('segmentation_dir', 'segmentation/')
@@ -13,6 +21,7 @@ phenotyping_dir = config.get('phenotyping_dir', 'phenotyping/')
 output_dir = config.get('output_dir', 'output/')
 qc_dir = config.get('qc_dir', output_dir + 'qc/')
 
+# The prefix used in rawinput/ for phenotype cycles
 phenotype_date = config.get('phenotype_date', 'phenotype')
 #phenotype_cycle = config.get('phenotype_cycle', 'PT')
 
@@ -112,6 +121,7 @@ def parse_param(name, default_value):
         try: return float(val)
         except: pass
         return val
+    return func
 
 def param_constraint(name, pattern):
     return '(_' + name + '(' + pattern + '))?'

@@ -92,12 +92,12 @@ rule calculate_distance_matrix:
     output:
         table = sequencing_dir + '{path}/{segmentation_type}_reads_distance_matrix{params}{norm}{posweight}{valweight}{seqweight}.csv',
     params:
-        params = params_regex('min', 'max', 'num'),
         normalization = parse_param('norm', config['read_clustering']['normalization']),
         positional_weight = parse_param('posweight', config['read_clustering']['positional_weight']),
         value_weight = parse_param('valweight', config['read_clustering']['value_weight']),
         sequence_weight = parse_param('seqweight', config['read_clustering']['sequence_weight']),
     wildcard_constraints:
+        params = params_regex('min', 'max', 'num'),
         norm = '|_norm(none|full|large|sub)',
         posweight = '|_posweight\d+(.\d+)?',
         valweight = '|_valweight\d+(.\d+)?',

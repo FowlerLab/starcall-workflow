@@ -6,6 +6,11 @@ import glob
 ##################################################
 
 rule make_initial_composite:
+    """ Creates a constitch.CompositeImage instance with all tiles in the well.
+    Each tile is positioned with its tile location from the positions.csv files.
+    This provides a base instance with which constraints can be calculated between
+    each cycle and between neighboring tiles
+    """
     input:
         images = expand(input_dir + '{well_stitching}/cycle{cycle}/raw.tif', cycle=cycles_pt, allow_missing=True),
         rawposes = expand(input_dir + '{well_stitching}/cycle{cycle}/positions.csv', cycle=cycles_pt, allow_missing=True),
@@ -44,6 +49,11 @@ rule make_initial_composite:
         constitch.save(output.composite, composite)
 
 rule calculate_constraints:
+    """ Calculates the set of constraints between two cycles, or between adjacent tiles
+    in the same cycle if both cycles are the same.
+    Each overlapping image between the two cycles is aligned with the phase cross
+    correlation algorithm, 
+    """
     input:
         composite = stitching_dir + '{well_stitching}/initial_composite.json',
         images1 = input_dir + '{well_stitching}/cycle{cycle1}/raw.tif',
@@ -149,8 +159,8 @@ def constraints_needed(wildcards):
     paths = []
     for i in range(len(cycles_pt)):
         for j in range(i, min(i + config['stitching'].get('max_cycle_pairs', 16), len(cycles_pt))):
-            paths.append(stitching_dir + '{well_stitching}/' + 'cycle{cycle1}/cycle{cycle2}/filtered_constraints{params}.json'.format(
-                cycle1=cycles_pt[i], cycle2=cycles_pt[j]))
+            paths.append(stitching_dir + '{well_stitching}/' + 'cycle{cycle1}/cycle{cycle2}/filtered_constraints'.format(
+                cycle1=cycles_pt[i], cycle2=cycles_pt[j]) + '{params}.json')
     return paths
 
 rule merge_constraints:

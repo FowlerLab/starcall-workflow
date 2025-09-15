@@ -51,8 +51,8 @@ rule segment_cells:
     output:
         segmentation_dir + '{path_nogrid}/cells{diameter}{nuclearchannel}{cytochannel}_mask_unmatched.tif',
     resources:
-        mem_mb = lambda wildcards, input: input.size_mb * 16 + 6000,
-        cuda = 1,
+        mem_mb = lambda wildcards, input: input.size_mb * 20 + 10000,
+        #cuda = 1,
     params:
         diameter = parse_param('diameter', config['segmentation']['diameter']),
         nuclearchannel = parse_param('nuclearchannel', config['segmentation']['channels'][0]),
@@ -69,7 +69,6 @@ rule segment_cells:
         import logging
         import skimage.segmentation
 
-        diameter = int(wildcards.diameter)
         nuclearchannel = channel_index(params.nuclearchannel, kind='phenotyping')
         cytochannel = channel_index(params.cytochannel, kind='phenotyping')
 
@@ -100,8 +99,8 @@ rule segment_cells:
 
             cells = starcall.segmentation.segment_cyto_cellpose(
                 cyto, dapi,
-                diameter = config['segmentation']['diameter'],
-                gpu=resources.cuda==1,
+                diameter = params.diameter,
+                gpu = resources.cuda==1,
             )
 
             debug ('Found', cells.max(), 'cells')
@@ -126,7 +125,7 @@ rule segment_cells_bases:
         nuclearchannel = '|_nuclearchannel' + sequencing_channel_regex,
     resources:
         mem_mb = lambda wildcards, input: input.size_mb * 8 + 10000,
-        cuda = 1,
+        #cuda = 1,
     threads: 8
     run:
         import numpy as np
@@ -170,6 +169,7 @@ rule segment_nuclei_bases:
         nuclearchannel = '|_nuclearchannel' + sequencing_channel_regex,
     resources:
         mem_mb = lambda wildcards, input: input.size_mb * 8 + 10000
+        #cuda=1
     threads: 8
     run:
         import numpy as np
