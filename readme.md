@@ -1,4 +1,4 @@
-# FISSEQ data pipeline: Starcall
+# VISSEQ data pipeline: Starcall
 
 This repository is a full data pipeline for the analysis of FISSEQ (Flourescent in-situ sequencing) data.
 This readme will give an overview of the pipeline and how to run it, for more information there is documentation
@@ -18,7 +18,11 @@ we get both packages.
 	cd starcall-workflow
 
 The packages needed for STARCall are listed in ops.yaml and cp4.yaml, and can be installed with conda.
-Currently conda is needed to install the dependancies of cellprofiler and other packages.
+Currently conda is needed to install the dependencies of cellprofiler and other packages. Because
+the python versions needed for cellprofiler and other packages differ, they are installed in different environments.
+
+Currently these fully define all packages and versions in the environments, which ensures the pipeline
+will work at the expense of being unwieldy. Instructions on more flexible installation methods are coming soon.
 
 	conda create -f ops.yaml
 	conda create -f cp4.yaml
@@ -39,7 +43,7 @@ and running the pipeline will require ~20GB of data.
 With the files in the correct place, we can run the pipeline with the command below.
 Some steps will be memory/cpu intensive, its recommended to have 16GB of ram
 when running this image set. The number of cores can be adjusted, if the process
-is killed for using too much ram it may be necessary to reduce ir.
+is killed for using too much ram it may be necessary to reduce it.
 If you are on a cluster environment, the command can be modified
 as shown below:
 
@@ -192,7 +196,7 @@ Each well should have a directory, inside of which are directories for each cycl
 should have a `raw.tif` file containing the raw unstitched images, and a `positions.csv` file containing the tile positions
 of each of these tiles. If your microscope outputs stitched images you can place them directly in the `stitching/`
 folder (eg `stitching/well1/raw.tif`), however this will only work if they are also aligned between cycles which most
-microscopes will not do. It is recomended to provide unstitched images so the stitching algorithm can align across cycles
+microscopes will not do. It is recommended to provide unstitched images so the stitching algorithm can align across cycles
 as well as across wells at the same time.
 
 An example `input/` folder is shown below:
@@ -627,7 +631,7 @@ Outputs:
 
 - `sequencing/{path}/cells_raw_reads.csv`
 
-This is the other main processing step in the pipeline, where the flourescent dots are detected,
+This is the other main processing step in the pipeline, where the fluorescent dots are detected,
 and their sequencing values are read out. This table contains each sequencing colony that was
 detected, with its position, raw image values, sequence, and cell that it is contained in.
 
@@ -795,7 +799,7 @@ There are multiple ways to make sure that the different steps in the pipeline ar
 Many of these are additional processing steps in the pipeline that can be run by requesting
 the specific file with snakemake. This combined with the ability to change parameters in file paths mean
 that finding the right values for different parameters is quite simple. For example, if you want to try a couple
-different possible values for the diameter given to cellpose, you could request the followin files as so:
+different possible values for the diameter given to cellpose, you could request the following files as so:
 
 	snakemake output/qc/well1_section1000/cells_overlay_diameter{25,50,75,100}.png
 
