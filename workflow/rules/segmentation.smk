@@ -11,6 +11,14 @@ def get_segmentation_pt(wildcards):
         return stitching_dir + path + '/raw_pt.tif'
 
 rule segment_nuclei:
+    """ Uses Stardist to segment the nuclei of cells in the phenotyping
+    images. Takes one phenotyping channel as a nuclear channel. Outputs
+    an image with integer masks for each cell.
+
+    Params:
+        nuclearchannel: The phenotyping channel to perform segmentation on, should be
+            an integer index or one of the phenotyping channels specified in config.yaml
+    """
     input:
         get_segmentation_pt,
     output:
@@ -398,15 +406,19 @@ rule merge_grid_segmentation:
 
         composite = constitch.load(input.composite)
 
+        num_cells = 0
         for i,path in enumerate(input.images):
             composite.images[i] = tifffile.imread(path)
+            num_cells += composite.images[i].max()
+
+        dtype = [dtype for dtype in [np.uint16, np.uint32, np.uint64] if np.iinfo(dtype).max > num_cells + 1][0]
 
         # scaling from base images to phenotype
         composite.boxes.positions[:,:2] *= phenotype_scale
         composite.boxes.positions[:,:2] //= bases_scale
         composite.boxes.sizes[:,:2] *= phenotype_scale
         composite.boxes.sizes[:,:2] //= bases_scale
-        merger = constitch.MaskMerger()
+        merger = constitch.MaskMerger(dtype=dtype)
 
         full_image = composite.stitch(merger=merger)
         del composite
@@ -457,22 +469,35 @@ rule split_grid_table:
         composite.boxes.sizes[:,:2] //= bases_scale
         box = composite.boxes[x*grid_size+y]
 
+        split_cells = 0
+
         contained = []
         for i, cell in table.iterrows():
-            cellbox = constitch.BBox(point1=[cell.bbox_x1, cell.bbox_y1], point2=[cell.bbox_x2, cell.bbox_y2])
+            cellbox = constitch.BBox(point1=[cell.bbox_x1, cell.bbox_y1], point2=[cell.bbox_x2 // 2 * 2, cell.bbox_y2 // 2 * 2])
+            # rounding down point2 of cellbox to avoid off by one error on the edge of the grid,
+            # cause the grid will always be rounded down
 
             closest = np.linalg.norm(box.center - cellbox.center)
             closest_box = box
-            #if i == 5487:
-                #debug ('begin', box, cellbox, box.contains(cellbox), closest)
+            closest_index = x * grid_size + y
             for j in range(len(composite.boxes)):
                 dist = np.linalg.norm(composite.boxes[j].center - cellbox.center)
-                #if i == 5487:
-                    #debug (composite.boxes[j], cellbox, composite.boxes[j].contains(cellbox), dist)
                 if dist <= closest:
                     closest, closest_box = dist, composite.boxes[j]
+                    closest_index = j
 
-            assert closest_box.contains(cellbox)
+            #debug ('----- here ----', closest_index, closest_index//grid_size, closest_index%grid_size)
+
+            if not closest_box.contains(cellbox):
+                split_cells += 1
+                debug ('split cell:', closest_index, closest_index//grid_size, closest_index%grid_size)
+                #debug (closest_box.point1, closest_box.point2, cellbox.point1, cellbox.point2)
+                #debug ('   ', np.linalg.norm(closest_box.center - cellbox.center))
+                #for curbox in composite.boxes:
+                    #debug (curbox.point1, curbox.point2)
+                    #debug ('   ', cellbox.point1 - curbox.point1, curbox.point2 - cellbox.point2)
+                    #debug ('   ', np.linalg.norm(cellbox.center - curbox.center))
+            #assert closest_box.contains(cellbox)
 
             contained.append(closest_box is box)
 
@@ -480,6 +505,11 @@ rule split_grid_table:
             #for j in range(x*grid_size+y):
                 #is_contained = is_contained and not composite.boxes[j].contains(cellbox)
             #contained.append(is_contained)
+
+        assert split_cells < max(50, 0.2 * len(table.index)), (
+                "{} out of {} cells in the well were split by the grid. "
+                "Occasional cells are split if they are larger than overlap, but if "
+                "this is too many consider increasing the overlap in config file".format(split_cells, len(table.index)))
 
         table = table[contained]
         table['bbox_x1'] -= box.position[0]
@@ -528,7 +558,8 @@ rule split_grid_segmentation:
         #props = skimage.measure.regionprops(section)
         #props = {prop.label: prop for prop in props}
 
-        dtype = [dtype for dtype in [np.uint8, np.uint16, np.uint32] if np.iinfo(dtype).max > len(table.index) + 1][0]
+        dtype = [dtype for dtype in [np.uint16, np.uint32, np.uint64] if np.iinfo(dtype).max > len(table.index) + 1][0]
+        #dtype = np.uint16 if np.iinfo(np.uint16).max > len(table.index) + 1 else np.uint32
         newimage = np.zeros(section.shape, dtype)
 
         if (wildcards.segmentation_type.count('cells') > 0

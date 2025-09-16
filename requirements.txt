@@ -12,5 +12,5 @@ nd2==0.7.1
 nd2reader
 pandas
 ome-types
-nd2
 pybasic-illumination-correction
+CellProfiler>=4

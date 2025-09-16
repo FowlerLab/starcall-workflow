@@ -28,7 +28,10 @@ rule make_qc_read_plots:
         #12 for ticks, 14 for labels, important to be consistent
 
         read_table = pandas.read_csv(input.full_table, index_col=0)
-        num_cycles = len(read_table['read_0'].iloc[0])
+        for tmp_read in read_table['read_0']:
+            if type(tmp_read) == str: break
+        num_cycles = len(tmp_read)
+        #num_cycles = len(read_table['read_0'].iloc[0])
         library_paths = [path for path in input.barcodes if path.count('barcodes.csv')]
         has_library = len(library_paths) != 0
         if has_library:
@@ -135,7 +138,8 @@ rule make_qc_read_plots:
                 #debug (labels)
                 #none_vals = values[0]
                 total_count = values.sum()
-                #labels = ['None'] + list(map(str, labels))
+                if -1 in labels:
+                    labels = ['None'] + list(map(str, labels[1:]))
                 #values = [0] + list(values)
                 labels = list(map(str, labels))
                 values = list(values)
@@ -149,7 +153,8 @@ rule make_qc_read_plots:
                 values = list(values)
                 #labels = ['None'] + list(map(str, labels))
                 #values = [total_not_included] + list(values)
-                axes[0,3].bar(labels, values, width=1, label='sing.')
+                axes[0,3].bar(labels, values, width=1, label='single')
+                axes[0,3].set_title('{:.4f}% of cells mapped to a barcode'.format(sum(values) / len(read_table.index) * 100))
 
                 #plotting all reads that were removed in the none bar
                 #axes[0,3].bar(['None'], [total_not_included], width=1)

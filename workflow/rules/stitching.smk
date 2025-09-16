@@ -10,10 +10,10 @@ wildcard_constraints:
 ## Background calculation / correction
 ##################################################
 
-""" So that both raw.tif and corrected.tif are in the same folder, to
-make the wildcards for rules that read in both of them more simple
-"""
 rule link_input_stitching_raw:
+    """ So that both raw.tif and corrected.tif are in the same folder, to
+    make the wildcards for rules that read in both of them more simple
+    """
     input:
         input_dir + '{well_stitching}/cycle{cycle}/raw.tif'
     output:
@@ -22,9 +22,10 @@ rule link_input_stitching_raw:
     shell:
         "cp -l {input[0]} {output[0]}"
 
-""" Preforms background correction by estimating the 
-"""
 rule calc_background:
+    """ Preforms background correction using BaSiC:
+    https://github.com/marrlab/BaSiC
+    """
     input:
         lambda wildcards: expand(input_dir + 'well{well_stitching}/cycle{cycle}/raw.tif',
                 well_stitching=wells, cycle=phenotype_cycles if wildcards.ispt == '_pt' else cycles),
@@ -112,6 +113,9 @@ rule calc_background:
         """
 
 rule correct_background:
+    """ Uses the background levels estimated by BaSiC to correct the background
+    of a set of image tiles
+    """
     input:
         images = input_dir + '{well_stitching}/cycle{cycle}/raw.tif',
         background = lambda wildcards: stitching_dir + 'background{}.tif'.format('_pt' if wildcards.cycle in phenotype_cycles else '')
@@ -144,6 +148,9 @@ def get_background_pt(wildcards):
     return get_background(wildcards, True)
 
 rule stitch_cycle:
+    """ Stitches a whole well image for a single cycle. Only really useful to inspect the
+    stitching, single cycle images are not used in later steps of the pipeline
+    """
     input:
         images = stitching_dir + '{well_stitching}/cycle{cycle}/{corrected}_tiles.tif',
         positions = stitching_dir + '{well_stitching}/cycle{cycle}/positions.csv',
@@ -217,6 +224,13 @@ rule stitch_cycle:
 
 
 rule stitch_well:
+    """ Stitches the whole well together with all sequencing cycles.
+    The resulting image will have 4 dimensions: (num_cycles, num_channels, width, height)
+    This image may be unreasonably large, for big wells it is recommended to use tiles
+    which are stitched directly, without having to stitch the whole well (see stitch_well_tile)
+    To reduce the memory usage, cycles are stitched separately and written out one by one, so
+    the whole well image does not have to be held in memory.
+    """
     input:
         images = expand(stitching_dir + '{well_stitching}/cycle{cycle}/{corrected}_tiles.tif', cycle=cycles, allow_missing=True),
         composite = stitching_dir + '{well_stitching}/composite{params_alignment}.json',
@@ -313,6 +327,13 @@ def stitch_well_section(image_paths, composite_paths, mins, maxes):
 
 
 rule stitch_well_pt:
+    """ Stitches a whole well together, with all phenotyping cycles.
+    Like stitch_well, the resulting image will have 4 dimensions: (num_cycles, num_channels, width, height).
+    It is common for there to be only one phenotyping cycle, in which case the first dimension
+    is only size 1. This is expected for the rest of the pipeline, but can cause problems if you
+    try to open it with an external pipeline. To inspect individual phenotype cycles, see
+    stitch_cycle.
+    """
     input:
         images_pt = expand(stitching_dir + '{well_stitching}/cycle{cycle}/{corrected}_tiles.tif', cycle=phenotype_cycles, allow_missing=True),
         composites_pt = expand(stitching_dir + '{well_stitching}/cycle{cycle}/composite.json', cycle=phenotype_cycles, allow_missing=True),
@@ -339,6 +360,10 @@ rule stitch_well_pt:
 
 
 rule stitch_well_section:
+    """ Stitches a small section of a well, with dimensions wildcards.size pixels square.
+    The region is taken from the center of the well. The output image will have the
+    same shape as stitch_well: (num_cycles, num_channels, width, height)
+    """
     input:
         images = expand(stitching_dir + '{well_stitching}/cycle{cycle}/{corrected}_tiles.tif', cycle=cycles, allow_missing=True),
         composites = expand(stitching_dir + '{well_stitching}/cycle{cycle}/composite{params_alignment}.json', cycle=cycles, allow_missing=True),
@@ -359,6 +384,10 @@ rule stitch_well_section:
         tifffile.imwrite(output.image, stitch_well_section(input.images, input.composites, mins, maxes))
 
 rule stitch_well_section_pt:
+    """ Stitches all phenotyping cycles for a small section of a well, with dimensions wildcards.size pixels square.
+    The region is taken from the center of the well. The output image will have the
+    same shape as stitch_well_pt: (num_phenotype_cycles, num_channels, width, height)
+    """
     input:
         images = expand(stitching_dir + '{well_stitching}/cycle{cycle}/{corrected}_tiles.tif', cycle=phenotype_cycles, allow_missing=True),
         composites = expand(stitching_dir + '{well_stitching}/cycle{cycle}/composite.json', cycle=phenotype_cycles, allow_missing=True),
@@ -390,6 +419,10 @@ rule stitch_well_section_pt:
 ##################################################
 
 rule split_grid_composite:
+    """ Creates a grid of tiles across a full well. The grid is of size
+    wildcards.grid_size, with overlap specified in config.yaml as
+    stitching.overlap.
+    """
     input:
         composite = stitching_dir + '{well_stitching}/composite.json'
     output:
@@ -416,6 +449,9 @@ rule split_grid_composite:
 
 
 rule stitch_tile_well:
+    """ Stitches a single tile in a grid. The output image has the same
+    shape as stitch_well: (num_cycles, num_channels, width, height)
+    """
     input:
         images = expand(stitching_dir + '{well_stitching}/cycle{cycle}/{corrected}_tiles.tif', cycle=cycles, allow_missing=True),
         composites = expand(stitching_dir + '{well_stitching}/cycle{cycle}/composite.json', cycle=cycles, allow_missing=True),
@@ -438,6 +474,9 @@ rule stitch_tile_well:
 
 
 rule stitch_tile_well_pt:
+    """ Stitches a single tile in a grid. The output image has the same
+    shape as stitch_well_pt: (num_phenotyping_cycles, num_channels, width, height)
+    """
     input:
         images_pt = expand(stitching_dir + '{well_stitching}/cycle{cycle}/{corrected}_tiles.tif', cycle=phenotype_cycles, allow_missing=True),
         composites_pt = expand(stitching_dir + '{well_stitching}/cycle{cycle}/composite.json', cycle=phenotype_cycles, allow_missing=True),

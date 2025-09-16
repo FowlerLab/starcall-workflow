@@ -113,6 +113,15 @@ rule copy_cellprofiler_files:
                 tifffile.imwrite(path, image[i])
                 #tifffile.imwrite(path, image[i,:bad_shape[0],:bad_shape[1]])
 
+            for path in input[1:]:
+                with tifffile.TiffFile(path) as cells_file:
+                    dtype = cells_file.pages[0].dtype
+                    assert dtype == np.uint16, (
+                        "Segmentation input to cellprofiler must be in uint16 form. "
+                        "'{}' has dtype {}, this may be due to there being more than 65535 "
+                        "cells in the image. To solve this increase the grid size for phenotyping "
+                        " in config.yaml.".format(path, dtype))
+
             #os.symlink(input.cells, output.cells)
             os.symlink(os.path.relpath(input.cells, os.path.dirname(output.cells)), output.cells)
             ofile.write(os.path.basename(output.cells))
@@ -148,14 +157,16 @@ rule run_cellprofiler:
         #mark = phenotyping_dir + '{path}/cellprofiler/{pipeline,[^./]+}/mark',
         cell_file = phenotyping_dir + '{path}/cellprofiler/{pipeline}/Cells.csv'
     resources:
-        mem_mb = lambda wildcards, input, attempt: input.size_mb * 150 + 10000 #+ (attempt - 1) * 200000
+        mem_mb = lambda wildcards, input, attempt: input.size_mb * 150 + 55000 #+ (attempt - 1) * 200000
     threads: 2
     conda:
         'cp4'
         #'../envs/cellprofiler.yaml'
     #retries: 2
     shell:
-        'cellprofiler -c -r -p {input.pipeline} -i ' + phenotyping_dir + '{wildcards.path}/cellprofiler -o ' + phenotyping_dir + '{wildcards.path}/cellprofiler/{wildcards.pipeline} || (test $? = 1 -o $? = 137 && echo \'""\' > {output.cell_file} )'
+        'cellprofiler -c -r -p {input.pipeline} -i ' + phenotyping_dir + '{wildcards.path}/cellprofiler -o ' + phenotyping_dir + '{wildcards.path}/cellprofiler/{wildcards.pipeline}'
+        # This command will ignore error from cellprofiler, sometimes necessary if there is a bug:
+        #'cellprofiler -c -r -p {input.pipeline} -i ' + phenotyping_dir + '{wildcards.path}/cellprofiler -o ' + phenotyping_dir + '{wildcards.path}/cellprofiler/{wildcards.pipeline} || (test $? = 1 -o $? = 137 && echo \'""\' > {output.cell_file} )'
         #'~/miniconda3/envs/cp4/bin/cellprofiler -c -r -p {input.pipeline} -i ' + phenotyping_dir + '{wildcards.path}/cellprofiler -o ' + phenotyping_dir + '{wildcards.path}/cellprofiler/{wildcards.pipeline}'
 
 rule copy_cellprofiler_output:

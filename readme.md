@@ -37,7 +37,7 @@ and running the pipeline will require ~20GB of data.
 
 	wget https://visseq.gs.washington.edu/data_download/LMNA_T3_testing_image_set.tar.gz
 	tar -xf LMNA_T3_testing_image_set.tar.gz
-	mv LMNA_T3_testing_image_set/* ./
+	# This will extract input/ and cellprof_pipeline_lmna_071025.cppipe
 
 ### Run pipeline
 
@@ -48,15 +48,15 @@ is killed for using too much ram it may be necessary to reduce ir.
 If you are on a cluster environment, the command can be modified
 as shown below:
 
-	snakemake --configfile default-config.yaml output/well1_subset3_grid.cellprofiler_022525.cells_full.csv --cores 4
+	snakemake --configfile default-config.yaml output/well1_subset3_grid.cellprofiler_071025.cells_full.csv --cores 4
 
 For a cluster with qsub/qdel a shell script is provided
 
-	./run.sh output/well1_subset3_grid.cellprofiler_022525.cells_full.csv --jobs 4
+	./run.sh output/well1_subset3_grid.cellprofiler_071025.cells_full.csv --jobs 4
 
 For slurm clusters snakemake has a built-in flag
 
-	snakemake --slurm --configfile default-config.yaml output/well1_subset3_grid.cellprofiler_022525.cells_full.csv --cores 4
+	snakemake --slurm --configfile default-config.yaml output/well1_subset3_grid.cellprofiler_071025.cells_full.csv --cores 4
 
 It may take a couple hours to run, depending on the machine you are running on.
 Cell segmentation can especially take a long time if you don't have a gpu
@@ -66,10 +66,10 @@ are currently running.
 ### Expected output
 
 When it finishes, the output of the pipeline should be in output,
-`output/well1_subset3_grid.cellprofiler_022525.cells_full.csv`.
+`output/well1_subset3_grid.cellprofiler_071025.cells_full.csv`.
 An example of the
 output is contained in the testing set that was downloaded as
-`expected_output/well1_subset3_grid.cellprofiler_022525.cells_full.csv`.
+`expected_output/well1_subset3_grid.cellprofiler_071025.cells_full.csv`.
 Comparing the reads in the generated table to the reads in this output
 is a good way to make sure the pipeline is running as expected.
 
@@ -443,7 +443,7 @@ analysis, but if you are looking for more complex phenotypes then another algori
 
 Including `.cellprofiler_{pipeline}` will invoke cellprofiler with the pipeline file `{pipeline}.cppipe`, or additionally searching
 for any files matching `*{pipeline}.cppipe`. A common pattern is to date different versions of pipelines, if the files
-`cellprofiler_122424.cppipe` and `cellprofiler_022525.cppipe` are present and `.cellprofiler_022525` is requested,
+`cellprofiler_122424.cppipe` and `cellprofiler_071025.cppipe` are present and `.cellprofiler_071025` is requested,
 the second pipeline will be ran. Cellprofiler is a proven method to extract many different features from cell images,
 for visualization or analyis. More info on what a pipeline should look like is included in the Cellprofiler section below.
 

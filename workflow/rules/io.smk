@@ -45,130 +45,132 @@ def get_nd2filename(wildcards=None, cycle=None, well=None):
     return paths[0]
 
 
-rule extract_nd2:
-    input:
-        get_nd2filename
-    output:
-        #expand(input_dir + '{well_base}/cycle{cycle}/tile{tile}.tif', tile=tiles, allow_missing=True)
-        #input_dir + '{well_base}/cycle{cycle}/tile{tile}.tif'
-        input_dir + '{well_base}/tile{tile}/cycle{cycle}.tif',
-    resources:
-        mem_mb = 10000
-    run:
-        import numpy as np
-        import tifffile
-        import nd2reader
+if os.path.exists(rawinput_dir):
 
-        images = nd2reader.ND2Reader(input[0])
-        num_channels = images.sizes['c']
-        images.iter_axes = ['v','c']
+    rule extract_nd2:
+        input:
+            get_nd2filename
+        output:
+            #expand(input_dir + '{well_base}/cycle{cycle}/tile{tile}.tif', tile=tiles, allow_missing=True)
+            #input_dir + '{well_base}/cycle{cycle}/tile{tile}.tif'
+            input_dir + '{well_base}/tile{tile}/cycle{cycle}.tif',
+        resources:
+            mem_mb = 10000
+        run:
+            import numpy as np
+            import tifffile
+            import nd2reader
 
-        print_mem('extract_nd2', resources.mem_mb)
-        #for tile in range(0,len(images)//num_channels):
-        tile = int(wildcards.tile)
-        image = np.array(images[tile*num_channels:(tile+1)*num_channels])
-        tifffile.imwrite(output[0], image)
+            images = nd2reader.ND2Reader(input[0])
+            num_channels = images.sizes['c']
+            images.iter_axes = ['v','c']
 
-rule extract_tile:
-    input:
-        input_dir + '{well}/cycle{cycle}.tif'
-    output:
-        input_dir + '{well}/tile{tile}/cycle{cycle}.tif'
-    run:
-        import tifffile
+            print_mem('extract_nd2', resources.mem_mb)
+            #for tile in range(0,len(images)//num_channels):
+            tile = int(wildcards.tile)
+            image = np.array(images[tile*num_channels:(tile+1)*num_channels])
+            tifffile.imwrite(output[0], image)
 
-        images = tifffile.memmap(input[0], mode='r')
-        tile = int(wildcards.tile)
-        image = images[min(tile, len(images)-1)]
-        tifffile.imwrite(output[0], image)
+    rule extract_tile:
+        input:
+            input_dir + '{well}/cycle{cycle}.tif'
+        output:
+            input_dir + '{well}/tile{tile}/cycle{cycle}.tif'
+        run:
+            import tifffile
 
-rule extract_nd2_positions:
-    """ This rule reads the nd2 files and gets the position for each tile.
-    The output file has 4 columns, the first two are the grid position of the tile,
-    and the second two are the estimated pixel position of each tile.
-    """
-    input:
-        get_nd2filename
-    output:
-        input_dir + '{well_base}/cycle{cycle}/positions.csv'
-    resources:
-        mem_mb = 2000
-    run:
-        import numpy as np
-        import tifffile
-        import nd2
+            images = tifffile.memmap(input[0], mode='r')
+            tile = int(wildcards.tile)
+            image = images[min(tile, len(images)-1)]
+            tifffile.imwrite(output[0], image)
 
-        with nd2.ND2File(input[0]) as images:
-            full_meta = images.ome_metadata()
+    rule extract_nd2_positions:
+        """ This rule reads the nd2 files and gets the position for each tile.
+        The output file has 4 columns, the first two are the grid position of the tile,
+        and the second two are the estimated pixel position of each tile.
+        """
+        input:
+            get_nd2filename
+        output:
+            input_dir + '{well_base}/cycle{cycle}/positions.csv'
+        resources:
+            mem_mb = 2000
+        run:
+            import numpy as np
+            import tifffile
+            import nd2
 
-            if len(full_meta.images) == 1:
-                meta = full_meta.images[0].dict()
-                #debug(meta)
+            with nd2.ND2File(input[0]) as images:
+                full_meta = images.ome_metadata()
 
-                size_x = meta['pixels']['physical_size_x']# * meta['pixels']['size_x']
-                size_y = meta['pixels']['physical_size_y']# * meta['pixels']['size_y']
-                xposes = np.array([plane['position_x'] for plane in meta['pixels']['planes'] if plane['the_c'] == 0]) / size_x
-                yposes = np.array([plane['position_y'] for plane in meta['pixels']['planes'] if plane['the_c'] == 0]) / size_y
-                assert len(xposes) > 1
-
-            else:
-                xposes, yposes = [], []
-
-                for i in range(len(full_meta.images)):
-                    meta = full_meta.images[i].dict()
+                if len(full_meta.images) == 1:
+                    meta = full_meta.images[0].dict()
                     #debug(meta)
 
                     size_x = meta['pixels']['physical_size_x']# * meta['pixels']['size_x']
                     size_y = meta['pixels']['physical_size_y']# * meta['pixels']['size_y']
-                    cur_xposes = [plane['position_x'] for plane in meta['pixels']['planes'] if plane['the_c'] == 0]
-                    cur_yposes = [plane['position_y'] for plane in meta['pixels']['planes'] if plane['the_c'] == 0]
-                    assert len(cur_xposes) == 1 and len(cur_yposes) == 1
-                    xposes.append(cur_xposes[0] / size_x)
-                    yposes.append(cur_yposes[0] / size_y)
-                    #debug (i, cur_xposes, cur_yposes)
+                    xposes = np.array([plane['position_x'] for plane in meta['pixels']['planes'] if plane['the_c'] == 0]) / size_x
+                    yposes = np.array([plane['position_y'] for plane in meta['pixels']['planes'] if plane['the_c'] == 0]) / size_y
+                    assert len(xposes) > 1
 
-                xposes, yposes = np.array(xposes), np.array(yposes)
+                else:
+                    xposes, yposes = [], []
 
-            #positions = np.array([-xposes, -yposes]).T
-            positions = np.array([yposes, -xposes]).T
-            #debug (positions)
-            #debug (positions.shape)
-            #debug (np.array([plane['position_x'] for plane in meta['pixels']['planes']]) / size_x)
+                    for i in range(len(full_meta.images)):
+                        meta = full_meta.images[i].dict()
+                        #debug(meta)
 
-            shift_dist = max(abs(positions[0,0] - positions[1,0]), abs(positions[0,1] - positions[1,1]))
-            shift_dist = np.median(np.linalg.norm(positions[1:] - positions[:-1], axis=1))
-            grid_poses = np.round(positions / shift_dist).astype(int)
+                        size_x = meta['pixels']['physical_size_x']# * meta['pixels']['size_x']
+                        size_y = meta['pixels']['physical_size_y']# * meta['pixels']['size_y']
+                        cur_xposes = [plane['position_x'] for plane in meta['pixels']['planes'] if plane['the_c'] == 0]
+                        cur_yposes = [plane['position_y'] for plane in meta['pixels']['planes'] if plane['the_c'] == 0]
+                        assert len(cur_xposes) == 1 and len(cur_yposes) == 1
+                        xposes.append(cur_xposes[0] / size_x)
+                        yposes.append(cur_yposes[0] / size_y)
+                        #debug (i, cur_xposes, cur_yposes)
 
-            grid_poses = grid_poses - grid_poses.min(axis=0).reshape(1,-1)
+                    xposes, yposes = np.array(xposes), np.array(yposes)
 
-            #grid_poses = grid_poses - np.ceil(grid_poses.max(axis=0).reshape(1,-1) / 2)
-            #debug (grid_poses.mean(axis=0), positions.mean(axis=0), (grid_poses.max(axis=0) - grid_poses.min(axis=0)).reshape(1,-1) / 2)
-            debug (grid_poses.max(axis=0) / 2, grid_poses.mean(axis=0))
+                #positions = np.array([-xposes, -yposes]).T
+                positions = np.array([yposes, -xposes]).T
+                #debug (positions)
+                #debug (positions.shape)
+                #debug (np.array([plane['position_x'] for plane in meta['pixels']['planes']]) / size_x)
 
-            positions = positions - positions.min(axis=0).reshape(1,-1)
-            #positions = positions - np.round(positions.mean(axis=0)).reshape(1,-1)
-            #grid_poses = grid_poses - np.round(grid_poses.mean(axis=0)).reshape(1,-1)
+                shift_dist = max(abs(positions[0,0] - positions[1,0]), abs(positions[0,1] - positions[1,1]))
+                shift_dist = np.median(np.linalg.norm(positions[1:] - positions[:-1], axis=1))
+                grid_poses = np.round(positions / shift_dist).astype(int)
 
-            debug (grid_poses, positions, grid_poses.min(axis=0), positions.min(axis=0))
+                grid_poses = grid_poses - grid_poses.min(axis=0).reshape(1,-1)
 
-            np.savetxt(output[0], np.concatenate((grid_poses, positions), axis=1), fmt='%d', delimiter=',')
+                #grid_poses = grid_poses - np.ceil(grid_poses.max(axis=0).reshape(1,-1) / 2)
+                #debug (grid_poses.mean(axis=0), positions.mean(axis=0), (grid_poses.max(axis=0) - grid_poses.min(axis=0)).reshape(1,-1) / 2)
+                debug (grid_poses.max(axis=0) / 2, grid_poses.mean(axis=0))
 
-rule copy_nd2_image:
-    """ Converts an nd2 file into a tiff. The resulting tiff should have 4 dimensions,
-    (num_tiles, num_cycles, width, height)
-    """
-    input:
-        get_nd2filename
-    output:
-        input_dir + '{well_base}/cycle{cycle}/raw.tif'
-    resources:
-        mem_mb = lambda wildcards, input: input.size_mb + 5000
-    run:
-        import tifffile
-        import nd2
+                positions = positions - positions.min(axis=0).reshape(1,-1)
+                #positions = positions - np.round(positions.mean(axis=0)).reshape(1,-1)
+                #grid_poses = grid_poses - np.round(grid_poses.mean(axis=0)).reshape(1,-1)
 
-        image = nd2.imread(input[0])
-        tifffile.imwrite(output[0], image)
+                debug (grid_poses, positions, grid_poses.min(axis=0), positions.min(axis=0))
+
+                np.savetxt(output[0], np.concatenate((grid_poses, positions), axis=1), fmt='%d', delimiter=',')
+
+    rule copy_nd2_image:
+        """ Converts an nd2 file into a tiff. The resulting tiff should have 4 dimensions,
+        (num_tiles, num_cycles, width, height)
+        """
+        input:
+            get_nd2filename
+        output:
+            input_dir + '{well_base}/cycle{cycle}/raw.tif'
+        resources:
+            mem_mb = lambda wildcards, input: input.size_mb + 5000
+        run:
+            import tifffile
+            import nd2
+
+            image = nd2.imread(input[0])
+            tifffile.imwrite(output[0], image)
 
 
 

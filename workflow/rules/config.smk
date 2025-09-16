@@ -28,30 +28,42 @@ phenotype_date = config.get('phenotype_date', 'phenotype')
 phenotype_scale = config['phenotype_scale']
 bases_scale = config['bases_scale']
 
-dates = [] if not os.path.exists(rawinput_dir) else sorted(os.listdir(rawinput_dir))
-dates_pt = dates.copy()
+if os.path.exists(rawinput_dir):
+    dates = sorted(os.listdir(rawinput_dir))
+    dates_pt = dates.copy()
 
-phenotype_dates = [date for date in dates if date[:len(phenotype_date)] == phenotype_date]
-if 'phenotype_cycles' not in config:
-    phenotype_cycles = ['PT', 'PT1', 'PT2', 'PT3', 'PT4'][:len(phenotype_dates)]
+    phenotype_dates = [date for date in dates if date[:len(phenotype_date)] == phenotype_date]
+    if 'phenotype_cycles' not in config:
+        phenotype_cycles = ['PT', 'PT1', 'PT2', 'PT3', 'PT4'][:len(phenotype_dates)]
+    else:
+        phenotype_cycles = config['phenotype_cycles']
+
+
+    if 'wells' not in config:
+        #wells = sorted([path.replace('Well', '').partition('_')[0] for path in os.listdir(rawinput_dir + '/' + dates[0])])
+        wells = sorted(list(set([path.partition('Well')[2].partition('_')[0] for path in glob.glob(rawinput_dir + '/*/*.nd2')])))
+    else:
+        wells = config['wells']
+
+    for date in phenotype_dates:
+        if date in dates_pt:
+            dates.remove(date)
+
+    if 'cycles' not in config:
+        cycles = ['{:02}'.format(i) for i in range(len(dates))]
+    else:
+        cycles = config['cycles']
+
 else:
-    phenotype_cycles = config['phenotype_cycles']
+    wells = [dirname.replace('well', '') for dirname in sorted(os.listdir(input_dir)) if dirname != 'auxdata']
 
+    cycles_pt = [dirname[5:] for dirname in sorted(os.listdir(input_dir + '/well' + wells[0]))]
+    cycles = [cycle for cycle in cycles_pt if cycle[0] != 'P']
+    phenotype_cycles = [cycle for cycle in cycles_pt if cycle[0] == 'P']
 
-if 'wells' not in config:
-    #wells = sorted([path.replace('Well', '').partition('_')[0] for path in os.listdir(rawinput_dir + '/' + dates[0])])
-    wells = sorted(list(set([path.partition('Well')[2].partition('_')[0] for path in glob.glob(rawinput_dir + '/*/*.nd2')])))
-else:
-    wells = config['wells']
-
-for date in phenotype_dates:
-    if date in dates_pt:
-        dates.remove(date)
-
-if 'cycles' not in config:
-    cycles = ['{:02}'.format(i) for i in range(len(dates))]
-else:
-    cycles = config['cycles']
+    dates_pt = []#['date' + cycle for cycle in cycles_pt]
+    dates = []#['date' + cycle for cycle in cycles]
+    phenotype_dates = []
 
 cycles_pt = cycles + phenotype_cycles
 #cycles_pt = sorted(cycles_pt)

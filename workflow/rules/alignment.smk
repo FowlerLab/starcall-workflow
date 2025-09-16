@@ -52,7 +52,19 @@ rule calculate_constraints:
     """ Calculates the set of constraints between two cycles, or between adjacent tiles
     in the same cycle if both cycles are the same.
     Each overlapping image between the two cycles is aligned with the phase cross
-    correlation algorithm, 
+    correlation algorithm, and the resulting offsets are stored in constraints.json
+    In addition a random set of non-overlapping constraints are calculated to estimate
+    the score threshold for filtering should be.
+    Eg, when loading constraints.json, the following lines could be used:
+        composite = constitch.load('{well}/initial_composite.json')
+        overlapping, constraints, non_overlapping = constitch.load(
+                    '{well_stitching}/initial_composite.json', composite=composite)
+
+    Params:
+        channel: the channel used for alignment. Should be an integer index or one
+            of the channels listed in the config file.
+        subpix: the level of sub pixel precision to calculate, eg 16 would mean
+            alignment is done to a 1/16th pixel.
     """
     input:
         composite = stitching_dir + '{well_stitching}/initial_composite.json',
@@ -123,6 +135,12 @@ rule calculate_constraints:
 
 
 rule filter_constraints:
+    """ Constraints are filtered using a score threshold, calculated as the 95th percentile
+    of the set of non overlapping constraints calcualted in calc_constraints. Any constraints
+    with a lower score are removed, and a linear model is fit to the remaining.
+    Using the RANSAC algorithm, outliers are removed, and all constraints that were
+    removed are replaced with constraints estimated by the linear model
+    """
     input:
         composite = stitching_dir + '{well_stitching}/initial_composite.json',
         constraints = stitching_dir + '{well_stitching}/cycle{cycle1}/cycle{cycle2}/constraints{params}.json',
@@ -164,6 +182,11 @@ def constraints_needed(wildcards):
     return paths
 
 rule merge_constraints:
+    """ All filtered constraints from cycle pairs are combined into composite.json
+    Adjusting the stitching.max_cycle_pairs in config.yaml can limit the cycle pairs
+    collected, eg if max_cycle_pairs is 5, cycle 0 and cycle 4 would be calculated but
+    0 and 5 or 1 and 6 would not.
+    """
     input:
         composite = stitching_dir + '{well_stitching}/initial_composite.json',
         constraints = constraints_needed,
@@ -188,6 +211,15 @@ rule merge_constraints:
 
 
 rule solve_constraints:
+    """ Finds global positions for each image tile given all constraints.
+    Plots are made in the qc dir showing all constraints before and after
+    solving.
+
+    Params:
+        solver: (mae, mse, spantree) The type of solver to use.
+            mae is default and minimizes mean absolute error. mse minimizes
+            mean squared error and spantree constructs a spanning tree.
+    """
     input:
         composite = stitching_dir + '{well_stitching}/initial_composite.json',
         constraints = stitching_dir + '{well_stitching}/constraints{params}.json',
@@ -223,6 +255,8 @@ rule solve_constraints:
 
 
 rule split_composite:
+    """ Splits the full well composite up into a composite for a single well
+    """
     input:
         composite = stitching_dir + '{well_stitching}/composite{params}.json',
     output:
