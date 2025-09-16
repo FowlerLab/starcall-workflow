@@ -17,17 +17,12 @@ we get both packages.
 	git clone https://github.com/FowlerLab/starcall-workflow.git
 	cd starcall-workflow
 
-The packages needed for STARCall are listed in requirements.txt, and can be installed with pip.
-It is recommended that you create a conda or virtual environment, as there are a good amount
-of packages needed
+The packages needed for STARCall are listed in ops.yaml and cp4.yaml, and can be installed with conda.
+Currently conda is needed to install the dependancies of cellprofiler and other packages.
 
-	conda create -n ops
+	conda create -f ops.yaml
+	conda create -f cp4.yaml
 	conda activate ops
-	# or
-	# python3 -m venv ops
-	# source ops/bin/activate
-
-	pip3 install -r requirements.txt
 
 ### Download testing dataset
 
