@@ -24,8 +24,8 @@ the python versions needed for cellprofiler and other packages differ, they are 
 Currently these fully define all packages and versions in the environments, which ensures the pipeline
 will work at the expense of being unwieldy. Instructions on more flexible installation methods are coming soon.
 
-	conda create -f ops.yaml
-	conda create -f cp4.yaml
+	conda env create -f workflow/envs/ops.yaml
+	conda env create -f workflow/envs/cp4.yaml
 	conda activate ops
 
 ### Download testing dataset
