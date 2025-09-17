@@ -264,3 +264,18 @@ rule make_noisy_well:
             np.savetxt(output.positions[i], poses, delimiter=',', fmt='%d')
             tifffile.imwrite(output.images[i], images)
 
+rule make_noisy_cycle_well:
+    input:
+        noisy_cycle = input_dir + '{prefix}_noise{size}/cycle' + cycles_pt[0] + '/raw.tif',
+        images = expand(input_dir + '{prefix}/cycle{cycle}/raw.tif', cycle=cycles_pt[1:], allow_missing=True),
+        noisy_cycle_poses = input_dir + '{prefix}_noise{size}/cycle' + cycles_pt[0] + '/positions.csv',
+        positions = expand(input_dir + '{prefix}/cycle{cycle}/positions.csv', cycle=cycles_pt[1:], allow_missing=True),
+    output:
+        images = expand(input_dir + '{prefix}_cyclenoise{size}/cycle{cycle}/raw.tif', cycle=cycles_pt, allow_missing=True),
+        positions = expand(input_dir + '{prefix}_cyclenoise{size}/cycle{cycle}/positions.csv', cycle=cycles_pt, allow_missing=True),
+    resources:
+        mem_mb = 1000
+    run:
+        for src, dest in zip(input, output):
+            os.link(src, dest)
+

@@ -456,3 +456,141 @@ rule make_qc_read_plots:
             fig.savefig(path, dpi=300)
 
 
+rule score_alignment:
+    input:
+        image = stitching_output_dir + '{path}/raw{params}.tif',
+    output:
+        composite = qc_dir + '{path}/alignment_scores{params}_composite.json',
+        plot = qc_dir + '{path}/alignment_scores{params}.svg',
+    wildcard_constraints:
+        params = '|_ashlar[^_]+',#params_regex('channel', 'subpix', 'ashlar'),
+    threads: 4
+    params:
+        tile_size = 200,
+        #channel = config['stitching']['channel']
+    resources:
+        mem_mb = lambda wildcards, input: 5000 + input.size_mb / 3
+    run:
+        import constitch
+        import concurrent.futures
+        import tifffile
+        import numpy as np
+        import matplotlib.pyplot as plt
+
+        tile_size = params.tile_size
+        #channel = channel_index(params.channel)
+        channel = 1
+
+        image = tifffile.memmap(input.image, mode='r')[channel].copy()
+
+        executor = concurrent.futures.ThreadPoolExecutor(max_workers=threads*2)
+        composite = constitch.CompositeImage(executor=executor, debug=True, progress=True)
+
+        """
+        tiles_x = image[0].shape[0] // tile_size
+        tiles_y = image[0].shape[1] // tile_size
+        tile_poses = np.mgrid[:tiles_x,:tiles_y]
+        tile_poses = tile_poses.reshape(2, -1).T
+        num_tiles = len(tile_poses)
+
+        for i in range(len(image)):
+            print ('cycle', i)
+            grid_images = image[i][:tiles_x*tile_size,:tiles_y*tile_size]
+            grid_images = grid_images.reshape(tiles_x, tile_size, tiles_y, tile_size)
+            grid_images = [grid_images[pos[0],:,pos[1],:] for pos in tile_poses]
+            composite.add_images(grid_images, tile_poses, scale='tile')
+
+            #prev_len = len(composite.images)
+            #composite.add_split_image(image[i], tile_shape=(tile_size, tile_size), overlap=0)
+            #num_tiles = len(composite.images) - prev_len
+        """
+
+        poses = []
+        debug (image[0].shape[0], tile_size)
+        debug (image[0].shape[1], tile_size)
+        for x in range(0, image[0].shape[0] - tile_size, tile_size):
+            for y in range(0, image[0].shape[1] - tile_size, tile_size):
+                poses.append((x, y))
+
+        for i in range(len(image)):
+            debug ('cycle', i)
+            #prev_len = len(composite.images)
+            subcomposite = composite.layer(i)
+            images = []
+            for x, y in poses:
+                images.append(image[i][x:x+tile_size,y:y+tile_size])
+            subcomposite.add_images(images, poses)
+            #subcomposite.add_split_image(image[i], tile_shape=(tile_size, tile_size), overlap=0)
+            #num_tiles = len(composite.images) - prev_len
+
+        num_tiles = len(poses)
+
+        def grid_pos(constraint):
+            return np.all(np.round(constraint.box1.position / constraint.image1.shape).astype(int) % 5 == 0)
+
+        def constraint_filter(const):
+            return const.overlap_ratio >= 0.9 and not (np.all(const.image1 == 0) or np.all(const.image2 == 0))
+
+        print ('images', len(composite.images))
+        #"""
+        overlapping = constitch.ConstraintSet()
+        for cycle1 in range(len(image)):
+            for cycle2 in range(cycle1+1,len(image)):
+                #for i,j in zip(range(cycle1 * num_tiles, cycle1 * num_tiles + num_tiles), range(cycle2 * num_tiles, cycle2 * num_tiles + num_tiles)):
+                    #overlapping.add(constitch.Constraint(composite, index1=i, index2=j))
+                for i in range(num_tiles):
+                    overlapping.add(constitch.Constraint(composite, index1=cycle1 * num_tiles + i, index2=cycle2 * num_tiles + i))
+
+        #overlapping = composite.constraints(min_overlap_ratio=0.9)
+        #overlapping = composite.constraints(constraint_filter)
+        """
+        print ('images', len(composite.images))
+        new_images = []
+        new_boxes = []
+        for i in range(len(composite.images)):
+            if np.all(np.round(composite.boxes[i].position / tile_size).astype(int) % 3 == 0):
+                new_images.append(composite.images[i])
+                new_boxes.append(composite.boxes[i])
+
+        composite = constitch.CompositeImage(images=new_images, boxes=new_boxes, executor=executor, debug=True, progress=True)
+        #overlapping = composite.constraints(lambda const: const.overlap_ratio >= 0.9 and grid_pos(const))
+        overlapping = composite.constraints(min_overlap_ratio=0.9)
+        #"""
+
+        #print (np.array(poses))
+
+        print ('images', len(composite.images), 'consts', len(overlapping))
+        #constraints = overlapping.calculate(constitch.PCCAligner(upsample_factor=16))
+        constraints = overlapping.calculate(constitch.FFTAligner(upscale_factor=16))
+        #composite.plot_scores('tmp_scores.png', constraints)
+
+        constitch.save(output.composite, composite, constraints)
+
+        fig, axes = plt.subplots(nrows=3, figsize=(5, 15))
+
+        scores = np.linalg.norm([(const.dx, const.dy) for const in constraints], axis=1)
+        bins, values = np.histogram(scores, bins=10, range=(0, 10))
+        axes[0].bar((bins[:-1] + bins[1:]) / 2, values, width=1)
+        axes[0].axvline(1, ls='--', color='grey')
+
+        axes[0].text(2, 0, '{}%'.format(values[1:].sum() / values.sum() * 100))
+
+        #constraints = constraints.filter(min_score=0.8)
+        constraints = constraints.filter(lambda const: np.linalg.norm(const.difference) < 10)
+
+        scores = {}
+
+        for const in constraints:
+            score_list = scores.setdefault(tuple(const.box1.position[:2]), [])
+            score_list.append(np.sqrt(const.dx*const.dx + const.dy*const.dy))
+
+        poses = np.array(list(scores.keys()))
+        scores = np.array([np.mean(score_list) for score_list in scores.values()])
+
+
+        points = axes[2].scatter(poses[:,0], poses[:,1], c=scores)
+        fig.colorbar(points, ax=axes[2])
+
+        fig.savefig(output.plot)
+
+
