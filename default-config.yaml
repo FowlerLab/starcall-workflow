@@ -1,20 +1,190 @@
+###
+# Config file for the STARCall processing pipeline.
+# make a copy of this file and change any relevant parameters.
+###
+
+# Scale of objective used to image phenotyping and genotyping images.
+# The absolute value of each is not important, but the relative ratio
+# is used to scale up and down images. Both should be integers.
+phenotype_scale: 20
+bases_scale: 10
+
+# The channels imaged for sequencing and phenotyping images.
+# Channels for each base should be labeled as such so bases
+# are called properly. 
+sequencing_channels: ['DAPI', 'GFP', 'G', 'T', 'A', 'C']
+phenotyping_channels: ['DAPI', 'GFP', 'Ph+WGA', 'Mito']
+
+# Grid size for different processing steps. Input images are split
+# into an X by X grid, the processing is run, then resulting images are
+# merged back together.
+# This can be disabled by setting the size to 1 or not setting the variable
+segmentation_grid_size: 4
+sequencing_grid_size: 4
+phenotyping_grid_size: 12
+# Segmentation grid sizes can be further specified, this is really only useful if
+# you are running segmentation on the gpu and need very fine grain control
+#segmentation_cells_grid_size: 6
+#segmentation_nuclei_grid_size: 3
+
+stitching:
+    # The channel used to align images, can be an index or the string
+    # name of one of the channels above. If a string, it should be
+    # present in both sequencing and phenotyping channels, to align between them.
+    #channel: 0
+    channel: 'GFP'
+    # The amount of overlap in pixels between generated tiles. This should be
+    # larger than a cell, so that all cells are fully contained in at least one tile
+    overlap: 100
+    # The degree to which the stitching algorithm will align to sub pixel precision,
+    # so 16 would mean alignment is done to 1/16 of a pixel. This requires minimal extra
+    # processing, and improves alignment up to 16, past which improvements are not small.
+    # This can be disabled by not setting this or setting it to 1.
+    subpixel_alignment: 16
+    # Solving method for alignment. I have found 'mae' (Mean absolute error minimizing solver)
+    # to be the best in most situations. Other options are 'mse' (Mean squared error minimizing solver),
+    # 'spantree' (Spanning tree)
+    solver: 'mae'
+    # The limit on the number of pairwise alignments between cycles. Eg, if
+    # the limit is 5, cycle 0 would be aligned to cycle 4 but not cycle 5.
+    # This reduces the processing greatly when the number of cycles is large.
+    max_cycle_pairs: 16
+
+segmentation:
+    # Diameter passed to cellpose, in pixels of the phenotype images.
+    diameter: 100
+
+    # Channels used to run cellpose, can be indices or strings from the
+    # list of phenotype channels above. The first channel should be the nuclear
+    # channel and the second the cytoplasm channel
+    channels: ['DAPI', 'Ph+WGA']
+
+    # Whether the cell and nuclei masks should be linked together.
+    # Only necessary if you are going to use the nuclei masks, for example
+    # in phenotyping
+    match_masks: True
+
+    # Whether cell segmentation is run on background corrected images
+    # if both this and phenotyping.use_corrected are false, background correction
+    # will not be run
+    use_corrected: False
+
+dotdetection:
+    # Parameters for the LoG blob detection algorithm that detects dots.
+    # These values should work well for most images, but if dot detection is
+    # not working well, they can be adjusted
+    min_sigma: 1
+    max_sigma: 3
+    num_sigma: 7
+
+read_clustering:
+    # Parameters for clustering nearby reads into single reads of the same sequence
+    # Distances between reads are calculated with three values, positional distance, 
+    # cosine distance between their read values extracted from the sequencing images,
+    # and edit distance between their sequences.
+    # The current values for the paramters (99999, 0, 1 for weights, linkage max and threshold 0.5)
+    # simply combines all reads that have the same sequence. This system is still being
+    # tested, and experimentation with parameters is encouraged.
+    normalization: 'none'
+    positional_weight: 99999
+    value_weight: 0
+    sequence_weight: 1
+
+    # These distances are then clustered with agglomerative clustering, specified
+    # with linkage (min, mean, max) and threshold. More on agglomerative clustering
+    # can be found here
+    # https://scikit-learn.org/stable/modules/generated/sklearn.cluster.AgglomerativeClustering.html#sklearn.cluster.AgglomerativeClustering
+    linkage: 'max'
+    threshold: 0.5
+
+sequencing:
+    # The max number of reads kept for each cell. A good number for this is usually,
+    # 4-8, but this depends on how prevelant errors are and the size of the barcode library
+    max_reads: 4
+
+phenotyping:
+    # Whether cell segmentation is run on background corrected images
+    # if both this and sequencing.use_corrected are false, background correction
+    # will not be run
+    use_corrected: False
+
+
+# Directory that contains the raw .nd2 microscope files. It should
+# contain one subdirectory for each cycle, each with one nd2 file for each well.
+# If your files are not in nd2 format, they can be converted to tif files
+# and placed in the input directory, described below.
+# For example:
+#   rawinput/
+#   ├── 20231215_180258_893
+#   │   ├── Well1_ChannelDAPI,GFP,G,T,A,C_Seq0000.nd2
+#   │   │       ...
+#   │   └── Well6_ChannelDAPI,GFP,G,T,A,C_Seq0003.nd2
+#   │           ...
+#   ├── 20231219_001028_540
+#   │   ├── Well1_ChannelDAPI,GFP,G,T,A,C_Seq0000.nd2
+#   │   │       ...
+#   │   └── Well6_ChannelDAPI,GFP,G,T,A,C_Seq0003.nd2
+#   └── phenotype
+#       ├── Well1_Channel408 nm,473 nm,545 nm,635 nm_Seq0000.nd2
+#       │       ...
+#       └── Well6_Channel408 nm,473 nm,545 nm,635 nm_Seq0003.nd2
 rawinput_dir: 'rawinput/'
+
+# Directory that contains the input in .tif file form. If the data is
+# present in the rawinput dir, this will be automatically filled.
+# The directory should contain one subdirectory for each well, each
+# with a subdirectory for each cycle, containing 'raw.tif' with the unstitched
+# tile images and 'positions.csv' with the positions of each tile.
+# An additional subdirectory 'auxdata' can be provided containing a barcode
+# library.
+# For example:
+#    input/
+#    ├── auxdata
+#    │   └── barcodes.csv
+#    └── well1
+#        ├── cycle00
+#        │   ├── positions.csv
+#        │   └── raw.tif
+#        │      ...
+#        ├── cycle11
+#        │   ├── positions.csv
+#        │   └── raw.tif
+#        └── cyclePT
+#            ├── positions.csv
+#            └── raw.tif
+#       ...
 input_dir: 'input/'
-processing_dir: 'process/'
-plots_dir: 'plots/'
-log_dir: 'logs/'
 
-phenotype_date: 'phenotype'
-phenotype_cycle: 'PT'
-phenotype_scale: 2
+# Directory that contains all files generated when stitching unstitched
+# tiled image sets. If your input images are already stitched, you can
+# place them in this directory, following the pattern 'well{well}/raw.tif',
+# where the tiff file is of shape (num_cycles, num_channels, width, height)
+stitching_dir: 'stitching/'
 
+# Directory containing all files generated when performing cell segmentation
+segmentation_dir: 'segmentation/'
+
+# Directory that contains all files generated when sequencing the in situ
+# sequencing reads
+sequencing_dir: 'sequencing/'
+
+# Directory that contains all files generated when calculating features and
+# phenotyping cells
+phenotyping_dir: 'phenotyping/'
+
+# Folder for final output
+output_dir: 'output/'
+
+
+# If necessary the individual wells and cycles can be specified here, otherwise
+# they will be automatically determined by the folders in rawinput/ or input/.
 #wells: ['B2', 'C2']
-#cycles: ['00', '01', '02']
+#cycles: ['00', '01', '02', '03', '04', '05', '06', '07']
 
-cellpose_cyto_index: 2
-cellpose_diameter: 50
-#cellpose_cycle: '01'
+# The prefix for phenotyping cycles in rawinput/, all directories that begin
+# with this string such as phenotype/, phenotype2/, phenotype_20250225/
+# are all considered phenotyping cycles.
+phenotype_date: 'phenotype'
+# The cycle name for each phenotyping cycle, to be stored in input/ and such.
+phenotype_cycles: ['PT']
 
-alignment_channel: 0
-
-apply_background_correction: False

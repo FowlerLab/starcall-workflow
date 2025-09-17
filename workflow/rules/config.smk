@@ -1,64 +1,69 @@
+""" File handling configuration and setup for the snakemake pipeline
+
+The important parameters from the config file are read in, and
+the different wells and cycles are detected from rawinput/ or input.
+Helper functions and wildcard constraints are also declared here
+"""
+
 import os
 import sys
 import glob
 import time
 
-rawinput_dir = config.get('rawinput_dir', 'rawinput/')
-log_dir = config.get('log_dir', 'logs/')
 
+# Read in directories from config file
+rawinput_dir = config.get('rawinput_dir', 'rawinput/')
 input_dir = config.get('input_dir', 'input/')
 stitching_dir = config.get('stitching_dir', 'stitching/')
+segmentation_dir = config.get('segmentation_dir', 'segmentation/')
 sequencing_dir = config.get('sequencing_dir', 'sequencing/')
 phenotyping_dir = config.get('phenotyping_dir', 'phenotyping/')
 output_dir = config.get('output_dir', 'output/')
 qc_dir = config.get('qc_dir', output_dir + 'qc/')
 
-stitching_input_dir = stitching_dir + input_dir
-stitching_output_dir = stitching_dir + output_dir
-sequencing_input_dir = sequencing_dir + input_dir
-sequencing_output_dir = sequencing_dir + output_dir
-phenotyping_input_dir = phenotyping_dir + input_dir
-phenotyping_output_dir = phenotyping_dir + output_dir
-
+# The prefix used in rawinput/ for phenotype cycles
 phenotype_date = config.get('phenotype_date', 'phenotype')
 #phenotype_cycle = config.get('phenotype_cycle', 'PT')
-phenotype_scale = config.get('phenotype_scale', 2)
 
-dates = [] if not os.path.exists(rawinput_dir) else sorted(os.listdir(rawinput_dir))
-dates_pt = dates.copy()
+phenotype_scale = config['phenotype_scale']
+bases_scale = config['bases_scale']
 
-phenotype_dates = [date for date in dates if date[:len(phenotype_date)] == phenotype_date]
-if 'phenotype_cycles' not in config:
-    phenotype_cycles = ['PT', 'PT1', 'PT2', 'PT3', 'PT4'][:len(phenotype_dates)]
-else:
-    phenotype_cycles = config['phenotype_cycles']
+if os.path.exists(rawinput_dir):
+    dates = sorted(os.listdir(rawinput_dir))
+    dates_pt = dates.copy()
 
-if 'phenotype_channels' not in config:
-    if phenotype_date in dates:
-        import nd2
-        phenotype_file = nd2.ND2File(glob.glob(rawinput_dir + '/phenotype/*.nd2')[0])
-        phenotype_channels = phenotype_file.shape[1]
-        phenotype_file.close()
-        del phenotype_file
+    phenotype_dates = [date for date in dates if date[:len(phenotype_date)] == phenotype_date]
+    if 'phenotype_cycles' not in config:
+        phenotype_cycles = ['PT', 'PT1', 'PT2', 'PT3', 'PT4'][:len(phenotype_dates)]
     else:
-        phenotype_channels = 0
-else:
-    phenotype_channels = config['phenotype_channels']
+        phenotype_cycles = config['phenotype_cycles']
 
-if 'wells' not in config:
-    #wells = sorted([path.replace('Well', '').partition('_')[0] for path in os.listdir(rawinput_dir + '/' + dates[0])])
-    wells = sorted(list(set([path.partition('Well')[2].partition('_')[0] for path in glob.glob(rawinput_dir + '/*/*.nd2')])))
-else:
-    wells = config['wells']
 
-for date in phenotype_dates:
-    if date in dates_pt:
-        dates.remove(date)
+    if 'wells' not in config:
+        #wells = sorted([path.replace('Well', '').partition('_')[0] for path in os.listdir(rawinput_dir + '/' + dates[0])])
+        wells = sorted(list(set([path.partition('Well')[2].partition('_')[0] for path in glob.glob(rawinput_dir + '/*/*.nd2')])))
+    else:
+        wells = config['wells']
 
-if 'cycles' not in config:
-    cycles = ['{:02}'.format(i) for i in range(len(dates))]
+    for date in phenotype_dates:
+        if date in dates_pt:
+            dates.remove(date)
+
+    if 'cycles' not in config:
+        cycles = ['{:02}'.format(i) for i in range(len(dates))]
+    else:
+        cycles = config['cycles']
+
 else:
-    cycles = config['cycles']
+    wells = [dirname.replace('well', '') for dirname in sorted(os.listdir(input_dir)) if dirname != 'auxdata']
+
+    cycles_pt = [dirname[5:] for dirname in sorted(os.listdir(input_dir + '/well' + wells[0]))]
+    cycles = [cycle for cycle in cycles_pt if cycle[0] != 'P']
+    phenotype_cycles = [cycle for cycle in cycles_pt if cycle[0] == 'P']
+
+    dates_pt = []#['date' + cycle for cycle in cycles_pt]
+    dates = []#['date' + cycle for cycle in cycles]
+    phenotype_dates = []
 
 cycles_pt = cycles + phenotype_cycles
 #cycles_pt = sorted(cycles_pt)
@@ -67,20 +72,40 @@ cellpose_cyto_index = config.get('cellpose_cyto_index', 1)
 cellpose_diameter = config.get('cellpose_diameter', 50)
 cellpose_cycle = config.get('cellpose_cycle', cycles[-1] if len(cycles) else None)
 
-apply_background_correction = config.get('apply_background_correction', False)
-
-if 'subset' in config:
-    tiles = tiles[::len(tiles)//10]
-
 wildcard_constraints:
-    well = '|'.join(wells),
+    well = '(well)?(' + '|'.join(wells) + ')(_subset\d+)?(_noise\d+)?(_section\d+)?',
+    well_stitching = '(well)?(' + '|'.join(wells) + ')(_subset\d+)?(_noise\d+)?',
+    well_nonoise = '(well)?(' + '|'.join(wells) + ')(_subset\d+)?',
+    well_nosubset = '(well)?(' + '|'.join(wells) + ')',
+    well_base = '(well)?(' + '|'.join(wells) + ')',
+
     tile = '\d\d\d\d',
     cycle = '|'.join(cycles_pt),
-    any_input_dir = '|'.join([input_dir, stitching_input_dir, sequencing_input_dir, phenotyping_input_dir]),
-    any_output_dir = '|'.join([output_dir, stitching_output_dir, sequencing_output_dir, phenotyping_output_dir]),
-    any_processing_dir = '|'.join([stitching_dir, sequencing_dir, phenotyping_dir]),
-    filetype = '(\.[^/]+)|(/cycle(' + '|'.join(cycles_pt) + '))|',
-    prefix = '(?!' + input_dir + ')(?!' + output_dir + ')([^/]*/)*[^/.]*',
+
+    path = '([^/]*/)*[^/.]*',
+    path_nogrid = '((?!_grid\d)[^.])*',
+
+    segmentation_type = 'cells|nuclei|cellsbases|nucleibases',
+
+# Regex for use with wildcard constraints
+phenotyping_channel_regex = '(' + '|'.join('{}|{}'.format(i, re.escape(name))
+            for i, name in enumerate(config['phenotyping_channels'])) + ')'
+sequencing_channel_regex = '(' + '|'.join('{}|{}'.format(i, name)
+            for i, name in enumerate(config['sequencing_channels'])) + ')'
+# only matches channels in both sequencing and phenotyping
+any_channel_regex = ('(' + '|'.join(map(str, range(min(len(config['sequencing_channels']), len(config['sequencing_channels'])))))
+    + '|' + '|'.join(map(re.escape, set(config['sequencing_channels']) & set(config['phenotyping_channels']))) + ')')
+
+assert all(let in config['sequencing_channels'] for let in 'GTAC')
+
+# slice that will extract all sequencing channels from sequencing images
+sequencing_channels_slice = [config['sequencing_channels'].index(let) for let in 'GTAC']
+if max(sequencing_channels_slice) - min(sequencing_channels_slice) == 3:
+    sequencing_channels_slice = slice(min(sequencing_channels_slice), max(sequencing_channels_slice) + 1)
+
+# order of sequencing channels
+sequencing_channels_order = [chan for chan in config['sequencing_channels'] if chan in 'GTAC']
+
 
 def debug(*args, **kwargs):
     print (time.asctime() + ':', *args, **kwargs, file=sys.stderr)
@@ -96,6 +121,32 @@ def print_mem(name, mem_limit):
     mem = psutil.Process().memory_info().rss / 1000000
     debug ("Rule", name, "Limit", mem_limit, starcall.utils.human_readable(mem_limit * 1000000),
                     "Using", mem, starcall.utils.human_readable(mem * 1000000))
+
+def parse_param(name, default_value):
+    def func(wildcards):
+        val = getattr(wildcards, name)
+        if val == '':
+            return default_value
+        val = val[len(name)+1:]
+        try: return int(val)
+        except: pass
+        try: return float(val)
+        except: pass
+        return val
+    return func
+
+def param_constraint(name, pattern):
+    return '(_' + name + '(' + pattern + '))?'
+
+def params_regex(*params):
+    return '(' + ''.join('(_{}[^_]+)?'.format(name) for name in params) + ')'
+
+def channel_index(channel, kind=None, cycle=None):
+    if kind is None and cycle is not None:
+        kind = 'phenotyping' if cycle in phenotype_cycles else 'sequencing'
+    if type(channel) == str:
+        return config[kind+'_channels'].index(channel)
+    return channel
 
 def coredump():
     if os.fork() == 0:

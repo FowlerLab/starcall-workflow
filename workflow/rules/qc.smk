@@ -9,11 +9,11 @@ import time
 
 rule make_qc_read_plots:
     input:
-        full_table = sequencing_output_dir + '{prefix}/{segmentation_type}_reads.csv',
+        full_table = sequencing_dir + '{path}/{segmentation_type}_reads.csv',
         barcodes = get_aux_data,
     output:
-        plot = qc_dir + '{prefix}/{segmentation_type}_reads.svg',
-        plots = [qc_dir + '{prefix}/{segmentation_type}_reads_plot' + str(i) + '.svg' for i in range(16)],
+        plot = qc_dir + '{path}/{segmentation_type}_reads.svg',
+        plots = [qc_dir + '{path}/{segmentation_type}_reads_plot' + str(i) + '.svg' for i in range(16)],
     resources:
         mem_mb = lambda wildcards, input: 5000 + input.size_mb * 10
     run:
@@ -28,7 +28,10 @@ rule make_qc_read_plots:
         #12 for ticks, 14 for labels, important to be consistent
 
         read_table = pandas.read_csv(input.full_table, index_col=0)
-        num_cycles = len(read_table['read_0'].iloc[0])
+        for tmp_read in read_table['read_0']:
+            if type(tmp_read) == str: break
+        num_cycles = len(tmp_read)
+        #num_cycles = len(read_table['read_0'].iloc[0])
         library_paths = [path for path in input.barcodes if path.count('barcodes.csv')]
         has_library = len(library_paths) != 0
         if has_library:
@@ -83,9 +86,9 @@ rule make_qc_read_plots:
 
             for i,let in enumerate('GTAC'):
                 if has_library:
-                    axes[0,0].plot(np.mean(barcode_mat == let, axis=0), '--C' + str(i))
+                    axes[0,0].plot(np.mean(barcode_mat == let, axis=0), '--', color='mbgr'[i])
                     debug ('axis.plot({}, "--C{}", label="{}")'.format(np.mean(barcode_mat == let, axis=0).tolist(), i, let))
-                axes[0,0].plot(np.mean(read_mat == let, axis=0), '-C' + str(i), label=let)
+                axes[0,0].plot(np.mean(read_mat == let, axis=0), '-', color='mbgr'[i], label=let)
                 debug ('axis.plot({}, "-C{}", label="{}")'.format(np.mean(read_mat == let, axis=0).tolist(), i, let))
 
             #axes[0,0].set_title('Nucleotide frequencies' + ('\n(dashed is library)' if has_library else ''))
@@ -93,7 +96,7 @@ rule make_qc_read_plots:
             axes[0,0].set_xlabel('Cycle')
             axes[0,0].set_ylim(ymin=0)
             axes[0,0].legend(loc='upper left')
-            #if 'blainey' in wildcards.prefix:
+            #if 'blainey' in wildcards.path:
                 #axes[0,0].set_title('Image set 1.1: Feldman method')
             #else:
                 #axes[0,0].set_title('Image set 1.1: STARCall')
@@ -110,7 +113,7 @@ rule make_qc_read_plots:
             axes[0,1].set_ylabel('Count')
             axes[0,1].set_xlabel('Total read count per cell' if double_barcode else 'Read count per cell') # total read count for double barcode
             axes[0,1].ticklabel_format(axis='y', style='sci', scilimits=(0,0))
-            if 'blainey' in wildcards.prefix:
+            if 'blainey' in wildcards.path:
                 axes[0,1].set_title('Image set 2.1: Feldman method')
             else:
                 axes[0,1].set_title('Image set 2.1: STARCall')
@@ -135,7 +138,8 @@ rule make_qc_read_plots:
                 #debug (labels)
                 #none_vals = values[0]
                 total_count = values.sum()
-                #labels = ['None'] + list(map(str, labels))
+                if -1 in labels:
+                    labels = ['None'] + list(map(str, labels[1:]))
                 #values = [0] + list(values)
                 labels = list(map(str, labels))
                 values = list(values)
@@ -149,7 +153,8 @@ rule make_qc_read_plots:
                 values = list(values)
                 #labels = ['None'] + list(map(str, labels))
                 #values = [total_not_included] + list(values)
-                axes[0,3].bar(labels, values, width=1, label='sing.')
+                axes[0,3].bar(labels, values, width=1, label='single')
+                axes[0,3].set_title('{:.4f}% of cells mapped to a barcode'.format(sum(values) / len(read_table.index) * 100))
 
                 #plotting all reads that were removed in the none bar
                 #axes[0,3].bar(['None'], [total_not_included], width=1)
@@ -163,6 +168,8 @@ rule make_qc_read_plots:
                 matched_barcs = []
                 for i in read_table.index:
                     matched_index = read_table.loc[i,'matched_read_index_0']
+                    debug (read_table['matched_read_index_0'])
+                    debug ('matched_index', i, matched_index)
                     if matched_index != -1:
                         matched_reads.append(read_table.loc[i,'read_{}'.format(matched_index)])
                         matched_barcs.append((read_table.loc[i,'matched_barcode_0'] + '????????????')[:num_cycles])
@@ -186,13 +193,15 @@ rule make_qc_read_plots:
                 axes[1,2].set_title('Errors by library nucleotide')
                 axes[1,3].set_title('Errors by library nucleotide to read nucleotide')
 
-                for let in 'GTAC':
-                    axes[1,1].plot(np.sum((matched_reads != matched_barcs) & (matched_reads == let), axis=0), label=let)
-                    axes[1,2].plot(np.sum((matched_reads != matched_barcs) & (matched_barcs == let), axis=0), label=let)
-                    for let2 in 'GTAC':
+                for i, let in enumerate('GTAC'):
+                    axes[1,1].plot(np.sum((matched_reads != matched_barcs) & (matched_reads == let), axis=0), label=let, color='mbgr'[i])
+                    axes[1,2].plot(np.sum((matched_reads != matched_barcs) & (matched_barcs == let), axis=0), label=let, color='mbgr'[i])
+                    for j, let2 in enumerate('GTAC'):
                         axes[1,3].plot(np.sum((matched_reads != matched_barcs)
-                                & (matched_barcs == let) & (matched_reads == let2), axis=0),
-                                label=let + '->' + let2)
+                                & (matched_barcs == let) & (matched_reads == let2), axis=0), ls='-', color='mbgr'[i])
+                        axes[1,3].plot(np.sum((matched_reads != matched_barcs)
+                                & (matched_barcs == let) & (matched_reads == let2), axis=0), ls=':', color='mbgr'[j])
+                                #label=let + '->' + let2)
 
                 axes[1,0].set_ylim(ymin=0)
                 axes[1,1].set_ylim(ymin=0)

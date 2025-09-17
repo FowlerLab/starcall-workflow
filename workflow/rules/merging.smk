@@ -2,15 +2,6 @@ import os
 import glob
 
 
-def get_grid_filenames_pheno(wildcards):
-    grid_size = int(wildcards.grid_size)
-    numbers = ['{:02}'.format(i) for i in range(grid_size)]
-    return expand(phenotyping_dir + '{possible_output_dir}{prefix}_phenogrid{grid_size}/tile{x}x{y}y/{type}.csv', x=numbers, y=numbers, allow_missing=True)
-
-def get_composite_pheno(wildcards):
-    prefix = wildcards.prefix.split('_seqgrid')[0] + '_seqgrid{grid_size}'
-    return stitching_output_dir + prefix + '/grid_composite.json'
-
 def merge_csv_files(input_paths, output_path, extra_columns=tuple(), row_func=None):
     import csv
 
@@ -39,79 +30,24 @@ def merge_csv_files(input_paths, output_path, extra_columns=tuple(), row_func=No
                 writer.writerow(row)
 
 
-def get_other_tables(wildcards):
-    return [phenotyping_output_dir + '{prefix}/' + name + '.csv' for name in wildcards.phenotype_tables.split('.')]
-
-rule merge_tables_phenotype:
-    input:
-        cell_table = phenotyping_input_dir + '{prefix}/cells.csv',
-        other_tables = get_other_tables,
-    output:
-        table = phenotyping_output_dir + '{prefix}/{phenotype_tables}.cells_phenotype.csv',
-    resources:
-        mem_mb = lambda wildcards, input: input.size_mb * 2 + 10000
-    run:
-        import pandas
-
-        cell_table = pandas.read_csv(input.cell_table, index_col=0)
-        index = cell_table.index
-        #cell_table = cell_table.reset_index(drop=True)
-        #table = pandas.concat([cell_table] + [pandas.read_csv(path).iloc[:len(cell_table.index),:] for path in input.other_tables], axis=1)
-        table = pandas.concat([pandas.read_csv(path).iloc[:len(cell_table.index),:] for path in input.other_tables], axis=1)
-        table = table.set_index(index[:len(table)])
-        table.to_csv(output.table)
-
-
-rule merge_grid_pheno_tables:
-    input:
-        tables = get_grid_filenames_pheno,
-        composite = get_composite_pheno,
-    output:
-        table = phenotyping_dir + '{possible_output_dir}{prefix}_phenogrid{grid_size,\d+}/{type,[^/]*}.csv',
-    resources:
-        #mem_mb = lambda wildcards, input: input.size_mb * 50 + 5000
-        mem_mb = 5000
-    wildcard_constraints:
-        possible_output_dir = '(' + output_dir + ')|',
-    run:
-        import constitch
-
-        composite = constitch.load(input.composite)
-
-        def row_func(row):
-            i = row['file_index']
-            box = composite.boxes[i]
-            row['tile_index'] = i
-            row['tile_x'] = i // int(wildcards.grid_size)
-            row['tile_y'] = i % int(wildcards.grid_size)
-            #row['xpos'] = float(row['xpos']) + box.position[0]
-            #row['ypos'] = float(row['ypos']) + box.position[1]
-            #row['bbox_x1'] = int(row['bbox_x1']) + box.position[0]
-            #row['bbox_x2'] = int(row['bbox_x2']) + box.position[0]
-            #row['bbox_y1'] = int(row['bbox_y1']) + box.position[1]
-            #row['bbox_y2'] = int(row['bbox_y2']) + box.position[1]
-
-        merge_csv_files(input.tables, output.table, extra_columns=['tile_x', 'tile_y', 'tile_index'], row_func=row_func)
-
 #ruleorder: merge_tables_phenotype > merge_grid_pheno_tables
 
 def find_phenotype_table(wildcards):
     if wildcards.phenotype_type == '':
         return []
-    return [phenotyping_output_dir + '{prefix}{possible_phenogrid}/{phenotype_type}cells_phenotype.csv']
+    return [phenotyping_dir + '{well}{possible_grid}/{phenotype_type}cells_phenotype.csv']
 
 rule merge_phenotype_genotype:
     input:
-        cell_table = sequencing_output_dir + '{prefix}/cells.csv',
-        reads = sequencing_output_dir + '{prefix}/cells_reads.csv',
+        cell_table = segmentation_dir + '{well}{possible_grid}/cells.csv',
+        reads = sequencing_dir + '{well}{possible_grid}/cells_reads.csv',
         phenotype_tables = find_phenotype_table,
     output:
-        table = output_dir + '{prefix}{possible_phenogrid}.{phenotype_type}cells_full.csv'
+        table = output_dir + '{well}{possible_grid}.{phenotype_type}cells_full.csv'
     resources:
         mem_mb = lambda wildcards, input: input.size_mb * 5 + 10000
     wildcard_constraints:
-        prefix = '((?!_phenogrid)[^.])*',
-        possible_phenogrid = '(_phenogrid\d+)|',
+        possible_grid = '(_grid)?',
         phenotype_type = '[^/]*',
     run:
         import pandas
@@ -120,7 +56,12 @@ rule merge_phenotype_genotype:
         #table = pandas.concat(tables, axis=1)
         table = pandas.read_csv(input[0], index_col=0)
         for path in input[1:]:
-            table = table.join(pandas.read_csv(path, index_col=0))
+            cur_table = pandas.read_csv(path, index_col=0)
+            if 'file_index' in cur_table.columns:
+                cur_table = cur_table.drop(columns='file_index')
+            if 'file_path' in cur_table.columns:
+                cur_table = cur_table.drop(columns='file_path')
+            table = table.join(cur_table)
         table.to_csv(output.table)
 
 rule merge_all_well_tables:
