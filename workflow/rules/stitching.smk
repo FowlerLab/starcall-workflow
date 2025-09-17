@@ -42,7 +42,8 @@ rule calc_background:
         import tifffile
         #import starcall.correction
 
-        from pybasic.shading_correction import BaSiC
+        #from pybasic.shading_correction import BaSiC
+        from basicpy import BaSiC
 
         images = tifffile.memmap(input[0], mode='r')
         images_shape = images.shape
