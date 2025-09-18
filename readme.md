@@ -17,7 +17,7 @@ we get both packages.
 	git clone https://github.com/FowlerLab/starcall-workflow.git
 	cd starcall-workflow
 
-The packages needed for STARCall are listed in ops.yaml and cp4.yaml, and can be installed with conda.
+The packages needed for STARCall are listed in ops.yaml and can be installed with conda.
 Currently conda is needed to install the dependencies of cellprofiler and other packages.
 
 	conda env create -f workflow/envs/ops.yaml
@@ -27,11 +27,11 @@ Currently conda is needed to install the dependencies of cellprofiler and other 
 
 Once cloned, we can download the testing dataset. Although this is a very small subset of the image
 data, it still will take up ~10GB of storage once extracted. In total, downloading, extracting, 
-and running the pipeline will require ~20GB of data.
+and running the pipeline will require ~25GB of storage.
 
 	wget https://visseq.gs.washington.edu/static/LMNA_T3_testing_image_set.tar.gz
 	tar -xf LMNA_T3_testing_image_set.tar.gz
-	# This will extract input/ cellprof_pipeline_lmna_071025.cppipe
+	# This will extract input/, cellprof_pipeline_lmna_071025.cppipe, and example_output/
 
 ### Run pipeline
 
@@ -63,13 +63,13 @@ When it finishes, the output of the pipeline should be in output,
 `output/well1_subset3_grid.cellprofiler_071025.cells_full.csv`.
 An example of the
 output is contained in the testing set that was downloaded as
-`expected_output/well1_subset3_grid.cellprofiler_071025.cells_full.csv`.
+`example_output/well1_subset3_grid.cellprofiler_071025.cells_full.csv`.
 Comparing the reads in the generated table to the reads in this output
 is a good way to make sure the pipeline is running as expected.
 
 In addition to the output the pipeline can generate summary plots, obtained getting
 snakemake to generate the file `output/well1_subset3_grid/cells_reads.svg` the same
-way as with the output table. These plots are also included in `expected_output/`,
+way as with the output table. These plots are also included in `example_output/`,
 and comparing these plots can make sure the pipeline ran properly. More information
 on the specific plots can be found further down.
 
