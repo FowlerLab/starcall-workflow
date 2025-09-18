@@ -17,11 +17,32 @@ we get both packages.
 	git clone https://github.com/FowlerLab/starcall-workflow.git
 	cd starcall-workflow
 
-The packages needed for STARCall are listed in ops.yaml and can be installed with conda.
-Currently conda is needed to install the dependencies of cellprofiler and other packages.
+The base packages needed for STARCall are listed in requirements.txt and can be installed
+with pip. It is recommended to create a conda environment or venv to contain the packages
+and dependencies.
 
-	conda env create -f workflow/envs/ops.yaml
+	conda create -n ops python==3.10
 	conda activate ops
+	# another alternative (may not work well with snakemake)
+	# python3 -m venv ops
+	# source ops/bin/activate
+
+	pip3 install -r requirements.txt
+
+### Installing cellprofiler
+
+If you are looking to use CellProfiler for the phenotyping of cells, you will need to install
+it separately, as it's dependencies can't only be installed with pip. At the cellprofiler
+website <https://cellprofiler.org> there are downloads to install on most machines. If you
+are installing it on a cluster environment, you can use conda to install the dependencies.
+An environment is specified in workflow/envs/cp4.yaml, but the most up to date version
+can be found at <https://github.com/CellProfiler/CellProfiler/wiki/Conda-Installation>.
+If you install cellprofiler using conda into a different environment than the one the pipeline
+is running in, make sure you set the parameter `phenotyping.cellprofiler_executable` to point
+to the proper executable.
+
+Running the test example does not require cellprofiler, but if you plan to use it later it
+can be a good way to test and make sure that it is working.
 
 ### Download testing dataset
 

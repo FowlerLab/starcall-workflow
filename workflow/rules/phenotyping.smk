@@ -156,6 +156,8 @@ rule run_cellprofiler:
         #data = phenotyping_dir + '{path}/cellprofiler_{pipeline,[^./]+}.csv',
         #mark = phenotyping_dir + '{path}/cellprofiler/{pipeline,[^./]+}/mark',
         cell_file = phenotyping_dir + '{path}/cellprofiler/{pipeline}/Cells.csv'
+    params:
+        cellprofiler_executable = config['phenotyping'].get('cellprofiler_executable', 'cellprofiler'),
     resources:
         mem_mb = lambda wildcards, input, attempt: input.size_mb * 150 + 55000 #+ (attempt - 1) * 200000
     threads: 2
@@ -164,7 +166,7 @@ rule run_cellprofiler:
         #'../envs/cellprofiler.yaml'
     #retries: 2
     shell:
-        'cellprofiler -c -r -p {input.pipeline} -i ' + phenotyping_dir + '{wildcards.path}/cellprofiler -o ' + phenotyping_dir + '{wildcards.path}/cellprofiler/{wildcards.pipeline}'
+        '{params.cellprofiler_executable} -c -r -p {input.pipeline} -i ' + phenotyping_dir + '{wildcards.path}/cellprofiler -o ' + phenotyping_dir + '{wildcards.path}/cellprofiler/{wildcards.pipeline}'
         # This command will ignore error from cellprofiler, sometimes necessary if there is a bug:
         #'cellprofiler -c -r -p {input.pipeline} -i ' + phenotyping_dir + '{wildcards.path}/cellprofiler -o ' + phenotyping_dir + '{wildcards.path}/cellprofiler/{wildcards.pipeline} || (test $? = 1 -o $? = 137 && echo \'""\' > {output.cell_file} )'
         #'~/miniconda3/envs/cp4/bin/cellprofiler -c -r -p {input.pipeline} -i ' + phenotyping_dir + '{wildcards.path}/cellprofiler -o ' + phenotyping_dir + '{wildcards.path}/cellprofiler/{wildcards.pipeline}'
