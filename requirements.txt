@@ -2,6 +2,7 @@ scikit-image>=0.18
 scikit-learn>=1
 numpy>=1
 cellpose==2.2.1
+tensorflow==2.13.0
 stardist==0.8.5
 matplotlib>=3
 tifffile
