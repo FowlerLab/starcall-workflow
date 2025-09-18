@@ -37,13 +37,13 @@ rule calc_features:
 
         features = {}
 
-        for index, cell in starcall.utils.simple_progress(list(cell_table.iterrows())):
-            x1, y1 = cell.bbox_x1, cell.bbox_y1
-            x2, y2 = cell.bbox_x2, cell.bbox_y2
-            cell_mask = cells[x1:x2,y1:y2] == index
-            nucleus_mask = nuclei[x1:x2,y1:y2] == index
+        for i, (cell_index, cell) in enumerate(starcall.utils.simple_progress(list(cell_table.iterrows()))):
+            x1, y1 = int(cell.bbox_x1), int(cell.bbox_y1) + 1
+            x2, y2 = int(cell.bbox_x2), int(cell.bbox_y2) + 1
+            cell_mask = cells[x1:x2,y1:y2] == i + 1
+            nucleus_mask = nuclei[x1:x2,y1:y2] == i + 1
             image_section = image[:,x1:x2,y1:y2]
-            props = all_props[index]
+            props = all_props[i+1]
 
             for prop in props:
                 if type(props[prop]) in (float, int):

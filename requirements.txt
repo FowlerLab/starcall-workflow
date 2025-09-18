@@ -1,9 +1,9 @@
 scikit-image>=0.18
 scikit-learn>=1
-numpy
+numpy>=1
 cellpose==2.2.1
 stardist==0.8.5
-matplotlib
+matplotlib>=3
 tifffile
 pulp==2.7.0
 snakemake>=7
