@@ -1,4 +1,4 @@
-name: ops2
+name: ops
 
 channels:
 - conda-forge
@@ -12,29 +12,33 @@ dependencies:
 - numpy
 - matplotlib
 - pandas
+- sqlite
+- mysql-common
+- mysql-connector-c
+- mysql-libs
 - mysqlclient
 - openjdk
 - scikit-learn
 - mahotas
 - gtk2
-- Jinja2=3.0.1
-- inflect=5.3.0
-- wxpython=4.1.0
-- mysqlclient=1.4.4
-- sentry-sdk=0.18.0
+- Jinja2
+- inflect
+- wxpython
+- mysqlclient
+- sentry-sdk
 - pip:
-    - cellprofiler==4.2.4
+    - cellprofiler>=4
     - tensorflow
     - cellpose
     - stardist
     - scikit-image
-    - scikit-learn
+    - scikit-learn>=1
     - tifffile
     - matplotlib
     - pulp==2.7.0
     - snakemake>=7
-    - nd2==0.7.1
+    - nd2
     - nd2reader
-    - pandas
+    - pandas==1.5.3
     - ome-types
-    - pybasic-illumination-correction
+    - basicpy

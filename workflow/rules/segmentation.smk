@@ -80,6 +80,8 @@ rule segment_cells:
         nuclearchannel = channel_index(params.nuclearchannel, kind='phenotyping')
         cytochannel = channel_index(params.cytochannel, kind='phenotyping')
 
+        use_gpu = hasattr(resources, 'cuda') and resources.cuda == 1
+
         if type(nuclearchannel) == str:
             nuclearchannel = config['phenotyping_channels'].index(nuclearchannel)
 
@@ -108,7 +110,7 @@ rule segment_cells:
             cells = starcall.segmentation.segment_cyto_cellpose(
                 cyto, dapi,
                 diameter = params.diameter,
-                gpu = resources.cuda==1,
+                gpu = use_gpu,
             )
 
             debug ('Found', cells.max(), 'cells')
@@ -143,6 +145,8 @@ rule segment_cells_bases:
         diameter = params.diameter
         nuclearchannel = channel_index(params.nuclearchannel, kind='sequencing')
 
+        use_gpu = hasattr(resources, 'cuda') and resources.cuda == 1
+
         full_well = tifffile.memmap(input[0], mode='r')
         data = full_well[cycles.index(cellpose_cycle)].astype(np.float32)
 
@@ -159,7 +163,7 @@ rule segment_cells_bases:
             cells = starcall.segmentation.segment_cyto_cellpose(
                 cyto, dapi,
                 diameter = config['segmentation']['diameter'] * bases_scale // phenotype_scale,
-                gpu=resources.cuda==1,
+                gpu=use_gpu,
             )
 
             debug(f'found {cells.max()} cells ')

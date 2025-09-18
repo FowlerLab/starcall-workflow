@@ -1,8 +1,8 @@
-# VISSEQ data pipeline: Starcall
+# STARCall: Stitching Alignment And Read CALLing for in situ sequencing experiments
 
 This repository is a full data pipeline for the analysis of FISSEQ (Flourescent in-situ sequencing) data.
-This readme will give an overview of the pipeline and how to run it, for more information there is documentation
-for the starcall python package
+This readme will give an overview of the pipeline and how to run it, for more information the api reference
+for the starcall python package is available at <https://fowlerlab.github.io/starcall-docs/starcall.html>
 
 ## Quick start
 
@@ -17,26 +17,42 @@ we get both packages.
 	git clone https://github.com/FowlerLab/starcall-workflow.git
 	cd starcall-workflow
 
-The packages needed for STARCall are listed in ops.yaml and cp4.yaml, and can be installed with conda.
-Currently conda is needed to install the dependencies of cellprofiler and other packages. Because
-the python versions needed for cellprofiler and other packages differ, they are installed in different environments.
+The base packages needed for STARCall are listed in requirements.txt and can be installed
+with pip. It is recommended to create a conda environment or venv to contain the packages
+and dependencies.
 
-Currently these fully define all packages and versions in the environments, which ensures the pipeline
-will work at the expense of being unwieldy. Instructions on more flexible installation methods are coming soon.
-
-	conda env create -f workflow/envs/ops.yaml
-	conda env create -f workflow/envs/cp4.yaml
+	conda create -n ops python==3.10
 	conda activate ops
+	# another alternative (may not work well with snakemake)
+	# python3 -m venv ops
+	# source ops/bin/activate
+
+	pip3 install -r requirements.txt
+
+### Installing cellprofiler
+
+If you are looking to use CellProfiler for the phenotyping of cells, you will need to install
+it separately, as it's dependencies can't only be installed with pip. At the cellprofiler
+website <https://cellprofiler.org> there are downloads to install on most machines. If you
+are installing it on a cluster environment, you can use conda to install the dependencies.
+An environment is specified in workflow/envs/cp4.yaml, but the most up to date version
+can be found at <https://github.com/CellProfiler/CellProfiler/wiki/Conda-Installation>.
+If you install cellprofiler using conda into a different environment than the one the pipeline
+is running in, make sure you set the parameter `phenotyping.cellprofiler_executable` to point
+to the proper executable.
+
+Running the test example does not require cellprofiler, but if you plan to use it later it
+can be a good way to test and make sure that it is working.
 
 ### Download testing dataset
 
 Once cloned, we can download the testing dataset. Although this is a very small subset of the image
 data, it still will take up ~10GB of storage once extracted. In total, downloading, extracting, 
-and running the pipeline will require ~20GB of data.
+and running the pipeline will require ~25GB of storage.
 
-	wget https://visseq.gs.washington.edu/data_download/LMNA_T3_testing_image_set.tar.gz
+	wget https://visseq.gs.washington.edu/static/LMNA_T3_testing_image_set.tar.gz
 	tar -xf LMNA_T3_testing_image_set.tar.gz
-	# This will extract input/ and cellprof_pipeline_lmna_071025.cppipe
+	# This will extract input/, cellprof_pipeline_lmna_071025.cppipe, and example_output/
 
 ### Run pipeline
 
@@ -68,13 +84,13 @@ When it finishes, the output of the pipeline should be in output,
 `output/well1_subset3_grid.cellprofiler_071025.cells_full.csv`.
 An example of the
 output is contained in the testing set that was downloaded as
-`expected_output/well1_subset3_grid.cellprofiler_071025.cells_full.csv`.
+`example_output/well1_subset3_grid.cellprofiler_071025.cells_full.csv`.
 Comparing the reads in the generated table to the reads in this output
 is a good way to make sure the pipeline is running as expected.
 
 In addition to the output the pipeline can generate summary plots, obtained getting
 snakemake to generate the file `output/well1_subset3_grid/cells_reads.svg` the same
-way as with the output table. These plots are also included in `expected_output/`,
+way as with the output table. These plots are also included in `example_output/`,
 and comparing these plots can make sure the pipeline ran properly. More information
 on the specific plots can be found further down.
 
