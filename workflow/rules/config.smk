@@ -29,6 +29,7 @@ phenotype_scale = config['phenotype_scale']
 bases_scale = config['bases_scale']
 
 if os.path.exists(rawinput_dir):
+    print ('rawinput')
     dates = sorted(os.listdir(rawinput_dir))
     dates_pt = dates.copy()
 
@@ -43,6 +44,7 @@ if os.path.exists(rawinput_dir):
         #wells = sorted([path.replace('Well', '').partition('_')[0] for path in os.listdir(rawinput_dir + '/' + dates[0])])
         wells = sorted(list(set([path.partition('Well')[2].partition('_')[0] for path in glob.glob(rawinput_dir + '/*/*.nd2')])))
     else:
+        print (config['wells'])
         wells = config['wells']
 
     for date in phenotype_dates:
@@ -55,15 +57,31 @@ if os.path.exists(rawinput_dir):
         cycles = config['cycles']
 
 else:
-    wells = [dirname.replace('well', '') for dirname in sorted(os.listdir(input_dir)) if dirname != 'auxdata']
+    if 'wells' not in config:
+        wells = [dirname.replace('well', '') for dirname in sorted(os.listdir(input_dir)) if dirname != 'auxdata']
 
-    cycles_pt = [dirname[5:] for dirname in sorted(os.listdir(input_dir + '/well' + wells[0]))]
-    cycles = [cycle for cycle in cycles_pt if cycle[0] != 'P']
-    phenotype_cycles = [cycle for cycle in cycles_pt if cycle[0] == 'P']
+        for i in range(len(wells)):
+            well = wells[i]
+            well = well.split('_section')[0]
+            well = well.split('_cyclenoise')[0].split('_noise')[0]
+            well = well.split('_subset')[0]
+            wells[i] = well
 
-    dates_pt = []#['date' + cycle for cycle in cycles_pt]
-    dates = []#['date' + cycle for cycle in cycles]
-    phenotype_dates = []
+        wells = list(set(wells))
+    else:
+        wells = config['wells']
+
+    if 'cycles' not in config:
+        cycles_pt = [dirname[5:] for dirname in sorted(os.listdir(input_dir + '/well' + wells[0]))]
+        cycles = [cycle for cycle in cycles_pt if cycle[0] != 'P']
+        phenotype_cycles = [cycle for cycle in cycles_pt if cycle[0] == 'P']
+
+        dates_pt = []#['date' + cycle for cycle in cycles_pt]
+        dates = []#['date' + cycle for cycle in cycles]
+        phenotype_dates = []
+    else:
+        cycles = config['cycles']
+        phenotype_cycles = config['phenotype_cycles']
 
 cycles_pt = cycles + phenotype_cycles
 #cycles_pt = sorted(cycles_pt)
@@ -73,8 +91,8 @@ cellpose_diameter = config.get('cellpose_diameter', 50)
 cellpose_cycle = config.get('cellpose_cycle', cycles[-1] if len(cycles) else None)
 
 wildcard_constraints:
-    well = '(well)?(' + '|'.join(wells) + ')(_subset\d+)?(_noise\d+)?(_section\d+)?',
-    well_stitching = '(well)?(' + '|'.join(wells) + ')(_subset\d+)?(_noise\d+)?',
+    well = '(well)?(' + '|'.join(wells) + ')(_subset\d+)?(_(cycle|)noise\d+)?(_section\d+)?',
+    well_stitching = '(well)?(' + '|'.join(wells) + ')(_subset\d+)?(_(cycle|)noise\d+)?',
     well_nonoise = '(well)?(' + '|'.join(wells) + ')(_subset\d+)?',
     well_nosubset = '(well)?(' + '|'.join(wells) + ')',
     well_base = '(well)?(' + '|'.join(wells) + ')',

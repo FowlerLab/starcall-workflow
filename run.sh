@@ -23,11 +23,11 @@ cuda='$(test "{resources.cuda}" -eq 1 && echo -l cuda=1)'
 cluster_cmd="qsub -v PATH -terse -l mfree=${mem_arg}M -l h_rt=48:0:0 -l h=fl004 -o $out_path -e $err_path $cuda -pe serial {threads}"
 
 configfile=
-if test -f config.yaml; then
-    configfile='--configfile  config.yaml'
-fi
 if test -f default-config.yaml; then
     configfile='--configfile  default-config.yaml'
+fi
+if test -f config.yaml; then
+    configfile='--configfile  config.yaml'
 fi
 
 snakemake \

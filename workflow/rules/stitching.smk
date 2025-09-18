@@ -223,6 +223,7 @@ rule stitch_cycle:
             traceback.print_exc()
             raise
 
+print (wells)
 
 rule stitch_well:
     """ Stitches the whole well together with all sequencing cycles.
@@ -513,13 +514,40 @@ rule stitch_tile_well_pt:
 
 rule stitch_well_ashlar:
     input:
-        images = lambda wildcards: [get_nd2filename(well=wildcards.well, cycle=cycle) for cycle in cycles]
+        #images = lambda wildcards: [get_nd2filename(well=wildcards.well_stitching, cycle=cycle) for cycle in cycles]
+        images = expand(input_dir + '{well_stitching}/cycle{cycle}/raw.tif', cycle=cycles, allow_missing=True),
+        positions = expand(input_dir + '{well_stitching}/cycle{cycle}/positions.csv', cycle=cycles, allow_missing=True),
     output:
         image = stitching_dir + '{well_stitching}/raw_ashlar.ome.tif',
     resources:
         mem_mb = 16000
-    conda:
-        'stitching'
-    shell:
-        'ashlar {input.images} -o {output.image} -c 1 --flip-x --flip-y -m 500'
+    run:
+        import tifffile
+        import numpy as np
+
+        outpath = output.image + '_tmp_dirs/'
+        #flags = '--flip-x --flip-y -m 500'
+        flags = '-m 1000'
+
+        for cycle, (image_path, poses_path) in enumerate(zip(input.images, input.positions)):
+            print ('writing cycle', cycle)
+            images = tifffile.imread(image_path)
+            poses = np.loadtxt(poses_path, delimiter=',', dtype=int)
+
+            os.makedirs(outpath + 'cycle{:02}/'.format(cycle), exist_ok=True)
+
+            for i in range(images.shape[0]):
+                chan = 1
+                path = outpath + 'cycle{:02}/chan{}_row{:03}_col{:03}.tif'.format(cycle, chan, poses[i,0], poses[i,1])
+                tifffile.imwrite(path, images[i,chan])
+
+            del images
+
+        filepattern = ' '.join("'filepattern|{}cycle{:02}/|pattern=chan1_row{{row:03}}_col{{col:03}}.tif|overlap=0.15'".format(
+                    outpath, i) for i in range(len(input.images)))
+        command = '/net/fowler/vol1/home/nbradley/miniconda3/envs/stitching/bin/ashlar {} -o {} {}'.format(
+                filepattern, output.image, flags)
+        debug(command)
+
+        os.system(command)
 
