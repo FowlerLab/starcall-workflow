@@ -12,6 +12,10 @@ dependencies:
 - numpy
 - matplotlib
 - pandas
+- sqlite
+- mysql-common
+- mysql-connector-c
+- mysql-libs
 - mysqlclient
 - openjdk
 - scikit-learn
