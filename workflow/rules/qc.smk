@@ -467,18 +467,19 @@ rule make_qc_read_plots:
 
 rule score_alignment:
     input:
-        image = stitching_output_dir + '{path}/raw{params}.tif',
+        image = stitching_dir + '{path}/raw{params}.tif',
     output:
         composite = qc_dir + '{path}/alignment_scores{params}_composite.json',
-        plot = qc_dir + '{path}/alignment_scores{params}.svg',
+        #plot = qc_dir + '{path}/alignment_scores{params}.svg',
     wildcard_constraints:
-        params = '|_ashlar[^_]+',#params_regex('channel', 'subpix', 'ashlar'),
+        params = params_regex('channel', 'subpix', 'ashlar'),
     threads: 4
     params:
         tile_size = 200,
         #channel = config['stitching']['channel']
     resources:
-        mem_mb = lambda wildcards, input: 5000 + input.size_mb / 3
+        #mem_mb = lambda wildcards, input: 5000 + input.size_mb / 3
+        mem_mb = 64000
     run:
         import constitch
         import concurrent.futures
@@ -490,7 +491,12 @@ rule score_alignment:
         #channel = channel_index(params.channel)
         channel = 1
 
-        image = tifffile.memmap(input.image, mode='r')[channel].copy()
+        try:
+            image = tifffile.memmap(input.image, mode='r')[:,channel].copy()
+        except ValueError:
+            image = tifffile.imread(input.image)
+            if image.ndim == 4:
+                image = image[:,channel].copy()
 
         executor = concurrent.futures.ThreadPoolExecutor(max_workers=threads*2)
         composite = constitch.CompositeImage(executor=executor, debug=True, progress=True)
@@ -575,6 +581,7 @@ rule score_alignment:
 
         constitch.save(output.composite, composite, constraints)
 
+        """
         fig, axes = plt.subplots(nrows=3, figsize=(5, 15))
 
         scores = np.linalg.norm([(const.dx, const.dy) for const in constraints], axis=1)
@@ -601,5 +608,6 @@ rule score_alignment:
         fig.colorbar(points, ax=axes[2])
 
         fig.savefig(output.plot)
+        """
 
 
