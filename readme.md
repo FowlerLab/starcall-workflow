@@ -3,6 +3,7 @@
 This repository is a full data pipeline for the analysis of FISSEQ (Flourescent in-situ sequencing) data.
 This readme will give an overview of the pipeline and how to run it, for more information the api reference
 for the starcall python package is available at <https://fowlerlab.github.io/starcall-docs/starcall.html>
+and the constitch python package is available at <https://fowlerlab.github.io/starcall-docs/constitch.html>
 
 ## Quick start
 
