@@ -63,7 +63,7 @@ is killed for using too much ram it may be necessary to reduce it.
 If you are on a cluster environment, the command can be modified
 as shown below:
 
-	snakemake --configfile default-config.yaml output/well1_subset3_grid.features.cells_full.csv --cores 4
+	snakemake output/well1_subset3_grid.features.cells_full.csv --cores 4
 
 For a cluster with qsub/qdel a shell script is provided
 
@@ -71,7 +71,7 @@ For a cluster with qsub/qdel a shell script is provided
 
 For slurm clusters snakemake has a built-in flag
 
-	snakemake --slurm --configfile default-config.yaml output/well1_subset3_grid.features.cells_full.csv --cores 4
+	snakemake --slurm output/well1_subset3_grid.features.cells_full.csv --cores 4
 
 It may take a couple hours to run, depending on the machine you are running on.
 Cell segmentation can especially take a long time if you don't have a gpu
@@ -80,7 +80,7 @@ are currently running.
 
 If you did install CellProfiler, the pipeline included in the test dataset can be run with this command instead:
 
-	snakemake --configfile default-config.yaml output/well1_subset3_grid.cellprofiler_071025.cells_full.csv --cores 4
+	snakemake output/well1_subset3_grid.cellprofiler_071025.cells_full.csv --cores 4
 
 ### Expected output
 

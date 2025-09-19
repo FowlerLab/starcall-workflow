@@ -1,7 +1,12 @@
 """ Main Snakefile for VISSEQ pipeline
 """
+import os
 
 ### setup report ###
+if os.path.exists('config.yaml'):
+    configfile: 'config.yaml'
+elif os.path.exists('default-config.yaml'):
+    configfile: 'default-config.yaml'
 #configfile: "config/config.yaml"
 
 #report: "report/workflow.rst"

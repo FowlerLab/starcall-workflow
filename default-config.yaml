@@ -54,6 +54,11 @@ segmentation:
     # Diameter passed to cellpose, in pixels of the phenotype images.
     diameter: 100
 
+    # Method to segment nuclei. Can be 'otsu_threshold' or 'stardist'
+    nuclei_method: 'stardist'
+    # Method to segment cells. Can be 'cellpose' or 'stardist'
+    cells_method: 'cellpose'
+
     # Channels used to run cellpose, can be indices or strings from the
     # list of phenotype channels above. The first channel should be the nuclear
     # channel and the second the cytoplasm channel

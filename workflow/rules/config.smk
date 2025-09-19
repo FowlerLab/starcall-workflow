@@ -58,7 +58,7 @@ if os.path.exists(rawinput_dir):
 
 else:
     if 'wells' not in config:
-        wells = [dirname.replace('well', '') for dirname in sorted(os.listdir(input_dir)) if dirname != 'auxdata']
+        wells = [dirname for dirname in sorted(os.listdir(input_dir)) if dirname != 'auxdata']
 
         for i in range(len(wells)):
             well = wells[i]
@@ -72,9 +72,13 @@ else:
         wells = config['wells']
 
     if 'cycles' not in config:
-        cycles_pt = [dirname[5:] for dirname in sorted(os.listdir(input_dir + '/well' + wells[0]))]
+        first_well = glob.glob(input_dir + wells[0] + '*/')[0]
+        print (first_well)
+        cycles_pt = [dirname[5:] for dirname in sorted(os.listdir(first_well))]
+        print (cycles_pt)
         cycles = [cycle for cycle in cycles_pt if cycle[0] != 'P']
         phenotype_cycles = [cycle for cycle in cycles_pt if cycle[0] == 'P']
+        print (cycles, phenotype_cycles)
 
         dates_pt = []#['date' + cycle for cycle in cycles_pt]
         dates = []#['date' + cycle for cycle in cycles]
@@ -83,7 +87,9 @@ else:
         cycles = config['cycles']
         phenotype_cycles = config['phenotype_cycles']
 
+print (cycles_pt)
 cycles_pt = cycles + phenotype_cycles
+print (cycles_pt)
 #cycles_pt = sorted(cycles_pt)
 
 cellpose_cyto_index = config.get('cellpose_cyto_index', 1)
@@ -91,11 +97,11 @@ cellpose_diameter = config.get('cellpose_diameter', 50)
 cellpose_cycle = config.get('cellpose_cycle', cycles[-1] if len(cycles) else None)
 
 wildcard_constraints:
-    well = '(well)?(' + '|'.join(wells) + ')(_subset\d+)?(_(cycle|)noise\d+)?(_section\d+)?',
-    well_stitching = '(well)?(' + '|'.join(wells) + ')(_subset\d+)?(_(cycle|)noise\d+)?',
-    well_nonoise = '(well)?(' + '|'.join(wells) + ')(_subset\d+)?',
-    well_nosubset = '(well)?(' + '|'.join(wells) + ')',
-    well_base = '(well)?(' + '|'.join(wells) + ')',
+    well = '(' + '|'.join(wells) + ')(_subset\d+)?(_(cycle|)noise\d+)?(_section\d+)?',
+    well_stitching = '(' + '|'.join(wells) + ')(_subset\d+)?(_(cycle|)noise\d+)?',
+    well_nonoise = '(' + '|'.join(wells) + ')(_subset\d+)?',
+    well_nosubset = '(' + '|'.join(wells) + ')',
+    well_base = '(' + '|'.join(wells) + ')',
 
     tile = '\d\d\d\d',
     cycle = '|'.join(cycles_pt),

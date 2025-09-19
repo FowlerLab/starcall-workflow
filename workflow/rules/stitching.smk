@@ -27,13 +27,13 @@ rule calc_background:
     https://github.com/marrlab/BaSiC
     """
     input:
-        lambda wildcards: expand(input_dir + 'well{well_stitching}/cycle{cycle}/raw.tif',
+        lambda wildcards: expand(input_dir + '{well_stitching}/cycle{cycle}/raw.tif',
                 well_stitching=wells, cycle=phenotype_cycles if wildcards.ispt == '_pt' else cycles),
-        #expand(input_dir + 'well{well_stitching}/cycle{cycle}/raw.tif', cycle=cycles_pt, allow_missing=True),
-        #input_dir + 'well{well_stitching}/cycle{cycle}/raw.tif',
+        #expand(input_dir + '{well_stitching}/cycle{cycle}/raw.tif', cycle=cycles_pt, allow_missing=True),
+        #input_dir + '{well_stitching}/cycle{cycle}/raw.tif',
     output:
         background = stitching_dir + 'background{ispt,_pt|}.tif',
-        #background = stitching_dir + 'well{well_stitching}/background.tif',
+        #background = stitching_dir + '{well_stitching}/background.tif',
     resources:
         mem_mb = lambda wildcards, input: input.size_mb + 5000
         #mem_mb = 1000000
