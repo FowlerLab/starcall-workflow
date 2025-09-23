@@ -472,7 +472,7 @@ rule score_alignment:
         composite = qc_dir + '{path}/alignment_scores{params}_composite.json',
         #plot = qc_dir + '{path}/alignment_scores{params}.svg',
     wildcard_constraints:
-        params = params_regex('channel', 'subpix', 'ashlar'),
+        params = params_regex('channel', 'subpix', 'sigma', 'ashlar'),
     threads: 4
     params:
         tile_size = 200,

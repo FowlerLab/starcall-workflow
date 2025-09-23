@@ -116,6 +116,7 @@ rule calc_background:
 rule correct_background:
     """ Uses the background levels estimated by BaSiC to correct the background
     of a set of image tiles
+    Only used if use_corrected is true in config.yaml
     """
     input:
         images = input_dir + '{well_stitching}/cycle{cycle}/raw.tif',
@@ -518,7 +519,11 @@ rule stitch_well_ashlar:
         images = expand(input_dir + '{well_stitching}/cycle{cycle}/raw.tif', cycle=cycles, allow_missing=True),
         positions = expand(input_dir + '{well_stitching}/cycle{cycle}/positions.csv', cycle=cycles, allow_missing=True),
     output:
-        image = stitching_dir + '{well_stitching}/raw_ashlar.ome.tif',
+        image = stitching_dir + '{well_stitching}/raw{sigma}_ashlar.ome.tif',
+    params:
+        sigma = parse_param('sigma', 0),
+    wildcard_constraints:
+        sigma = '|_sigma\d+(.\d+)?',
     resources:
         mem_mb = 16000
     run:
@@ -528,6 +533,9 @@ rule stitch_well_ashlar:
         outpath = output.image + '_tmp_dirs/'
         #flags = '--flip-x --flip-y -m 500'
         flags = '-m 1000'
+
+        if params.sigma != 0:
+            flags += ' --filter-sigma {}'.format(params.sigma)
 
         for cycle, (image_path, poses_path) in enumerate(zip(input.images, input.positions)):
             print ('writing cycle', cycle)
