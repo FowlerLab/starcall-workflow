@@ -9,6 +9,8 @@ import os
 import sys
 import glob
 import time
+import matplotlib
+matplotlib.use('agg')
 
 
 # Read in directories from config file
@@ -29,7 +31,6 @@ phenotype_scale = config['phenotype_scale']
 bases_scale = config['bases_scale']
 
 if os.path.exists(rawinput_dir):
-    print ('rawinput')
     dates = sorted(os.listdir(rawinput_dir))
     dates_pt = dates.copy()
 
@@ -42,9 +43,9 @@ if os.path.exists(rawinput_dir):
 
     if 'wells' not in config:
         #wells = sorted([path.replace('Well', '').partition('_')[0] for path in os.listdir(rawinput_dir + '/' + dates[0])])
-        wells = sorted(list(set([path.partition('Well')[2].partition('_')[0] for path in glob.glob(rawinput_dir + '/*/*.nd2')])))
+        wells = sorted(list(set([os.path.basename(path).partition('_')[0] for path in glob.glob(rawinput_dir + '/*/*.nd2')])))
+        wells = [well[0].replace('W', 'w') + well[1:] for well in wells]
     else:
-        print (config['wells'])
         wells = config['wells']
 
     for date in phenotype_dates:
@@ -58,7 +59,7 @@ if os.path.exists(rawinput_dir):
 
 else:
     if 'wells' not in config:
-        wells = [dirname.replace('well', '') for dirname in sorted(os.listdir(input_dir)) if dirname != 'auxdata']
+        wells = [dirname for dirname in sorted(os.listdir(input_dir)) if dirname != 'auxdata']
 
         for i in range(len(wells)):
             well = wells[i]
@@ -72,7 +73,8 @@ else:
         wells = config['wells']
 
     if 'cycles' not in config:
-        cycles_pt = [dirname[5:] for dirname in sorted(os.listdir(input_dir + '/well' + wells[0]))]
+        first_well = glob.glob(input_dir + wells[0] + '*/')[0]
+        cycles_pt = [dirname[5:] for dirname in sorted(os.listdir(first_well))]
         cycles = [cycle for cycle in cycles_pt if cycle[0] != 'P']
         phenotype_cycles = [cycle for cycle in cycles_pt if cycle[0] == 'P']
 
@@ -91,11 +93,11 @@ cellpose_diameter = config.get('cellpose_diameter', 50)
 cellpose_cycle = config.get('cellpose_cycle', cycles[-1] if len(cycles) else None)
 
 wildcard_constraints:
-    well = '(well)?(' + '|'.join(wells) + ')(_subset\d+)?(_(cycle|)noise\d+)?(_section\d+)?',
-    well_stitching = '(well)?(' + '|'.join(wells) + ')(_subset\d+)?(_(cycle|)noise\d+)?',
-    well_nonoise = '(well)?(' + '|'.join(wells) + ')(_subset\d+)?',
-    well_nosubset = '(well)?(' + '|'.join(wells) + ')',
-    well_base = '(well)?(' + '|'.join(wells) + ')',
+    well = '(' + '|'.join(wells) + ')(_subset\d+)?(_(cycle|)noise\d+)?(_section\d+)?',
+    well_stitching = '(' + '|'.join(wells) + ')(_subset\d+)?(_(cycle|)noise\d+)?',
+    well_nonoise = '(' + '|'.join(wells) + ')(_subset\d+)?',
+    well_nosubset = '(' + '|'.join(wells) + ')',
+    well_base = '(' + '|'.join(wells) + ')',
 
     tile = '\d\d\d\d',
     cycle = '|'.join(cycles_pt),

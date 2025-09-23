@@ -24,7 +24,8 @@ rule segment_nuclei:
     output:
         segmentation_dir + '{path_nogrid}/nuclei{nuclearchannel}_mask_unmatched.tif',
     params:
-        nuclearchannel = parse_param('nuclearchannel', config['segmentation']['channels'][0])
+        nuclearchannel = parse_param('nuclearchannel', config['segmentation']['channels'][0]),
+        method = config['segmentation']['nuclei_method'],
     wildcard_constraints:
         nuclearchannel = '|_nuclearchannel' + phenotyping_channel_regex,
     resources:
@@ -48,7 +49,7 @@ rule segment_nuclei:
             tifffile.imwrite(output[0], data[0])
         else:
             del data
-            nuclei = starcall.segmentation.segment_nuclei(dapi)
+            nuclei = starcall.segmentation.segment_nuclei(dapi, method=params.method)
             debug ('Found', nuclei.max(), 'nuclei')
             tifffile.imwrite(output[0], nuclei)
 
@@ -72,6 +73,7 @@ rule segment_cells:
         diameter = parse_param('diameter', config['segmentation']['diameter']),
         nuclearchannel = parse_param('nuclearchannel', config['segmentation']['channels'][0]),
         cytochannel = parse_param('cytochannel', config['segmentation']['channels'][1]),
+        method = config['segmentation']['cells_method'],
     wildcard_constraints:
         diameter = '|_diameter\d+',
         nuclearchannel = '|_nuclearchannel' + phenotyping_channel_regex,
@@ -114,8 +116,9 @@ rule segment_cells:
             del data
             #del full_well
 
-            cells = starcall.segmentation.segment_cyto_cellpose(
+            cells = starcall.segmentation.segment_cells(
                 cyto, dapi,
+                method = params.method,
                 diameter = params.diameter,
                 gpu = use_gpu,
             )
@@ -136,7 +139,8 @@ rule segment_cells_bases:
         segmentation_dir + '{path_nogrid}/cellsbases{diameter}{nuclearchannel}_mask_unmatched.tif',
     params:
         diameter = parse_param('diameter', config['segmentation']['diameter']),
-        nuclearchannel = parse_param('nuclearchannel', config['segmentation']['channels'][0])
+        nuclearchannel = parse_param('nuclearchannel', config['segmentation']['channels'][0]),
+        method = config['segmentation']['cells_method'],
     wildcard_constraints:
         diameter = '|_diameter\d+',
         nuclearchannel = '|_nuclearchannel' + sequencing_channel_regex,
@@ -167,8 +171,9 @@ rule segment_cells_bases:
             del data
             del full_well
 
-            cells = starcall.segmentation.segment_cyto_cellpose(
+            cells = starcall.segmentation.segment_cells(
                 cyto, dapi,
+                method = params.method,
                 diameter = config['segmentation']['diameter'] * bases_scale // phenotype_scale,
                 gpu=use_gpu,
             )

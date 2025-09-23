@@ -3,6 +3,7 @@
 This repository is a full data pipeline for the analysis of FISSEQ (Flourescent in-situ sequencing) data.
 This readme will give an overview of the pipeline and how to run it, for more information the api reference
 for the starcall python package is available at <https://fowlerlab.github.io/starcall-docs/starcall.html>
+and the constitch python package is available at <https://fowlerlab.github.io/starcall-docs/constitch.html>
 
 ## Quick start
 
@@ -63,28 +64,32 @@ is killed for using too much ram it may be necessary to reduce it.
 If you are on a cluster environment, the command can be modified
 as shown below:
 
-	snakemake --configfile default-config.yaml output/well1_subset3_grid.cellprofiler_071025.cells_full.csv --cores 4
+	snakemake output/well1_subset3_grid.features.cells_full.csv --cores 4
 
 For a cluster with qsub/qdel a shell script is provided
 
-	./run.sh output/well1_subset3_grid.cellprofiler_071025.cells_full.csv --jobs 4
+	./run.sh output/well1_subset3_grid.features.cells_full.csv --jobs 4
 
 For slurm clusters snakemake has a built-in flag
 
-	snakemake --slurm --configfile default-config.yaml output/well1_subset3_grid.cellprofiler_071025.cells_full.csv --cores 4
+	snakemake --slurm output/well1_subset3_grid.features.cells_full.csv --cores 4
 
 It may take a couple hours to run, depending on the machine you are running on.
 Cell segmentation can especially take a long time if you don't have a gpu
 available. While snakemake is running, it will print out what jobs
 are currently running.
 
+If you did install CellProfiler, the pipeline included in the test dataset can be run with this command instead:
+
+	snakemake output/well1_subset3_grid.cellprofiler_071025.cells_full.csv --cores 4
+
 ### Expected output
 
 When it finishes, the output of the pipeline should be in output,
-`output/well1_subset3_grid.cellprofiler_071025.cells_full.csv`.
+`output/well1_subset3_grid.features.cells_full.csv`.
 An example of the
 output is contained in the testing set that was downloaded as
-`example_output/well1_subset3_grid.cellprofiler_071025.cells_full.csv`.
+`example_output/well1_subset3_grid.features.cells_full.csv`.
 Comparing the reads in the generated table to the reads in this output
 is a good way to make sure the pipeline is running as expected.
 
