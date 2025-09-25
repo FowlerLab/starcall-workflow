@@ -4,6 +4,31 @@ import re
 
 
 rule find_dots:
+    """ Detect amplicon colonies in the sequencing images.
+    This is a crutial step in sequencing the barcodes expressed in cells, and has
+    a couple steps:
+        First, background and cell debris is filtered with a difference of gaussian filter,
+        Then, differing intensities of sequencing channels are corrected by z-score normalizing
+            each channel and cycle
+        Then dots are highlighted by subtracting the second maximal channel from all channels on
+            a per-pixel basis, and all cycles are combined by taking the standard deviation across
+            cycles, again on a per-pixel basis.
+        This greyscale image is given to the laplacian of gaussian blob detection algorith
+            (https://scikit-image.org/docs/stable/api/skimage.feature.html#skimage.feature.blob_log)
+            with the parameters min, max, num, specifying the gaussian sigmas to search over
+        This results in an x,y position for each detected colony. We extract read values from this position,
+            and save these values to the output csv file.
+
+    Params:
+        min, max, mean: The range of gaussian sigmas to search for colonies. 1-3 should capture most colonies.
+
+    Output:
+        The output is a csv file containing the columns:
+            position_x, position_y: The pixel position of the colony
+            values_cycle00_G, values_cycle00_T, ...:
+                The values extracted from the sequencing images at the colony position,
+                for each cycle and channel.
+    """
     input:
         stitching_dir + '{path}/raw.tif'
     output:
@@ -36,7 +61,7 @@ rule find_dots:
         del full_well
 
         if np.all(image == 0):
-            reads = ReadSet()
+            reads = pandas.DataFrame()
         else:
             #dot_filter = starcall.dotdetection.dot_filter_new(image)
             #tifffile.imwrite(output[1], dot_filter)
@@ -52,6 +77,16 @@ rule find_dots:
         reads.to_csv(output[0])
 
 rule call_raw_reads:
+    """ Convert the amplicon colonies and values detected in rule find_dots into reads,
+    and assign each to a cell.
+
+    Output: The output is a csv file containing the columns:
+            position_x, position_y: The pixel position of the colony
+            values_cycle00_G, values_cycle00_T, ...:
+                The values extracted from the sequencing images at the colony position,
+                for each cycle and channel.
+            cell: The cell that each read is contained in, 0 if not in a cell.
+    """
     input:
         bases = sequencing_dir + '{path}/bases{params}.csv',
         cells = segmentation_dir + '{path}/{segmentation_type}_mask_downscaled.tif',
@@ -86,6 +121,21 @@ rule call_raw_reads:
 
 
 rule calculate_distance_matrix:
+    """ Calculates a distance matrix between nearby reads, used to combine reads of
+    the same sequence. The distance between reads is calculated as a summation of three factors:
+        The positional distance, the euclidean distance between the two reads, except
+            distance in the same cell is not counted. So two reads in the same cell have
+            positional distance of zero.
+        The cosine distance between the sequencing values for each read,
+        The edit distance between the two sequences.
+    Each has a corresponding weight, specified by the parameters posweight, valweight, seqweight, 
+    specified in config.yaml or in the output filename. The default weights of 99999, 0, 1 means
+    that only reads in the same cell are combined, and only differences in sequence are recorded.
+    Combined with the default threshold for clustering of 0.5, only reads with the same sequence in
+    the same cell will be combined.
+
+    Output: A csv file storing the distance matrix in sparse format.
+    """
     input:
         bases = sequencing_dir + '{path}/bases{params}.csv',
         cells = segmentation_dir + '{path}/{segmentation_type}_mask_downscaled.tif',
@@ -140,6 +190,10 @@ rule calculate_distance_matrix:
 
 
 rule cluster_reads:
+    """ Uses the distance matrix calculated in rule calculate_distance_matrix to cluster similar
+    reads. The clustering method used is agglomerative clustering, which starts with every read in
+    its own cluster and combines clusters, maintaining a combined distance of the cluster below the threshold.
+    """
     input:
         distances = sequencing_dir + '{path}/{segmentation_type}_reads_distance_matrix{params}.csv'
     output:
@@ -182,6 +236,11 @@ rule cluster_reads:
 
 
 rule combine_reads:
+    """ Combines reads based on the clusters calculated in the previous rule.
+    The new read position of a cluster of reads is the mean of all positions. The
+    sequencing values are summed together, and a new column 'count' is added to record
+    the number of individual reads in each read cluster
+    """
     input:
         raw_reads = sequencing_dir + '{path}/{segmentation_type}_raw_reads{params_dots}.csv',
         clusters = sequencing_dir + '{path}/{segmentation_type}_reads_clusters{params_cluster}.csv',
@@ -213,6 +272,10 @@ rule combine_reads:
 
 
 rule combine_cell_reads:
+    """ Reads in each cell are combined to select consensus reads for each cell.
+    All reads in each cell are sorted by the read count, and the top n are kept, n
+    being the parameter max_reads.
+    """
     input:
         table = sequencing_dir + '{path}/{segmentation_type}_clustered_reads{params}.csv',
         cell_table = segmentation_dir + '{path}/{segmentation_type}.csv',

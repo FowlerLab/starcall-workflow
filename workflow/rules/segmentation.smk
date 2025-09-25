@@ -55,6 +55,13 @@ rule segment_nuclei:
 
 
 rule segment_cells:
+    """ Segments phenotype images to find cell boundaries, used to group reads and calculate cell phenotype features.
+    Takes two channels as input, a nuclear channel and a cytoplasm channel.
+
+    Params:
+        nuclearchannel, cytochannel: The phenotyping channels to perform segmentation on, should be
+            an integer index or one of the phenotyping channels specified in config.yaml
+    """
     input:
         get_segmentation_pt,
     output:
@@ -213,6 +220,9 @@ rule segment_nuclei_bases:
 
 
 rule downscale_segmentation:
+    """ Rescales cell segmentation to match the scale of the sequencing images. The
+    scale ratio is specified in config.yaml, with phenotype_scale and sequencing_scale.
+    """
     input:
         segmentation_dir + '{path_nogrid}/{segmentation_type}_mask.tif',
     output:
@@ -230,6 +240,10 @@ rule downscale_segmentation:
 
 
 rule make_cell_overlay:
+    """ Overlays the cell segmentation boundaries onto the phenotyping images used to
+    create the segmentation. Useful to make sure segmentation is working well and to
+    test different parameters, such as the diameter provided to cellpose.
+    """
     input:
         image = get_segmentation_pt,
         cells = segmentation_dir + '{path_nogrid}/{segmentation_type}_mask{params}.tif',
@@ -269,6 +283,10 @@ rule make_cell_overlay:
 
 if config['segmentation'].get('match_masks', False):
     rule match_masks:
+        """ Links cells and nuclei segmented previously, by matching overlapping
+        cells/nuclei and choosing the pair with the highest overlap. Cells with no
+        nuclei and nuclei with no cells are discarded.
+        """
         input:
             cells = segmentation_dir + '{path_nogrid}/cells_mask_unmatched.tif',
             nuclei = segmentation_dir + '{path_nogrid}/nuclei_mask_unmatched.tif',
@@ -303,6 +321,12 @@ else:
 
 
 rule make_cell_images:
+    """ Create small crops of each cell segmented, useful if the cell images are being provided
+    to an image embedding network or similar procedure. The images are cropped to a set size, specified
+    in the output filename, with the centroid of the cell in the center of the image. The output
+    tifffile has shape (num_cells, num_channels, window_size, window_size). In addition the cell masks
+    are cropped and saved as boolean masks with shape (num_cells, 2 (cell and nuclear), window_size, window_size)
+    """
     input:
         #image = stitching_dir + '{path}/cycle' + phenotype_cycle + '.tif',
         image = get_segmentation_pt,
@@ -355,6 +379,8 @@ rule make_cell_images:
 
 
 rule tabulate_cells:
+    """ Simple information is recorded about the segmented cells, such as position, bbox.
+    """
     input:
         cells = segmentation_dir + '{path_nogrid}/{segmentation_type}_mask.tif',
     output:
@@ -400,6 +426,12 @@ def get_grid_filenames(wildcards):
     return expand(segmentation_dir + '{well}_cellgrid{grid_size}/tile{x}x{y}y/{segmentation_type}_mask_unmatched.tif', x=numbers, y=numbers, allow_missing=True)
 
 rule merge_grid_segmentation:
+    """ If cell segmentation was run on a grid of tiles, the segmentations must be merged together.
+    For each cell mask in an overlapping region between tiles, a possible match is found based on overlap.
+    If one mask overlaps the other to a high degree (>75%) the masks are merged into one. This process
+    is somewhat error prone, so it is encouraged to keep the tiles used for cell segmentation large, so
+    not many cells have to be merged.
+    """
     input:
         images = get_grid_filenames,
         composite = stitching_dir + '{well}_grid{grid_size}/grid_composite.json',
@@ -456,6 +488,12 @@ ruleorder: link_merged_grid > segment_nuclei
 
 
 rule split_grid_table:
+    """ Splits the cell info table into a tile in a grid, for use in later steps such as sequencing
+    or phenotyping. Cells are matched to the tile closest to their centroid, ensuring no cells
+    are included in two tiles. The overlap between tiles, specified in config.yaml, should be
+    large enough that nearly all cells are contained in at least one tile. If enough cells are not
+    contained in any tile (>20%) this step will fail and the overlap should be increased.
+    """
     input:
         table = segmentation_dir + '{well}_grid/cells.csv',
         composite = stitching_dir + '{well}_grid{grid_size}/grid_composite.json',
@@ -531,6 +569,11 @@ rule split_grid_table:
 
 
 rule split_grid_segmentation:
+    """ Splits the segmentation masks into a smaller tile in a grid. Using the cell assignments made
+    in the rule split_grid_table, only cells in the cell info table are copied into the segmentation mask
+    for this tile. This ensures cells are not duplicated between tiles. As explained, overlap between
+    tiles should be large enough that nearly all cells are fully contained in the tile they are assigned to.
+    """
     input:
         image = segmentation_dir + '{well}_grid/{segmentation_type}.tif',
         composite = stitching_dir + '{well}_grid{grid_size}/grid_composite.json',
