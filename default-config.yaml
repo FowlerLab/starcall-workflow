@@ -115,8 +115,8 @@ phenotyping:
 
     # The executable to run to invoke cellprofiler. If cellprofiler is installed
     # in a different conda environment, this should reflect that.
-    #cellprofiler_executable: 'cellprofiler'
-    cellprofiler_executable: '~/miniconda3/envs/cp4/bin/cellprofiler'
+    cellprofiler_executable: 'cellprofiler'
+    #cellprofiler_executable: '~/miniconda3/envs/cp4/bin/cellprofiler'
 
 
 # Directory that contains the raw .nd2 microscope files. It should
