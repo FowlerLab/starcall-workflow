@@ -45,7 +45,10 @@ if os.path.exists(rawinput_dir):
 
     if 'wells' not in config:
         #wells = sorted([path.replace('Well', '').partition('_')[0] for path in os.listdir(rawinput_dir + '/' + dates[0])])
-        wells = sorted(list(set([os.path.basename(path).partition('_')[0] for path in glob.glob(rawinput_dir + '/*/*.nd2')])))
+        wells = [os.path.basename(path) for path in glob.glob(rawinput_dir + '/*/*.nd2')]
+        wells = [well.split('.nd2')[0].split('_Chan')[0] for well in wells]
+        wells = sorted(list(set(wells)))
+        #wells = sorted(list(set([os.path.basename(path).partition('_')[0] for path in glob.glob(rawinput_dir + '/*/*.nd2')])))
         wells = [well[0].replace('W', 'w') + well[1:] for well in wells]
     else:
         wells = config['wells']
