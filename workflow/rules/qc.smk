@@ -466,20 +466,26 @@ rule make_qc_read_plots:
 
 
 rule score_alignment:
+    """ Quantifies alignment error present in a stitched well.
+    Useful to compare different stitching methods/parameters. The full well image
+    is split into a grid of 200px by 200px sections, and in each section all cycle pairs are
+    aligned to each other, measuring the local deviation from perfect alignment.
+    """
     input:
         image = stitching_dir + '{path}/raw{params}.tif',
     output:
-        composite = qc_dir + '{path}/alignment_scores{params}_composite.json',
+        composite = qc_dir + '{path}/alignment_scores{params}.json',
         #plot = qc_dir + '{path}/alignment_scores{params}.svg',
     wildcard_constraints:
-        params = params_regex('channel', 'subpix', 'sigma', 'ashlar'),
+        #params = params_regex('channel', 'subpix', 'solver', 'sigma', 'input', 'ashlar'),
+        params = params_regex('channel', 'subpix', 'onlyfirst', 'solver', *ashlar_params, 'merger')
     threads: 4
     params:
         tile_size = 200,
         #channel = config['stitching']['channel']
     resources:
         #mem_mb = lambda wildcards, input: 5000 + input.size_mb / 3
-        mem_mb = 64000
+        mem_mb = 128000
     run:
         import constitch
         import concurrent.futures
@@ -492,11 +498,23 @@ rule score_alignment:
         channel = 1
 
         try:
-            image = tifffile.memmap(input.image, mode='r')[:,channel].copy()
+            image = tifffile.memmap(input.image, mode='r')
+            if image.ndim == 4 and image.shape[1] == 1:
+                image = image.reshape(image.shape[0], *image.shape[2:])
+            if image.ndim == 4 and image.shape[1] > 1:
+                image = image[:,channel].copy()
+            assert image.shape[0] < 16
         except ValueError:
             image = tifffile.imread(input.image)
-            if image.ndim == 4:
+            debug (image.shape, len(cycles), len(config['sequencing_channels']))
+            if image.ndim == 3 and image.shape[0] == len(cycles) * len(config['sequencing_channels']):
+                debug ('Reshaping')
+                image = image.reshape(len(cycles), len(config['sequencing_channels']), image.shape[1], image.shape[2])
+            if image.ndim == 4 and image.shape[1] == 1:
+                image = image.reshape(image.shape[0], *image.shape[2:])
+            if image.ndim == 4 and image.shape[1] > 1:
                 image = image[:,channel].copy()
+            assert image.shape[0] < 16
 
         executor = concurrent.futures.ThreadPoolExecutor(max_workers=threads*2)
         composite = constitch.CompositeImage(executor=executor, debug=True, progress=True)
@@ -525,7 +543,11 @@ rule score_alignment:
         debug (image[0].shape[1], tile_size)
         for x in range(0, image[0].shape[0] - tile_size, tile_size):
             for y in range(0, image[0].shape[1] - tile_size, tile_size):
+                if np.any(np.all(image[:,x:x+tile_size,y:y+tile_size] == 0, axis=(1,2))):
+                    continue
                 poses.append((x, y))
+
+        debug (len(poses), 'num poses')
 
         for i in range(len(image)):
             debug ('cycle', i)
@@ -577,6 +599,7 @@ rule score_alignment:
         print ('images', len(composite.images), 'consts', len(overlapping))
         #constraints = overlapping.calculate(constitch.PCCAligner(upsample_factor=16))
         constraints = overlapping.calculate(constitch.FFTAligner(upscale_factor=16))
+        #constraints = overlapping.calculate()
         #composite.plot_scores('tmp_scores.png', constraints)
 
         constitch.save(output.composite, composite, constraints)
@@ -609,5 +632,111 @@ rule score_alignment:
 
         fig.savefig(output.plot)
         """
+
+rule make_alignment_error_plot:
+    input:
+        composite = qc_dir + '{path}/alignment_scores{params}_composite.json',
+    output:
+        plot = qc_dir + '{path}/alignment_error{params}.svg',
+    wildcard_constraints:
+        params = params_regex('channel', 'subpix', 'sigma', 'input', 'ashlar'),
+    resources:
+        #mem_mb = lambda wildcards, input: 5000 + input.size_mb / 3
+        mem_mb = 16000
+    run:
+        import matplotlib.pyplot as plt
+        import numpy as np
+
+        def make_cycle_plot(composite, constraints, outpath):
+            fig, axes = plt.subplots(figsize=(4 + 1, 4))
+
+            max_error = max(max(np.linalg.norm((const.dx, const.dy)) for const in const_set) for const_set in constraints)
+            max_error = 2
+
+            all_results = []
+            print ('########################## RESULTS ##############################')
+            for i in range(len(composites)):
+                #print (names[i])
+                #print (np.mean([np.sqrt(const.dx*const.dx + const.dy*const.dy) for const in constraints[i]]))
+                #print (np.std([np.sqrt(const.dx*const.dx + const.dy*const.dy) for const in constraints[i]]))
+                num_cycles = composites[i].boxes.positions[:,2].max() + 1
+                num_tiles = len(composites[i].boxes) // num_cycles
+
+                all_medians = []
+                colors = np.zeros((num_cycles-1, num_cycles-1))
+                colors[...] = np.nan
+                for cycle1 in range(num_cycles):
+                    for cycle2 in range(cycle1+1, num_cycles):
+                        consts = constraints[i].filter(lambda const: const.box1.position[2] == cycle1 and const.box2.position[2] == cycle2)
+                        #consts = constraints[i].filter(min_index1=cycle1*num_tiles, max_index1=cycle1*num_tiles+num_tiles-1,
+                                #min_index2=cycle2*num_tiles, max_index2=cycle2*num_tiles+num_tiles-1)
+                        #if (cycle1, cycle2) in [(0,1), (0,5), (0,9)]:
+                            #make_scatter([composites[i]], [consts], names[i], outpath + '_cycle_scatter_{}_{}_{}.png'.format(names[i], cycle1, cycle2))
+                        errors = [np.sqrt(const.dx*const.dx + const.dy*const.dy) for const in consts]
+                        #errors = [error for error in errors if error < 35]
+                        #errors = np.minimum(errors, 10)
+                        result = np.median(errors)
+                        colors[cycle2-1,cycle1] = result
+                        all_medians.append(result)
+
+                print ('Alignment error by cycles for', names[i])
+                print (colors)
+
+                all_results.append(all_medians)
+
+                image_plot = axes[0,i].imshow(colors, norm=matplotlib.colors.LogNorm(vmin=0.1, vmax=max_error))
+
+                for x in range(colors.shape[0]):
+                    for y in range(colors.shape[1]):
+                        if np.isnan(colors[x,y]): continue
+                        color = 'white' if colors[x,y] < math.sqrt(max_error) else 'black'
+                        text = '{:.2f}'.format(colors[x,y]) if colors[x,y] < 10 else '{:.1f}'.format(colors[x,y]) if colors[x,y] < 100 else '{:.0f}'.format(colors[x,y])
+                        axes[0,i].text(y, x, text, ha='center', va='center', color=color, size=7 if num_cycles > 10 else 10)
+
+                axes[0,i].set_xticks(np.arange(num_cycles-1))
+                axes[0,i].set_xticklabels(map(str, range(1,num_cycles)))
+                axes[0,i].set_yticks(np.arange(num_cycles-1))
+                axes[0,i].set_yticklabels(map(str, range(2,num_cycles+1)))
+                axes[0,i].spines['bottom'].set_visible(False)
+                axes[0,i].spines['top'].set_visible(False)
+                axes[0,i].spines['left'].set_visible(False)
+                axes[0,i].spines['right'].set_visible(False)
+
+                points = [(num_cycles - 1.5, num_cycles - 1.5), (-0.5, num_cycles - 1.5), (-0.5, -0.5)]
+                for j in range(num_cycles-1):
+                    points.append((j + 0.5, j - 0.5))
+                    points.append((j + 0.5, j + 0.5))
+                points = np.array(points)
+                print (points)
+                axes[0,i].plot(points[:,0], points[:,1], color="black")
+
+                #axes[0,i].set_title("Mean alignment error between cycles, " + names[i])
+                axes[0,i].set_title(['ConStitch: ', 'ASHLAR: '][i%2] + names[i])
+                axes[0,i].set_xlabel("cycle")
+                axes[0,i].set_ylabel("cycle")
+
+                #axes[0,i].set_xticks(np.arange(num_cycles))
+                #axes[0,i].set_yticks(np.arange(num_cycles))
+                #axes[0,i].set_title("Mean alignment error between cycles, " + names[i])
+                #axes[0,i].set_title(names[i])
+                #axes[0,i].set_xlabel("cycle 1")
+                #axes[0,i].set_ylabel("cycle 2")
+
+            #fig.colorbar(image_plot, cax=colorbar_axis, orientation='vertical', label="Median alignment error")
+                #fig.colorbar(image_plot, ax=axes[0,i])
+                #if i == 0:
+                    #fig.colorbar(image_plot, ax=axes[0,i], label="Median alignment error", location='left')
+                #else:
+                    #fig.colorbar(image_plot, ax=axes[0,i], label="Median alignment error")
+
+            print ('#### SUMMARY ####')
+            print ([np.mean(data) for data in all_results])
+
+            fig.colorbar(image_plot, ax=axes[0,i], label="Median alignment error")
+
+            fig.tight_layout()
+            fig.savefig(outpath)
+
+            return all_results
 
 

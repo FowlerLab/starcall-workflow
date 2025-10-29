@@ -16,6 +16,7 @@ rule make_initial_composite:
         rawposes = expand(input_dir + '{well_stitching}/cycle{cycle}/positions.csv', cycle=cycles_pt, allow_missing=True),
     output:
         composite = stitching_dir + '{well_stitching}/initial_composite.json',
+        plot = qc_dir + '{well_stitching}/initial_composite.png',
     resources:
         mem_mb = 5000
     run:
@@ -33,6 +34,9 @@ rule make_initial_composite:
             images = tifffile.memmap(input.images[i], mode='r')[:,0]
             debug(poses.shape, images.shape)
 
+            if i == 11:
+                poses[:,0] += 1
+
             subcomposite.add_images(images, poses, scale='tile')
             subcomposite.setimages([None] * len(subcomposite.images))
 
@@ -45,6 +49,8 @@ rule make_initial_composite:
                     box.size[:2] //= phenotype_scale
 
             del images
+
+        composite.plot_scores(output.plot, axis_size=24)
 
         constitch.save(output.composite, composite)
 
@@ -174,12 +180,22 @@ rule filter_constraints:
 
 
 def constraints_needed(wildcards):
+    cycle_pairs = []
+    if wildcards.onlyfirst == '_onlyfirst':
+        for i in range(len(cycles_pt)):
+            cycle_pairs.append((0, i))
+    else:
+        for i in range(len(cycles_pt)):
+            for j in range(i, min(i + config['stitching'].get('max_cycle_pairs', 16), len(cycles_pt))):
+                cycle_pairs.append((i, j))
+
     paths = []
-    for i in range(len(cycles_pt)):
-        for j in range(i, min(i + config['stitching'].get('max_cycle_pairs', 16), len(cycles_pt))):
-            paths.append(stitching_dir + '{well_stitching}/' + 'cycle{cycle1}/cycle{cycle2}/filtered_constraints'.format(
-                cycle1=cycles_pt[i], cycle2=cycles_pt[j]) + '{params}.json')
+    for i, j in cycle_pairs:
+        paths.append(stitching_dir + '{well_stitching}/' + 'cycle{cycle1}/cycle{cycle2}/filtered_constraints'.format(
+            cycle1=cycles_pt[i], cycle2=cycles_pt[j]) + '{params}.json')
+
     return paths
+
 
 rule merge_constraints:
     """ All filtered constraints from cycle pairs are combined into composite.json
@@ -191,9 +207,10 @@ rule merge_constraints:
         composite = stitching_dir + '{well_stitching}/initial_composite.json',
         constraints = constraints_needed,
     output:
-        constraints = stitching_dir + '{well_stitching}/constraints{params}.json',
+        constraints = stitching_dir + '{well_stitching}/constraints{params}{onlyfirst}.json',
     wildcard_constraints:
-        params = params_regex('channel', 'subpix')
+        params = params_regex('channel', 'subpix'),
+        onlyfirst = '|_onlyfirst',
     run:
         import constitch
 
@@ -216,7 +233,7 @@ rule solve_constraints:
     solving.
 
     Params:
-        solver: (mae, mse, spantree) The type of solver to use.
+        solver: (mae, mse, spantree, pulp) The type of solver to use.
             mae is default and minimizes mean absolute error. mse minimizes
             mean squared error and spantree constructs a spanning tree.
     """
@@ -231,10 +248,11 @@ rule solve_constraints:
     params:
         solver = parse_param('solver', config['stitching']['solver']),
     wildcard_constraints:
-        params = params_regex('channel', 'subpix'),
-        solver = '|_solver(mse|mae|spantree)',
+        params = params_regex('channel', 'subpix', 'onlyfirst'),
+        solver = '|_solver(mse|mae|spantree|lp|ilp|pulp|rounded)',
     resources:
-        mem_mb = lambda wildcards, input: input.size_mb * 5000 + 25000
+        mem_mb = lambda wildcards, input: input.size_mb * 10000 + 25000
+    threads: lambda wildcards: 8 if wildcards.solver == '_solverpulp' else 1
     run:
         import constitch
 
@@ -245,7 +263,10 @@ rule solve_constraints:
 
         composite.plot_scores(output.plot1, solving_constraints)
 
-        solution = solving_constraints.solve(solver=params.solver)
+        if solver == 'pulp':
+            solution = solving_constraints.solve(solver=solver, threads=threads*2)
+        else:
+            solution = solving_constraints.solve(solver=solver)
 
         composite.setpositions(solution)
         composite.plot_scores(output.plot2, solving_constraints)
@@ -262,7 +283,7 @@ rule split_composite:
     output:
         composite = stitching_dir + '{well_stitching}/cycle{cycle}/composite{params}.json',
     wildcard_constraints:
-        params = params_regex('channel', 'subpix', 'solver'),
+        params = params_regex('channel', 'subpix', 'onlyfirst', 'solver', *ashlar_params),
     run:
         import constitch
 

@@ -49,6 +49,22 @@ stitching:
     # the limit is 5, cycle 0 would be aligned to cycle 4 but not cycle 5.
     # This reduces the processing greatly when the number of cycles is large.
     max_cycle_pairs: 16
+    # The method to combine overlapping tiles. Mean takes the mean, nearest crops
+    # each tile to be not overlapping
+    merger: 'nearest'
+
+    # This section is all of the parameters for ASHLAR stitching. ASHLAR may provide
+    # better stitching than ConStitch, but it should be noted that ASHLAR cannot be used
+    # when the phenotype cycles are imaged at a different scale
+    ashlar:
+        flip_x: False
+        flip_y: False
+        transpose: False
+        interp: false
+        filter_sigma: null
+        maximum_shift: 1000
+    ashlar_executable: 'ashlar'
+    ashlar_overlap: 0.15
 
 segmentation:
     # Diameter passed to cellpose, in pixels of the phenotype images.
