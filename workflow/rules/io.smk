@@ -243,6 +243,54 @@ rule make_section:
             del images
 
 
+rule make_split_well:
+    """ Splits each tile into multiple sections, useful when there may have been rotation
+    between cycles by allowing each section to be aligned individually.
+    """
+    input:
+        images = expand(input_dir + '{well_nosplit}/cycle{cycle}/raw.tif', cycle=cycles_pt, allow_missing=True),
+        positions = expand(input_dir + '{well_nosplit}/cycle{cycle}/positions.csv', cycle=cycles_pt, allow_missing=True),
+    output:
+        images = expand(input_dir + '{well_nosplit}_split{size,\d+}/cycle{cycle}/raw.tif', cycle=cycles_pt, allow_missing=True),
+        positions = expand(input_dir + '{well_nosplit}_split{size,\d+}/cycle{cycle}/positions.csv', cycle=cycles_pt, allow_missing=True),
+    resources:
+        mem_mb = lambda wildcards, input: input.size_mb * 8 / len(cycles_pt) + 5000
+    run:
+        import tifffile
+        import numpy as np
+        import constitch
+
+        grid_size = int(wildcards.size)
+
+        for i, poses_path, path in zip(range(len(input.images)), input.positions, input.images):
+            poses = np.loadtxt(poses_path, delimiter=',', dtype=int)
+            images = tifffile.imread(path)
+
+            composite = constitch.CompositeImage()
+            composite.add_split_image(np.empty(images.shape[2:]),
+                    grid_size=grid_size, overlap=config['stitching']['overlap'])
+
+            all_poses = []
+            all_images = []
+            debug (composite.boxes)
+            for j, box in enumerate(composite.boxes):
+                debug ('  ', box)
+                cur_poses = poses.copy()
+                cur_poses[:,2:] += box.position
+                cur_poses[:,:2] *= grid_size
+                cur_poses[:,:2] += [j // grid_size, j % grid_size]
+                all_poses.append(cur_poses)
+
+                x1, y1, x2, y2 = box.point1[0], box.point1[1], box.point2[0], box.point2[1]
+                all_images.append(images[:,:,x1:x2,y1:y2])
+
+            all_poses = np.concatenate(all_poses, axis=0)
+            all_images = np.concatenate(all_images, axis=0)
+
+            np.savetxt(output.positions[i], all_poses, delimiter=',', fmt='%d')
+            tifffile.imwrite(output.images[i], all_images)
+            del images, all_images
+
 rule make_noisy_well:
     """ Add gaussian noise onto an existing well.
     Creates a copy of another well, adding gaussian noise of size sigma

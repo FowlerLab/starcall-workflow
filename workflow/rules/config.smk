@@ -36,17 +36,24 @@ if os.path.exists(rawinput_dir):
 
     phenotype_dates = [date for date in dates if date[:len(phenotype_date)] == phenotype_date]
     if 'phenotype_cycles' not in config:
-        phenotype_cycles = ['PT', 'PT1', 'PT2', 'PT3', 'PT4'][:len(phenotype_dates)]
+        phenotype_cycles = ['PT', 'P1', 'P2', 'P3', 'P4'][:len(phenotype_dates)]
     else:
         phenotype_cycles = config['phenotype_cycles']
+        if type(phenotype_cycles) == int:
+            phenotype_cycles = ['PT', 'P1', 'P2', 'P3', 'P4'][:phenotype_cycles]
 
 
     if 'wells' not in config:
         #wells = sorted([path.replace('Well', '').partition('_')[0] for path in os.listdir(rawinput_dir + '/' + dates[0])])
-        wells = sorted(list(set([os.path.basename(path).partition('_')[0] for path in glob.glob(rawinput_dir + '/*/*.nd2')])))
+        wells = [os.path.basename(path) for path in glob.glob(rawinput_dir + '/*/*.nd2')]
+        wells = [well.split('.nd2')[0].split('_Chan')[0] for well in wells]
+        wells = sorted(list(set(wells)))
+        #wells = sorted(list(set([os.path.basename(path).partition('_')[0] for path in glob.glob(rawinput_dir + '/*/*.nd2')])))
         wells = [well[0].replace('W', 'w') + well[1:] for well in wells]
     else:
         wells = config['wells']
+        if type(wells) == int:
+            wells = ['well{}'.format(well) for well in range(1, wells + 1)]
 
     for date in phenotype_dates:
         if date in dates_pt:
@@ -56,6 +63,10 @@ if os.path.exists(rawinput_dir):
         cycles = ['{:02}'.format(i) for i in range(len(dates))]
     else:
         cycles = config['cycles']
+        if type(cycles) == int:
+            cycles = ['{:02}'.format(i) for i in range(cycles)]
+        if type(cycles[0]) == int:
+            cycles = ['{:02}'.format(i) for i in cycles]
 
 else:
     if 'wells' not in config:
@@ -71,6 +82,8 @@ else:
         wells = list(set(wells))
     else:
         wells = config['wells']
+        if type(wells) == int:
+            wells = ['well{}'.format(well) for well in range(1, wells + 1)]
 
     if 'cycles' not in config:
         first_well = glob.glob(input_dir + wells[0] + '*/')[0]
@@ -84,6 +97,12 @@ else:
     else:
         cycles = config['cycles']
         phenotype_cycles = config['phenotype_cycles']
+        if type(cycles) == int:
+            cycles = ['{:02}'.format(i) for i in range(cycles)]
+        if type(cycles[0]) == int:
+            cycles = ['{:02}'.format(i) for i in cycles]
+        if type(phenotype_cycles) == int:
+            phenotype_cycles = ['PT', 'P1', 'P2', 'P3', 'P4'][:phenotype_cycles]
 
 cycles_pt = cycles + phenotype_cycles
 #cycles_pt = sorted(cycles_pt)
@@ -93,9 +112,10 @@ cellpose_diameter = config.get('cellpose_diameter', 50)
 cellpose_cycle = config.get('cellpose_cycle', cycles[-1] if len(cycles) else None)
 
 wildcard_constraints:
-    well = '(' + '|'.join(wells) + ')(_subset\d+)?(_(cycle|)noise\d+)?(_section\d+)?',
-    well_stitching = '(' + '|'.join(wells) + ')(_subset\d+)?(_(cycle|)noise\d+)?',
-    well_nonoise = '(' + '|'.join(wells) + ')(_subset\d+)?',
+    well = '(' + '|'.join(wells) + ')(_subset\d+)?(_split\d+)?(_(cycle|)noise\d+)?(_section\d+)?',
+    well_stitching = '(' + '|'.join(wells) + ')(_subset\d+)?(_split\d+)?(_(cycle|)noise\d+)?',
+    well_nonoise = '(' + '|'.join(wells) + ')(_subset\d+)?(_split\d+)?',
+    well_nosplit = '(' + '|'.join(wells) + ')(_subset\d+)?',
     well_nosubset = '(' + '|'.join(wells) + ')',
     well_base = '(' + '|'.join(wells) + ')',
 
@@ -159,7 +179,7 @@ def param_constraint(name, pattern):
     return '(_' + name + '(' + pattern + '))?'
 
 def params_regex(*params):
-    return '(' + ''.join('(_{}[^_]+)?'.format(name) for name in params) + ')'
+    return '(' + ''.join('(_{}[^_]*)?'.format(name) for name in params) + ')'
 
 def channel_index(channel, kind=None, cycle=None):
     if kind is None and cycle is not None:
@@ -167,6 +187,14 @@ def channel_index(channel, kind=None, cycle=None):
     if type(channel) == str:
         return config[kind+'_channels'].index(channel)
     return channel
+
+ashlar_params_nooverlap  = [name.replace('_', '') for name in config['stitching']['ashlar'].keys()]
+ashlar_params = ashlar_params_nooverlap + ['overlap', 'input', 'ashlar']
+#ashlar_params = ['flip-x', 'flip-y', 'transpose', 'interp', 'filter-sigma', 'input']
+#print (params_regex('channel', 'subpix', 'solver', *ashlar_params))
+
+wildcard_constraints:
+    ashlar_params = params_regex(*ashlar_params)
 
 def coredump():
     if os.fork() == 0:

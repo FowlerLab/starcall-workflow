@@ -4,7 +4,7 @@ import glob
 import time
 
 wildcard_constraints:
-    params_alignment = params_regex('channel', 'subpix', 'solver'),
+    params_alignment = params_regex('channel', 'subpix', 'onlyfirst', 'solver', *ashlar_params),
 
 ##################################################
 ## Background calculation / correction
@@ -224,15 +224,13 @@ rule stitch_cycle:
             traceback.print_exc()
             raise
 
-print (wells)
 
+'''
 rule stitch_well:
     """ Stitches the whole well together with all sequencing cycles.
     The resulting image will have 4 dimensions: (num_cycles, num_channels, width, height)
     This image may be unreasonably large, for big wells it is recommended to use tiles
     which are stitched directly, without having to stitch the whole well (see stitch_well_tile)
-    To reduce the memory usage, cycles are stitched separately and written out one by one, so
-    the whole well image does not have to be held in memory.
     """
     input:
         images = expand(stitching_dir + '{well_stitching}/cycle{cycle}/{corrected}_tiles.tif', cycle=cycles, allow_missing=True),
@@ -258,7 +256,7 @@ rule stitch_well:
         dims = maxes - mins
         debug (mins, maxes)
 
-        tmp_output = resources.tmpdir + '/well.tif'
+        tmp_output = resources.tmpdir + '/well{}.tif'.format(hash(output[0]))
 
         for i in starcall.utils.simple_progress(range(len(input.images))):
             debug("stitching cycle", i, time.asctime())
@@ -292,7 +290,7 @@ rule stitch_well:
         debug("Moving tmp file")
         shutil.move(tmp_output, output[0])
         #"""
-
+'''
 
 
 
@@ -300,7 +298,7 @@ rule stitch_well:
 ## stitching smaller sections, ie subsets, tiles
 ##################################################
 
-def stitch_well_section(image_paths, composite_paths, mins, maxes):
+def stitch_well_section(image_paths, composite_paths, mins, maxes, merger='efficient_nearest'):
     import tifffile
     import constitch
     import starcall.correction
@@ -322,12 +320,46 @@ def stitch_well_section(image_paths, composite_paths, mins, maxes):
         final_image = composite.stitch(
             mins = mins,
             maxes = maxes,
-            merger = constitch.EfficientNearestMerger(),
-            out = full_image[i].transpose(1,2,0)
+            #merger = constitch.EfficientNearestMerger(),
+            merger = 'efficient_' + merger if merger in ('mean', 'nearest') else merger,
+            out = full_image[i].transpose(1,2,0),
+            prevent_resize = True,
         )
 
     return full_image
 
+rule stitch_well:
+    """ Stitches a whole well together, with all phenotyping cycles.
+    Like stitch_well, the resulting image will have 4 dimensions: (num_cycles, num_channels, width, height).
+    It is common for there to be only one phenotyping cycle, in which case the first dimension
+    is only size 1. This is expected for the rest of the pipeline, but can cause problems if you
+    try to open it with an external pipeline. To inspect individual phenotype cycles, see
+    stitch_cycle.
+    """
+    input:
+        images = expand(stitching_dir + '{well_stitching}/cycle{cycle}/{corrected}_tiles.tif', cycle=cycles, allow_missing=True),
+        composites = expand(stitching_dir + '{well_stitching}/cycle{cycle}/composite{params_alignment}.json', cycle=cycles, allow_missing=True),
+        full_composite = stitching_dir + '{well_stitching}/composite{params_alignment}.json',
+    output:
+        image = stitching_dir + '{well_stitching}/{corrected,raw|corrected}{params_alignment}{merger}.tif',
+    params:
+        merger = parse_param('merger', config['stitching']['merger']),
+    wildcard_constraints:
+        merger = '|_merger(mean|nearest|max)',
+    #threads: 8
+    resources:
+        mem_mb = lambda wildcards, input: 5000 + input.size_mb * 1.5
+    run:
+        import numpy as np
+        import tifffile
+        import constitch
+        import concurrent.futures
+
+        #executor = concurrent.futures.ThreadPoolExecutor(max_workers=max(2, threads*2))
+        full_composite = constitch.load(input.full_composite, constraints=False)#, executor=executor)
+        mins, maxes = full_composite.boxes.points1.min(axis=0)[:2], full_composite.boxes.points2.max(axis=0)[:2]
+
+        tifffile.imwrite(output.image, stitch_well_section(input.images, input.composites, mins, maxes, merger=params.merger))
 
 rule stitch_well_pt:
     """ Stitches a whole well together, with all phenotyping cycles.
@@ -513,29 +545,67 @@ rule stitch_tile_well_pt:
 ## stitching with ASHLAR
 ##################################################
 
-rule stitch_well_ashlar:
+def parse_ashlar_params(params):
+    params = params.split('_')
+    params_dict = config['stitching']['ashlar'].copy()
+    for param in params:
+        for name, default_val in config['stitching']['ashlar'].items():
+            param_name = name.replace('_', '')
+            if param[:len(param_name)] == param_name:
+                params_dict[name] = True if default_val is False else param[len(param_name):]
+
+    if not params_dict.pop('interp'):
+        params_dict['no-resample'] = True
+
+    result = []
+    for name, val in params_dict.items():
+        if val is not None and val is not False:
+            result.append('--' + name.replace('_', '-'))
+            if val is not True:
+                result.append(str(val))
+
+    return ' '.join(result)
+
+
+rule stitch_well_ashlar_rawinput:
     input:
-        #images = lambda wildcards: [get_nd2filename(well=wildcards.well_stitching, cycle=cycle) for cycle in cycles]
+        images = lambda wildcards: [get_nd2filename(well=wildcards.well_stitching, cycle=cycle) for cycle in cycles]
+    output:
+        image = stitching_dir + '{well_stitching}/raw{ashlar_params}_inputraw_ashlar.ome.tif',
+    resources:
+        mem_mb = 16000
+    params:
+        params = lambda wildcards: parse_ashlar_params(wildcards.ashlar_params),
+        ashlar_executable = config['stitching']['ashlar_executable'],
+    shell:
+        '{params.ashlar_executable} {input.images} -o {output.image} {params.params} -c 1 --output-channels 1'
+
+rule stitch_well_poses_ashlar_rawinput:
+    input:
+        images = lambda wildcards: [get_nd2filename(well=wildcards.well_stitching, cycle=cycle) for cycle in cycles]
+    output:
+        image = stitching_dir + '{well_stitching}/positions_ashlar{ashlar_params}_inputraw.csv',
+    resources:
+        mem_mb = 16000
+    params:
+        params = lambda wildcards: parse_ashlar_params(wildcards.ashlar_params),
+        ashlar_executable = config['stitching']['ashlar_executable'],
+    shell:
+        '{params.ashlar_executable} {input.images} --output-positions {output.image} {params.params} -c 1 --output-channels 1'
+
+rule prepare_tiles_ashlar:
+    input:
         images = expand(input_dir + '{well_stitching}/cycle{cycle}/raw.tif', cycle=cycles, allow_missing=True),
         positions = expand(input_dir + '{well_stitching}/cycle{cycle}/positions.csv', cycle=cycles, allow_missing=True),
     output:
-        image = stitching_dir + '{well_stitching}/raw{sigma}_ashlar.ome.tif',
-    params:
-        sigma = parse_param('sigma', 0),
-    wildcard_constraints:
-        sigma = '|_sigma\d+(.\d+)?',
+        imagedir = temp(directory(stitching_dir + '{well_stitching}/raw_ashlar_tiles/')),
     resources:
-        mem_mb = 16000
+        mem_mb = lambda wildcards, input: 5000 + input.size_mb * 1.5 / len(cycles)
     run:
         import tifffile
         import numpy as np
 
-        outpath = output.image + '_tmp_dirs/'
-        #flags = '--flip-x --flip-y -m 500'
-        flags = '-m 1000'
-
-        if params.sigma != 0:
-            flags += ' --filter-sigma {}'.format(params.sigma)
+        outpath = output.imagedir + '/'
 
         for cycle, (image_path, poses_path) in enumerate(zip(input.images, input.positions)):
             print ('writing cycle', cycle)
@@ -551,11 +621,138 @@ rule stitch_well_ashlar:
 
             del images
 
-        filepattern = ' '.join("'filepattern|{}cycle{:02}/|pattern=chan1_row{{row:03}}_col{{col:03}}.tif|overlap=0.15'".format(
-                    outpath, i) for i in range(len(input.images)))
-        command = '/net/fowler/vol1/home/nbradley/miniconda3/envs/stitching/bin/ashlar {} -o {} {}'.format(
+
+rule stitch_well_ashlar:
+    input:
+        imagedir = stitching_dir + '{well_stitching}/raw_ashlar_tiles/',
+    output:
+        image = stitching_dir + '{well_stitching}/raw{params}{overlap}_ashlar.ome.tif',
+    params:
+        overlap = parse_param('overlap', config['stitching']['ashlar_overlap'])
+    wildcard_constraints:
+        params = params_regex(*ashlar_params_nooverlap),
+        overlap = '|_overlap\d.\d+',
+    resources:
+        mem_mb = 16000
+    run:
+        import tifffile
+        import numpy as np
+
+        flags = parse_ashlar_params(wildcards.params)
+        outpath = input.imagedir + '/'
+        filepattern = ' '.join("'filepattern|{}cycle{:02}/|pattern=chan1_row{{row:03}}_col{{col:03}}.tif|overlap={}'".format(
+                    outpath, i, params.overlap) for i in range(len(cycles)))
+
+        command = config['stitching']['ashlar_executable'] + ' {} -o {} {}'.format(
                 filepattern, output.image, flags)
         debug(command)
 
-        os.system(command)
+        assert os.system(command) == 0
+
+
+rule stitch_well_ashlar_positions:
+    input:
+        imagedir = stitching_dir + '{well_stitching}/raw_ashlar_tiles/',
+    output:
+        image = stitching_dir + '{well_stitching}/positions_ashlar{params}{overlap}.csv',
+    params:
+        overlap = parse_param('overlap', config['stitching']['ashlar_overlap'])
+    wildcard_constraints:
+        params = params_regex(*ashlar_params_nooverlap),
+        overlap = '|_overlap\d.\d+',
+    resources:
+        mem_mb = 16000
+    run:
+        import tifffile
+        import numpy as np
+
+        flags = parse_ashlar_params(wildcards.params)
+        outpath = input.imagedir + '/'
+        filepattern = ' '.join("'filepattern|{}cycle{:02}/|pattern=chan1_row{{row:03}}_col{{col:03}}.tif|overlap={}'".format(
+                    outpath, i, params.overlap) for i in range(len(cycles)))
+
+        command = config['stitching']['ashlar_executable'] + ' {} --output-positions {} {}'.format(
+                filepattern, output.image, flags)
+        debug(command)
+
+        assert os.system(command) == 0
+
+
+rule ashlar_positions_to_composite:
+    input:
+        poses = stitching_dir + '{well_stitching}/positions_ashlar{ashlar_params}.csv',
+        composite = stitching_dir + '{well_stitching}/initial_composite.json',
+    output:
+        composite = stitching_dir + '{well_stitching}/composite{ashlar_params}_ashlarposes.json',
+        plot1 = qc_dir + '{well_stitching}/presolve{ashlar_params}_ashlarposes.png',
+        plot2 = qc_dir + '{well_stitching}/solved{ashlar_params}_ashlarposes.png',
+    run:
+        import constitch
+        import numpy as np
+
+        table = np.genfromtxt(input.poses, dtype=None, names=True, delimiter=',')
+        composite = constitch.load(input.composite)
+
+        composite.plot_scores(output.plot1)
+
+        for cycle in range(table['cycle'].max() + 1):
+            subtable = table[table['cycle']==cycle]
+            subcomposite = composite.layer(cycle)
+            
+            if wildcards.ashlar_params.count('_inputraw') != 0:
+                # If ashlar was run on the raw nd2 files, the tile order should be
+                # preserved
+                for i in range(subtable.shape[0]):
+                    subcomposite.boxes[i].position[:2] = (round(subtable[i]['x']), round(subtable[i]['y']))
+
+            else:
+                # If ashlar was run on a series of tif files, they are in sorted grid
+                # order
+                sorted_indices = np.lexsort(subcomposite.boxes.positions[:,:2].T[::-1])
+                for i, index in enumerate(sorted_indices):
+                    subcomposite.boxes[index].position[:2] = (round(subtable[i]['x']), round(subtable[i]['y']))
+
+        composite.plot_scores(output.plot2)
+
+        constitch.save(output.composite, composite)
+
+
+
+rule convert_well_ashlar:
+    input:
+        image = stitching_dir + '{path}/raw{ashlar_params}_ashlar.ome.tif',
+    output:
+        image = stitching_dir + '{path}/raw{ashlar_params}_ashlarfull.tif',
+    #wildcard_constraints:
+        #params = params_regex('channel', 'subpix', 'sigma', 'input', 'ashlar'),
+    resources:
+        mem_mb = lambda wildcards, input: 5000 + input.size_mb * 2
+    run:
+        import tifffile
+
+        try:
+            image = tifffile.memmap(input.image, mode='r')
+            if image.ndim == 3 and image.shape[0] == len(cycles) * len(config['sequencing_channels']):
+                debug ('Reshaping')
+                image = image.reshape(len(cycles), len(config['sequencing_channels']), image.shape[1], image.shape[2])
+                tifffile.imwrite(output.image, image)
+            else:
+                assert image.shape[0] < 16
+                os.link(input.image, output.image)
+
+        except ValueError:
+            image = tifffile.imread(input.image)
+            debug (image.shape, len(cycles), len(config['sequencing_channels']))
+            if image.ndim == 3 and image.shape[0] == len(cycles) * len(config['sequencing_channels']):
+                debug ('Reshaping')
+                image = image.reshape(len(cycles), len(config['sequencing_channels']), image.shape[1], image.shape[2])
+                tifffile.imwrite(output.image, image)
+            elif image.ndim == 3 and image.shape[0] == len(cycles):
+                image = image.reshape(len(cycles), 1, image.shape[1], image.shape[2])
+                tifffile.imwrite(output.image, image)
+            else:
+                assert image.shape[0] < 16
+                os.link(input.image, output.image)
+
+
 
