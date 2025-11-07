@@ -34,9 +34,6 @@ rule make_initial_composite:
             images = tifffile.memmap(input.images[i], mode='r')[:,0]
             debug(poses.shape, images.shape)
 
-            if i == 11:
-                poses[:,0] += 1
-
             subcomposite.add_images(images, poses, scale='tile')
             subcomposite.setimages([None] * len(subcomposite.images))
 
