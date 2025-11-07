@@ -65,7 +65,7 @@ if os.path.exists(rawinput_dir):
         cycles = config['cycles']
         if type(cycles) == int:
             cycles = ['{:02}'.format(i) for i in range(cycles)]
-        if type(cycles[0]) == int:
+        if len(cycles) and type(cycles[0]) == int:
             cycles = ['{:02}'.format(i) for i in cycles]
 
 else:

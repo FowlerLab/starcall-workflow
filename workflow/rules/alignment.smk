@@ -263,10 +263,10 @@ rule solve_constraints:
 
         composite.plot_scores(output.plot1, solving_constraints)
 
-        if solver == 'pulp':
-            solution = solving_constraints.solve(solver=solver, threads=threads*2)
+        if params.solver == 'pulp':
+            solution = solving_constraints.solve(solver=params.solver, threads=threads*2)
         else:
-            solution = solving_constraints.solve(solver=solver)
+            solution = solving_constraints.solve(solver=params.solver)
 
         composite.setpositions(solution)
         composite.plot_scores(output.plot2, solving_constraints)

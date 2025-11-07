@@ -41,7 +41,8 @@ def get_nd2filename(wildcards=None, cycle=None, well=None):
     glob_path = rawinput_dir + date + '/{well}_*.nd2'.format(well=well)
     paths = glob.glob(glob_path)
     if len(paths) == 0:
-        raise FileNotFoundError('Error: no nd2 files found for "{}"'.format(glob_path))
+        #raise FileNotFoundError('Error: no nd2 files found for "{}"'.format(glob_path))
+        return [glob_path]
     return paths[0]
 
 
@@ -92,23 +93,30 @@ if os.path.exists(rawinput_dir):
         input:
             get_nd2filename
         output:
-            input_dir + '{well_base}/cycle{cycle}/positions.csv'
+            input_dir + '{well_base}/cycle{cycle}/positions.csv',
+            input_dir + '{well_base}/cycle{cycle}/metadata.json',
         resources:
             mem_mb = 2000
         run:
             import numpy as np
             import tifffile
             import nd2
+            import json
 
             with nd2.ND2File(input[0]) as images:
                 full_meta = images.ome_metadata()
 
                 if len(full_meta.images) == 1:
                     meta = full_meta.images[0].dict()
+
+                    with open(output[1], 'w') as ofile:
+                        json.dump(meta, ofile, indent=4, default=str)
+
                     #debug(meta)
 
                     size_x = meta['pixels']['physical_size_x']# * meta['pixels']['size_x']
                     size_y = meta['pixels']['physical_size_y']# * meta['pixels']['size_y']
+                    debug ('size_x, size_y', size_x, size_y)
                     xposes = np.array([plane['position_x'] for plane in meta['pixels']['planes'] if plane['the_c'] == 0]) / size_x
                     yposes = np.array([plane['position_y'] for plane in meta['pixels']['planes'] if plane['the_c'] == 0]) / size_y
                     assert len(xposes) > 1
@@ -116,18 +124,26 @@ if os.path.exists(rawinput_dir):
                 else:
                     xposes, yposes = [], []
 
-                    for i in range(len(full_meta.images)):
-                        meta = full_meta.images[i].dict()
-                        #debug(meta)
+                    with open(output[1], 'w') as ofile:
+                        ofile.write('[\n')
 
-                        size_x = meta['pixels']['physical_size_x']# * meta['pixels']['size_x']
-                        size_y = meta['pixels']['physical_size_y']# * meta['pixels']['size_y']
-                        cur_xposes = [plane['position_x'] for plane in meta['pixels']['planes'] if plane['the_c'] == 0]
-                        cur_yposes = [plane['position_y'] for plane in meta['pixels']['planes'] if plane['the_c'] == 0]
-                        assert len(cur_xposes) == 1 and len(cur_yposes) == 1
-                        xposes.append(cur_xposes[0] / size_x)
-                        yposes.append(cur_yposes[0] / size_y)
-                        #debug (i, cur_xposes, cur_yposes)
+                        for i in range(len(full_meta.images)):
+                            meta = full_meta.images[i].dict()
+
+                            if i != 0:
+                                ofile.write(',\n')
+                            json.dump(meta, ofile, indent=4, default=str)
+                            #debug(meta)
+
+                            size_x = meta['pixels']['physical_size_x']# * meta['pixels']['size_x']
+                            size_y = meta['pixels']['physical_size_y']# * meta['pixels']['size_y']
+                            debug ('size_x, size_y', size_x, size_y)
+                            cur_xposes = [plane['position_x'] for plane in meta['pixels']['planes'] if plane['the_c'] == 0]
+                            cur_yposes = [plane['position_y'] for plane in meta['pixels']['planes'] if plane['the_c'] == 0]
+                            assert len(cur_xposes) == 1 and len(cur_yposes) == 1
+                            xposes.append(cur_xposes[0] / size_x)
+                            yposes.append(cur_yposes[0] / size_y)
+                            #debug (i, cur_xposes, cur_yposes)
 
                     xposes, yposes = np.array(xposes), np.array(yposes)
 
@@ -160,11 +176,11 @@ if os.path.exists(rawinput_dir):
         (num_tiles, num_cycles, width, height)
         """
         input:
-            get_nd2filename
+            get_nd2filename,
         output:
-            input_dir + '{well_base}/cycle{cycle}/raw.tif'
+            input_dir + '{well_base}/cycle{cycle}/raw.tif',
         resources:
-            mem_mb = lambda wildcards, input: input.size_mb * 2 + 5000
+            mem_mb = lambda wildcards, input: input.size_mb * 2 + 5000,
         run:
             import tifffile
             import nd2
