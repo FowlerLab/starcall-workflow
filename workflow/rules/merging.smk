@@ -64,26 +64,35 @@ rule merge_phenotype_genotype:
             table = table.join(cur_table)
         table.to_csv(output.table)
 
+def find_all_tables(wildcards):
+    well_names = wildcards.wells.split('-')
+    well_names = [('well' + name if name not in wells and ('well' + name) in wells else name) for name in well_names]
+    paths = [output_dir + name + '{suffix}.csv' for name in well_names]
+    return paths
+
+print ('({well_pat})(-({well_pat}))+'.format(well_pat='|'.join(wells + [well.replace('well', '') for well in wells])))
+
 rule merge_all_well_tables:
     input:
         #tables = expand(output_dir + 'well{well}{path}.csv', well=wells, allow_missing=True),
-        tables = lambda wildcards: expand(output_dir + 'well{well}{path}.csv', well=wildcards.wells.split('-'), allow_missing=True),
+        #tables = lambda wildcards: expand(output_dir + '{well}{path}.csv', well=wildcards.wells.split('-'), allow_missing=True),
+        tables = find_all_tables,
     output:
-        table = output_dir + 'well{wells}{path}.csv',
+        table = output_dir + '{wells}{suffix}.csv',
     resources:
         mem_mb = 5000
     wildcard_constraints:
         # sequence of well names joined by '-'
-        wells = '({well_pat})(-({well_pat}))+'.format(well_pat='|'.join(wells)),
+        wells = '({well_pat})(-({well_pat}))+'.format(well_pat='|'.join(wells + [well.replace('well', '') for well in wells])),
     run:
         merge_csv_files(input.tables, output.table, extra_columns=['well'],
                 row_func=lambda row: {'well': wells[row['file_index']]})
 
 rule convert_to_parquet:
     input:
-        table = output_dir + '{path}.csv',
+        table = output_dir + '{output_path}.csv',
     output:
-        table = output_dir + '{path}.parquet',
+        table = output_dir + '{output_path}.parquet',
     resources:
         mem_mb = 50000
     run:
