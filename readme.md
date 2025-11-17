@@ -15,7 +15,7 @@ To get the pipeline up and running quickly there is a small example dataset avai
 To install the workflow, simply clone this repository, making sure to clone recursively so that
 we get both packages.
 
-	git clone https://github.com/FowlerLab/starcall-workflow.git
+	git clone https://github.com/FowlerLab/starcall-workflow.git --recursive
 	cd starcall-workflow
 
 The base packages needed for STARCall are listed in requirements.txt and can be installed
