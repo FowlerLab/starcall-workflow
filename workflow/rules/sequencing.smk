@@ -206,7 +206,7 @@ rule cluster_reads:
         thresh = '|_thresh\d+(.\d+)?',
         linkage = '|_linkage(min|max|mean)',
     resources:
-        mem_mb = lambda wildcards, input: 5000 + input.size_mb * 10
+        mem_mb = lambda wildcards, input: 5000 + input.size_mb * 20
     run:
         import numpy as np
         import csv

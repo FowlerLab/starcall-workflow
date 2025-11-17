@@ -579,7 +579,7 @@ rule split_grid_segmentation:
         composite = stitching_dir + '{well}_grid{grid_size}/grid_composite.json',
         table = segmentation_dir + '{well}_grid{grid_size}/tile{x}x{y}y/cells.csv',
     output:
-        image = segmentation_dir + '{well}_grid{grid_size,\d+}/tile{x,\d+}x{y,\d+}y/{segmentation_type}.tif',
+        image = temp(segmentation_dir + '{well}_grid{grid_size,\d+}/tile{x,\d+}x{y,\d+}y/{segmentation_type}.tif'),
     wildcard_constraints:
         segmentation_type = '(cells|nuclei|cellsbases|nucleibases)_mask(_downscaled)?',
     run:
@@ -623,6 +623,7 @@ rule split_grid_segmentation:
                     x1, y1 = x1 * bases_scale // phenotype_scale, y1 * bases_scale // phenotype_scale
                     x2, y2 = x2 * bases_scale // phenotype_scale + 1, y2 * bases_scale // phenotype_scale + 1
                     # adding 1 to prevent rounding down cutting off segmentation
+                x1, y1, x2, y2 = max(0, x1), max(0, y1), max(0, x2), max(0, y2)
 
                 debug (x1, x2, y1, y2, box.point1, box.point2)
                 mask = section[x1:x2,y1:y2] == index

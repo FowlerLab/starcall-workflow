@@ -89,8 +89,8 @@ rule copy_cellprofiler_files:
     output:
         file_list = phenotyping_dir + '{path}/cellprofiler/files.csv',
         images = expand(phenotyping_dir + '{path}/cellprofiler/channel{channel}.tif', channel=range(len(config['phenotyping_channels'])), allow_missing=True),
-        cells = phenotyping_dir + '{path}/cellprofiler/cells.tif',
-        nuclei = phenotyping_dir + '{path}/cellprofiler/nuclei.tif',
+        cells = temp(phenotyping_dir + '{path}/cellprofiler/cells.tif'),
+        nuclei = temp(phenotyping_dir + '{path}/cellprofiler/nuclei.tif'),
         #puncta = phenotyping_dir + '{path}/cellprofiler/puncta.tif',
         #lines = phenotyping_dir + '{path}/cellprofiler/lines.tif',
     run:
@@ -175,7 +175,7 @@ rule copy_cellprofiler_output:
     input:
         cell_file = phenotyping_dir + '{path}/cellprofiler/{pipeline}/Cells.csv'
     output:
-        data = phenotyping_dir + '{path}/cellprofiler_{pipeline,[^./]+}.csv',
+        data = temp(phenotyping_dir + '{path}/cellprofiler_{pipeline,[^./]+}.csv'),
     run:
         import pandas
         '''

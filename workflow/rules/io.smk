@@ -54,7 +54,7 @@ if os.path.exists(rawinput_dir):
         output:
             #expand(input_dir + '{well_base}/cycle{cycle}/tile{tile}.tif', tile=tiles, allow_missing=True)
             #input_dir + '{well_base}/cycle{cycle}/tile{tile}.tif'
-            input_dir + '{well_base}/tile{tile}/cycle{cycle}.tif',
+            temp(input_dir + '{well_base}/tile{tile}/cycle{cycle}.tif'),
         resources:
             mem_mb = 10000
         run:
@@ -76,7 +76,7 @@ if os.path.exists(rawinput_dir):
         input:
             input_dir + '{well}/cycle{cycle}.tif'
         output:
-            input_dir + '{well}/tile{tile}/cycle{cycle}.tif'
+            temp(input_dir + '{well}/tile{tile}/cycle{cycle}.tif'),
         run:
             import tifffile
 
@@ -178,7 +178,7 @@ if os.path.exists(rawinput_dir):
         input:
             get_nd2filename,
         output:
-            input_dir + '{well_base}/cycle{cycle}/raw.tif',
+            temp(input_dir + '{well_base}/cycle{cycle}/raw.tif'),
         resources:
             mem_mb = lambda wildcards, input: input.size_mb * 2 + 5000,
         run:
