@@ -87,18 +87,25 @@ rule copy_cellprofiler_files:
         #puncta = phenotyping_dir + '{path}/puncta_mask.tif',
         #lines = phenotyping_dir + '{path}/line_mask.tif',
     output:
-        file_list = phenotyping_dir + '{path}/cellprofiler/files.csv',
-        images = expand(phenotyping_dir + '{path}/cellprofiler/channel{channel}.tif', channel=range(len(config['phenotyping_channels'])), allow_missing=True),
-        cells = temp(phenotyping_dir + '{path}/cellprofiler/cells.tif'),
-        nuclei = temp(phenotyping_dir + '{path}/cellprofiler/nuclei.tif'),
+        file_list = phenotyping_dir + '{path}/cellprofiler{cycle}/files.csv',
+        images = expand(phenotyping_dir + '{path}/cellprofiler{cycle}/channel{channel}.tif', channel=range(len(config['phenotyping_channels'])), allow_missing=True),
+        cells = temp(phenotyping_dir + '{path}/cellprofiler{cycle}/cells.tif'),
+        nuclei = temp(phenotyping_dir + '{path}/cellprofiler{cycle}/nuclei.tif'),
         #puncta = phenotyping_dir + '{path}/cellprofiler/puncta.tif',
         #lines = phenotyping_dir + '{path}/cellprofiler/lines.tif',
+    wildcard_constraints:
+        cycle = '|_cycle\d+',
+    params:
+        cycle = parse_param('cycle', None)
     run:
         import numpy as np
         import tifffile
 
         image = tifffile.imread(input.image)
-        image = image.reshape(-1, image.shape[2], image.shape[3])
+        if params.cycle is not None:
+            image = image[params.cycle]
+        else:
+            image = image.reshape(-1, image.shape[2], image.shape[3])
 
         #remove this
         #bad_shape = tifffile.memmap(input.cells, mode='r').shape
@@ -144,10 +151,10 @@ def find_pipeline(wildcards):
 
 rule run_cellprofiler:
     input:
-        file_list = phenotyping_dir + '{path}/cellprofiler/files.csv',
-        images = expand(phenotyping_dir + '{path}/cellprofiler/channel{channel}.tif', channel=range(len(config['phenotyping_channels'])), allow_missing=True),
-        cells = phenotyping_dir + '{path}/cellprofiler/cells.tif',
-        nuclei = phenotyping_dir + '{path}/cellprofiler/nuclei.tif',
+        file_list = phenotyping_dir + '{path}/cellprofiler{cycle}/files.csv',
+        images = expand(phenotyping_dir + '{path}/cellprofiler{cycle}/channel{channel}.tif', channel=range(len(config['phenotyping_channels'])), allow_missing=True),
+        cells = phenotyping_dir + '{path}/cellprofiler{cycle}/cells.tif',
+        nuclei = phenotyping_dir + '{path}/cellprofiler{cycle}/nuclei.tif',
         #puncta = phenotyping_dir + '{path}/cellprofiler/puncta.tif',
         #lines = phenotyping_dir + '{path}/cellprofiler/lines.tif',
         pipeline = find_pipeline,
@@ -155,7 +162,7 @@ rule run_cellprofiler:
     output:
         #data = phenotyping_dir + '{path}/cellprofiler_{pipeline,[^./]+}.csv',
         #mark = phenotyping_dir + '{path}/cellprofiler/{pipeline,[^./]+}/mark',
-        cell_file = phenotyping_dir + '{path}/cellprofiler/{pipeline}/Cells.csv'
+        cell_file = phenotyping_dir + '{path}/cellprofiler{cycle,|_cycle\d+}/{pipeline}/Cells.csv'
     params:
         cellprofiler_executable = config['phenotyping'].get('cellprofiler_executable', 'cellprofiler'),
     resources:
@@ -173,9 +180,9 @@ rule run_cellprofiler:
 
 rule copy_cellprofiler_output:
     input:
-        cell_file = phenotyping_dir + '{path}/cellprofiler/{pipeline}/Cells.csv'
+        cell_file = phenotyping_dir + '{path}/cellprofiler{cycle}/{pipeline}/Cells.csv'
     output:
-        data = temp(phenotyping_dir + '{path}/cellprofiler_{pipeline,[^./]+}.csv'),
+        data = temp(phenotyping_dir + '{path}/cellprofiler{cycle,|_cycle\d+}_{pipeline,[^./]+}.csv'),
     run:
         import pandas
         '''

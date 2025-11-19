@@ -70,7 +70,7 @@ def find_all_tables(wildcards):
     paths = [output_dir + name + '{suffix}.csv' for name in well_names]
     return paths
 
-print ('({well_pat})(-({well_pat}))+'.format(well_pat='|'.join(wells + [well.replace('well', '') for well in wells])))
+#print ('({well_pat})(-({well_pat}))+'.format(well_pat='|'.join(wells + [well.replace('well', '') for well in wells])))
 
 rule merge_all_well_tables:
     input:
