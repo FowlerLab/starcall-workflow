@@ -471,7 +471,7 @@ rule split_grid_composite:
         import constitch
 
         inpcomposite = constitch.load(input.composite, constraints=False)
-        image = np.empty((inpcomposite.boxes.points1.max(axis=0) - inpcomposite.boxes.points2.min(axis=0)))
+        image = np.empty((inpcomposite.boxes.points2.max(axis=0) - inpcomposite.boxes.points1.min(axis=0)))
         debug(image.shape)
         grid_size = int(wildcards.grid_size)
 
