@@ -212,5 +212,5 @@ output_dir: 'output/'
 # are all considered phenotyping cycles.
 phenotype_date: 'phenotype'
 # The cycle name for each phenotyping cycle, to be stored in input/ and such.
-phenotype_cycles: ['PT']
+#phenotype_cycles: ['PT']
 
