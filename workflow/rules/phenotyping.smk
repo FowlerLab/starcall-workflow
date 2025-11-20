@@ -20,6 +20,8 @@ rule calc_features:
         image = get_phenotyping_pt,
     output:
         features = phenotyping_dir + '{path}/features.csv'
+    resources:
+        mem_mb = lambda wildcards, input, attempt: input.size_mb * 2 + 5000
     run:
         import tifffile
         import numpy as np
