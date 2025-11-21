@@ -96,7 +96,7 @@ rule copy_cellprofiler_files:
         #puncta = phenotyping_dir + '{path}/cellprofiler/puncta.tif',
         #lines = phenotyping_dir + '{path}/cellprofiler/lines.tif',
     wildcard_constraints:
-        cycle = '|_cycle\d+',
+        cycle = '|cycle\d+',
     params:
         cycle = parse_param('cycle', None)
     run:
@@ -164,7 +164,7 @@ rule run_cellprofiler:
     output:
         #data = phenotyping_dir + '{path}/cellprofiler_{pipeline,[^./]+}.csv',
         #mark = phenotyping_dir + '{path}/cellprofiler/{pipeline,[^./]+}/mark',
-        cell_file = phenotyping_dir + '{path}/cellprofiler{cycle,|_cycle\d+}/{pipeline}/Cells.csv'
+        cell_file = phenotyping_dir + '{path}/cellprofiler{cycle,|cycle\d+}/{pipeline}/Cells.csv'
     params:
         cellprofiler_executable = config['phenotyping'].get('cellprofiler_executable', 'cellprofiler'),
     resources:
@@ -184,7 +184,7 @@ rule copy_cellprofiler_output:
     input:
         cell_file = phenotyping_dir + '{path}/cellprofiler{cycle}/{pipeline}/Cells.csv'
     output:
-        data = temp(phenotyping_dir + '{path}/cellprofiler{cycle,|_cycle\d+}_{pipeline,[^./]+}.csv'),
+        data = temp(phenotyping_dir + '{path}/cellprofiler{cycle,|cycle\d+}_{pipeline,[^./]+}.csv'),
     run:
         import pandas
         '''
