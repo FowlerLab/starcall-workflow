@@ -1,6 +1,6 @@
 #!/bin/bash
 
-#conda activate ops 2> /dev/null
+conda activate ops 2> /dev/null
 
 #test -e logs || mkdir logs
 #test -e logs/latest && rm -r logs/latest

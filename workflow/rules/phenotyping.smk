@@ -97,15 +97,17 @@ rule copy_cellprofiler_files:
         #lines = phenotyping_dir + '{path}/cellprofiler/lines.tif',
     wildcard_constraints:
         cycle = '|cycle\d+',
-    params:
-        cycle = parse_param('cycle', None)
+    #params:
+        #cycle = parse_param('cycle', None)
     run:
         import numpy as np
         import tifffile
 
         image = tifffile.imread(input.image)
-        if params.cycle is not None:
-            image = image[params.cycle]
+        if wildcards.cycle != '':
+            cycle = int(wildcards.cycle[5:])
+            debug(wildcards.cycle, cycle)
+            image = image[cycle]
         else:
             image = image.reshape(-1, image.shape[2], image.shape[3])
 
