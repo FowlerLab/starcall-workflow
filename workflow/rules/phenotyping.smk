@@ -175,7 +175,7 @@ rule run_cellprofiler:
         #'../envs/cellprofiler.yaml'
     #retries: 2
     shell:
-        '{params.cellprofiler_executable} -c -r -p {input.pipeline} -i ' + phenotyping_dir + '{wildcards.path}/cellprofiler -o ' + phenotyping_dir + '{wildcards.path}/cellprofiler/{wildcards.pipeline}'
+        '{params.cellprofiler_executable} -c -r -p {input.pipeline} -i ' + phenotyping_dir + '{wildcards.path}/cellprofiler{wildcards.cycle} -o ' + phenotyping_dir + '{wildcards.path}/cellprofiler{wildcards.cycle}/{wildcards.pipeline}'
         # This command will ignore error from cellprofiler, sometimes necessary if there is a bug:
         #'cellprofiler -c -r -p {input.pipeline} -i ' + phenotyping_dir + '{wildcards.path}/cellprofiler -o ' + phenotyping_dir + '{wildcards.path}/cellprofiler/{wildcards.pipeline} || (test $? = 1 -o $? = 137 && echo \'""\' > {output.cell_file} )'
         #'~/miniconda3/envs/cp4/bin/cellprofiler -c -r -p {input.pipeline} -i ' + phenotyping_dir + '{wildcards.path}/cellprofiler -o ' + phenotyping_dir + '{wildcards.path}/cellprofiler/{wildcards.pipeline}'
