@@ -389,7 +389,7 @@ rule stitch_well_pt:
         mins *= phenotype_scale
         mins //= bases_scale
         maxes *= phenotype_scale
-        maxes // bases_scale
+        maxes //= bases_scale
 
         tifffile.imwrite(output.image, stitch_well_section(input.images_pt, input.composites_pt, mins, maxes))
 
