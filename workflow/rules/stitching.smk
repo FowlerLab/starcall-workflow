@@ -298,7 +298,7 @@ rule stitch_well:
 ## stitching smaller sections, ie subsets, tiles
 ##################################################
 
-def stitch_well_section(image_paths, composite_paths, mins, maxes, merger='efficient_nearest'):
+def stitch_well_section(image_paths, composite_paths, mins, maxes, merger='efficient_nearest', phenotype=False):
     import tifffile
     import constitch
     import starcall.correction
@@ -314,7 +314,10 @@ def stitch_well_section(image_paths, composite_paths, mins, maxes, merger='effic
         composite.images = images
 
         if full_image is None:
-            full_image = np.zeros((len(image_paths), images.shape[3], maxes[0] - mins[0], maxes[1] - mins[1]), images.dtype)
+            max_num_channels = images.shape[3]
+            if phenotype:
+                max_num_channels = max(len(channels) for channels in config['phenotyping_channels'])
+            full_image = np.zeros((len(image_paths), max_num_channels, maxes[0] - mins[0], maxes[1] - mins[1]), images.dtype)
             debug (full_image.shape)
 
         final_image = composite.stitch(
@@ -322,7 +325,7 @@ def stitch_well_section(image_paths, composite_paths, mins, maxes, merger='effic
             maxes = maxes,
             #merger = constitch.EfficientNearestMerger(),
             merger = 'efficient_' + merger if merger in ('mean', 'nearest') else merger,
-            out = full_image[i].transpose(1,2,0),
+            out = full_image[i,:images.shape[3]].transpose(1,2,0),
             prevent_resize = True,
         )
 
@@ -391,7 +394,7 @@ rule stitch_well_pt:
         maxes *= phenotype_scale
         maxes //= bases_scale
 
-        tifffile.imwrite(output.image, stitch_well_section(input.images_pt, input.composites_pt, mins, maxes))
+        tifffile.imwrite(output.image, stitch_well_section(input.images_pt, input.composites_pt, mins, maxes, phenotype=True))
 
 
 rule stitch_well_section:
@@ -446,7 +449,7 @@ rule stitch_well_section_pt:
         maxes *= phenotype_scale
         maxes // bases_scale
 
-        tifffile.imwrite(output.image, stitch_well_section(input.images, input.composites, mins, maxes))
+        tifffile.imwrite(output.image, stitch_well_section(input.images, input.composites, mins, maxes, phenotype=True))
 
 
 ##################################################
@@ -537,7 +540,7 @@ rule stitch_tile_well_pt:
         box.size //= bases_scale
         debug(box)
 
-        tifffile.imwrite(output.image, stitch_well_section(input.images_pt, input.composites_pt, box.point1, box.point2))
+        tifffile.imwrite(output.image, stitch_well_section(input.images_pt, input.composites_pt, box.point1, box.point2, phenotype=True))
 
 
 

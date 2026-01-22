@@ -127,14 +127,18 @@ wildcard_constraints:
 
     segmentation_type = 'cells|nuclei|cellsbases|nucleibases',
 
+all_phenotyping_channels = []
+for channels in config['phenotyping_channels']:
+    all_phenotyping_channels.extend(channels)
+
 # Regex for use with wildcard constraints
 phenotyping_channel_regex = '(' + '|'.join('{}|{}'.format(i, re.escape(name))
-            for i, name in enumerate(config['phenotyping_channels'])) + ')'
+            for i, name in enumerate(all_phenotyping_channels)) + ')'
 sequencing_channel_regex = '(' + '|'.join('{}|{}'.format(i, name)
             for i, name in enumerate(config['sequencing_channels'])) + ')'
 # only matches channels in both sequencing and phenotyping
 any_channel_regex = ('(' + '|'.join(map(str, range(min(len(config['sequencing_channels']), len(config['sequencing_channels'])))))
-    + '|' + '|'.join(map(re.escape, set(config['sequencing_channels']) & set(config['phenotyping_channels']))) + ')')
+    + '|' + '|'.join(map(re.escape, set(config['sequencing_channels']) & set(all_phenotyping_channels))) + ')')
 
 assert all(let in config['sequencing_channels'] for let in 'GTAC')
 
@@ -181,11 +185,29 @@ def param_constraint(name, pattern):
 def params_regex(*params):
     return '(' + ''.join('(_{}[^_]*)?'.format(name) for name in params) + ')'
 
-def channel_index(channel, kind=None, cycle=None):
+
     if kind is None and cycle is not None:
         kind = 'phenotyping' if cycle in phenotype_cycles else 'sequencing'
     if type(channel) == str:
         return config[kind+'_channels'].index(channel)
+    return channel
+
+def channel_index_phenotyping(channel):
+    cycle = 0
+    while channel not in config['phenotyping_channels'][cycle]:
+        cycle += 1
+    return cycle, config['phenotyping_channels'][cycle].index(channel)
+
+def channel_index(channel, kind=None, cycle=None):
+    if type(channel) == str:
+        if kind is None and cycle is not None:
+            kind = 'phenotyping' if cycle in phenotype_cycles else 'sequencing'
+
+        if kind == 'phenotyping':
+            cycle = phenotype_cycles.index(cycle)
+            return config['phenotyping_channels'][cycle].index(channel)
+        elif kind == 'sequencing':
+            return config['sequencing_channels'].index(channel)
     return channel
 
 ashlar_params_nooverlap  = [name.replace('_', '') for name in config['stitching']['ashlar'].keys()]

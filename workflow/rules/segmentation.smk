@@ -37,14 +37,14 @@ rule segment_nuclei:
         import tifffile
         import starcall.segmentation
 
-        nuclearchannel = channel_index(params.nuclearchannel, kind='phenotyping')
+        nuclearchannel = channel_index_phenotyping(params.nuclearchannel)
 
         data = tifffile.memmap(input[0], mode='r')
         if data.shape[3] < 32:
             data = data.transpose(3,0,1,2)
-        data = data.reshape(-1, *data.shape[2:])
+        #data = data.reshape(-1, *data.shape[2:])
 
-        dapi = data[nuclearchannel]
+        dapi = data[nuclearchannel[0],nuclearchannel[1]]
         if np.all(dapi == 0):
             tifffile.imwrite(output[0], data[0])
         else:
@@ -54,6 +54,7 @@ rule segment_nuclei:
             tifffile.imwrite(output[0], nuclei)
 
 
+print (config['phenotyping_channels'])
 rule segment_cells:
     """ Segments phenotype images to find cell boundaries, used to group reads and calculate cell phenotype features.
     Takes two channels as input, a nuclear channel and a cytoplasm channel.
@@ -86,16 +87,12 @@ rule segment_cells:
         import logging
         import skimage.segmentation
 
-        nuclearchannel = channel_index(params.nuclearchannel, kind='phenotyping')
-        cytochannel = channel_index(params.cytochannel, kind='phenotyping')
+        nuclearchannel = channel_index_phenotyping(params.nuclearchannel)
+        cytochannel = channel_index_phenotyping(params.cytochannel)
 
         use_gpu = hasattr(resources, 'cuda') and resources.cuda == 1
 
-        if type(nuclearchannel) == str:
-            nuclearchannel = config['phenotyping_channels'].index(nuclearchannel)
-
-        if type(cytochannel) == str:
-            cytochannel = config['phenotyping_channels'].index(cytochannel)
+        debug ('channel indices', nuclearchannel, cytochannel)
 
         logging.basicConfig(level=logging.INFO)
 
@@ -104,12 +101,12 @@ rule segment_cells:
         if data.shape[3] < 32:
             data = data.transpose(3,0,1,2)
         debug (data.shape)
-        data = data.reshape(-1, *data.shape[2:])
+        #data = data.reshape(-1, *data.shape[2:])
 
         debug(data.shape)
 
-        dapi = data[nuclearchannel]
-        cyto = data[cytochannel]
+        dapi = data[nuclearchannel[0],nuclearchannel[1]]
+        cyto = data[cytochannel[0],cytochannel[1]]
         if np.all(dapi == 0) or np.all(cyto == 0):
             tifffile.imwrite(output[0], data[0])
         else:

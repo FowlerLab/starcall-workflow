@@ -90,38 +90,45 @@ rule copy_cellprofiler_files:
         #lines = phenotyping_dir + '{path}/line_mask.tif',
     output:
         file_list = phenotyping_dir + '{path}/cellprofiler{cycle}/files.csv',
-        images = expand(phenotyping_dir + '{path}/cellprofiler{cycle}/channel{channel}.tif', channel=range(len(config['phenotyping_channels'])), allow_missing=True),
+        images = expand(phenotyping_dir + '{path}/cellprofiler{cycle}/channel{channel}.tif', channel=range(len(config['phenotyping']['channels'])), allow_missing=True),
         cells = temp(phenotyping_dir + '{path}/cellprofiler{cycle}/cells.tif'),
         nuclei = temp(phenotyping_dir + '{path}/cellprofiler{cycle}/nuclei.tif'),
         #puncta = phenotyping_dir + '{path}/cellprofiler/puncta.tif',
         #lines = phenotyping_dir + '{path}/cellprofiler/lines.tif',
     wildcard_constraints:
         cycle = '|cycle\d+',
-    #params:
+    params:
         #cycle = parse_param('cycle', None)
+        channels = config['phenotyping'].get('channels', None),
     run:
         import numpy as np
         import tifffile
+
+        channel_indices = [(0, i) for i in range(len(config['phenotyping']['channels']))]
 
         image = tifffile.imread(input.image)
         if wildcards.cycle != '':
             cycle = int(wildcards.cycle[5:])
             debug(wildcards.cycle, cycle)
-            image = image[cycle]
+            image = image[cycle:cycle+1]
         else:
-            image = image.reshape(-1, image.shape[2], image.shape[3])
+            if params.channels is not None:
+                #image = image.reshape(-1, image.shape[2], image.shape[3])
+                channel_indices = list(map(channel_index_phenotyping, params.channels))
 
+        debug (params.channels)
+        debug (channel_indices)
         #remove this
         #bad_shape = tifffile.memmap(input.cells, mode='r').shape
 
         with open(output.file_list, 'w') as ofile:
             if len(input) > 3:
-                ofile.write(','.join(['FileName_CH{}'.format(i) for i in range(len(config['phenotyping_channels']))]) + ',FileName_Cells,FileName_Nuclei,FileName_Puncta,FileName_Line\n')
+                ofile.write(','.join(['FileName_CH{}'.format(i) for i in range(len(channel_indices))]) + ',FileName_Cells,FileName_Nuclei,FileName_Puncta,FileName_Line\n')
             else:
-                ofile.write(','.join(['FileName_CH{}'.format(i) for i in range(len(config['phenotyping_channels']))]) + ',FileName_Cells,FileName_Nuclei\n')
+                ofile.write(','.join(['FileName_CH{}'.format(i) for i in range(len(channel_indices))]) + ',FileName_Cells,FileName_Nuclei\n')
             for i,path in enumerate(output.images):
                 ofile.write(os.path.basename(path) + ',')
-                tifffile.imwrite(path, image[i])
+                tifffile.imwrite(path, image[channel_indices[i][0],channel_indices[i][1]])
                 #tifffile.imwrite(path, image[i,:bad_shape[0],:bad_shape[1]])
 
             for path in input[1:]:
