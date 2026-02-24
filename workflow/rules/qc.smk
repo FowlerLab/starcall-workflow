@@ -740,3 +740,52 @@ rule make_alignment_error_plot:
             return all_results
 
 
+rule make_variant_cell_images:
+    input:
+        image = stitching_dir + '{well}/raw_pt.tif',
+        #cells_mask = segmentation_dir + '{well}/cells_mask.tif',
+        cells_table = segmentation_dir + '{well}_grid/cells.csv',
+        reads_table = sequencing_dir + '{well}_grid/cells_reads.csv',
+    output:
+        outdir = directory(output_dir + '{well}_{column}_images{num}{radius}/'),
+    params:
+        num = parse_param('num', 5),
+        radius = parse_param('radius', 100),
+    wildcard_constraints:
+        num = '|_num\d+',
+        radius = '|_radius\d+',
+        column = '[^_]+',
+    run:
+        import tifffile
+        import numpy as np
+        import pandas
+
+        column = wildcards.column
+
+        image = tifffile.imread(input.image)
+        image = image.reshape(image.shape[0] * image.shape[1], image.shape[2], image.shape[3])
+        #cells_mask = tifffile.imread(input.cells_mask)
+        cells_table = pandas.read_csv(input.cells_table, index_col=0)
+        reads_table = pandas.read_csv(input.reads_table, index_col=0)
+        table = pandas.concat([cells_table, reads_table], axis=1, join='inner')
+
+        os.mkdir(output.outdir)
+
+        for variant_name, group in table.groupby(column):
+            if len(variant_name) > 10: continue
+            debug (variant_name, group)
+            concat_image = np.zeros((image.shape[0], params.num * params.radius, params.num * params.radius), image.dtype)
+            debug (concat_image.shape)
+            for i, cellindex in enumerate(list(group.index[:params.num*params.num])):
+                x1, y1 = int(table['xpos'][cellindex]) - params.radius // 2, int(table['ypos'][cellindex]) - params.radius // 2
+                x2, y2 = x1 + params.radius, y1 + params.radius
+                debug ('  ', x1, y1, x2, y2)
+                section = image[:,x1:x2,y1:y2]
+                x, y = i // params.num * params.radius, i % params.num * params.radius
+                concat_image[:,x:x+section.shape[1],y:y+section.shape[2]] = section
+                debug ('  ', x1, y1, x2, y2, section.shape)
+
+            tifffile.imwrite(output.outdir + '/{}.tif'.format(variant_name), concat_image)
+
+
+
