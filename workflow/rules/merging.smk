@@ -85,8 +85,10 @@ rule merge_all_well_tables:
         # sequence of well names joined by '-'
         wells = '({well_pat})(-({well_pat}))+'.format(well_pat='|'.join(wells + [well.replace('well', '') for well in wells])),
     run:
+        well_names = wildcards.wells.split('-')
+        well_names = [('well' + name if name not in wells and ('well' + name) in wells else name) for name in well_names]
         merge_csv_files(input.tables, output.table, extra_columns=['well'],
-                row_func=lambda row: {'well': wells[row['file_index']]})
+                row_func=lambda row: {'well': well_names[row['file_index']]})
 
 rule convert_to_parquet:
     input:
