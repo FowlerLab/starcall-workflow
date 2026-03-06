@@ -127,6 +127,9 @@ wildcard_constraints:
 
     segmentation_type = 'cells|nuclei|cellsbases|nucleibases',
 
+if type(config['phenotyping_channels'][0]) != list:
+    config['phenotyping_channels'] = [config['phenotyping_channels']]
+
 all_phenotyping_channels = []
 for channels in config['phenotyping_channels']:
     all_phenotyping_channels.extend(channels)
@@ -134,7 +137,7 @@ for channels in config['phenotyping_channels']:
 # Regex for use with wildcard constraints
 phenotyping_channel_regex = '(' + '|'.join('{}|{}'.format(i, re.escape(name))
             for i, name in enumerate(all_phenotyping_channels)) + ')'
-sequencing_channel_regex = '(' + '|'.join('{}|{}'.format(i, name)
+sequencing_channel_regex = '(' + '|'.join('{}|{}'.format(i, re.escape(name))
             for i, name in enumerate(config['sequencing_channels'])) + ')'
 # only matches channels in both sequencing and phenotyping
 any_channel_regex = ('(' + '|'.join(map(str, range(min(len(config['sequencing_channels']), len(config['sequencing_channels'])))))

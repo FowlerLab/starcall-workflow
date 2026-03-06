@@ -80,6 +80,7 @@ rule calc_features:
 ## Phenotyping with cellprofiler
 ##################################################
 
+max_num_channels = max(len(channels) for channels in config['phenotyping_channels'])
 rule copy_cellprofiler_files:
     input:
         #image = stitching_dir + '{path}/cycle' + phenotype_cycle + '.tif',
@@ -90,7 +91,7 @@ rule copy_cellprofiler_files:
         #lines = phenotyping_dir + '{path}/line_mask.tif',
     output:
         file_list = phenotyping_dir + '{path}/cellprofiler{cycle}/files.csv',
-        images = expand(phenotyping_dir + '{path}/cellprofiler{cycle}/channel{channel}.tif', channel=range(len(config['phenotyping']['channels'])), allow_missing=True),
+        images = expand(phenotyping_dir + '{path}/cellprofiler{cycle}/channel{channel}.tif', channel=range(max_num_channels), allow_missing=True),
         cells = temp(phenotyping_dir + '{path}/cellprofiler{cycle}/cells.tif'),
         nuclei = temp(phenotyping_dir + '{path}/cellprofiler{cycle}/nuclei.tif'),
         #puncta = phenotyping_dir + '{path}/cellprofiler/puncta.tif',
@@ -104,7 +105,7 @@ rule copy_cellprofiler_files:
         import numpy as np
         import tifffile
 
-        channel_indices = [(0, i) for i in range(len(config['phenotyping']['channels']))]
+        channel_indices = [(0, i) for i in range(len(config['phenotyping_channels']))]
 
         image = tifffile.imread(input.image)
         if wildcards.cycle != '':

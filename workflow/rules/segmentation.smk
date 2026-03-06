@@ -54,7 +54,6 @@ rule segment_nuclei:
             tifffile.imwrite(output[0], nuclei)
 
 
-print (config['phenotyping_channels'])
 rule segment_cells:
     """ Segments phenotype images to find cell boundaries, used to group reads and calculate cell phenotype features.
     Takes two channels as input, a nuclear channel and a cytoplasm channel.
