@@ -130,8 +130,13 @@ wildcard_constraints:
 if type(config['phenotyping_channels'][0]) != list:
     config['phenotyping_channels'] = [config['phenotyping_channels']]
 
+#assert len(set(config['sequencing_channels'])) == len(config['sequencing_channels'), (
+    #"all channels in config['sequencing_channels' must be unique")
+
 all_phenotyping_channels = []
 for channels in config['phenotyping_channels']:
+    #assert len(set(channels)) == len(channels) and all(chan not in all_phenotyping_channels for chan in channels), (
+        #"all channels in config['phenotyping_channels'] must be unique")
     all_phenotyping_channels.extend(channels)
 
 # Regex for use with wildcard constraints

@@ -80,18 +80,51 @@ rule calc_features:
 ## Phenotyping with cellprofiler
 ##################################################
 
+rule extract_cellprofiler_channel:
+    input:
+        image = get_phenotyping_pt,
+    output:
+        image = phenotyping_dir + '{path}/cellprofiler{cycle}/channel{channel,\d+\.\d+}.tif',
+    wildcard_constraints:
+        cycle = '|cycle\d+',
+    run:
+        import numpy as np
+        import tifffile
+
+        image = tifffile.memmap(input.image, mode='r')
+        cycle, chan = wildcards.channel.split('.')
+        tifffile.imwrite(output.image, image[int(cycle),int(chan)])
+
 max_num_channels = max(len(channels) for channels in config['phenotyping_channels'])
+
+def get_channels(wildcards):
+    params_channels = config['phenotyping'].get('channels', None)
+    print (params_channels, wildcards.cycle)
+    if wildcards.cycle != '':
+        cycle = int(wildcards.cycle[5:])
+        channel_indices = [(cycle, i) for i in range(len(config['phenotyping_channels']))]
+    elif params_channels is not None:
+        channel_indices = [channel_index_phenotyping(chan) for chan in params_channels]
+    else:
+        channel_indices = []
+        for cycle, channels in enumerate(config['phenotyping_channels']):
+            channel_indices.extend((cycle, i) for i in range(len(channels)))
+    print (channel_indices)
+    return [phenotyping_dir + '{path}/cellprofiler{cycle}/channel' + str(cycle) + '.' + str(chan) + '.tif' for cycle,chan in channel_indices]
+
+
 rule copy_cellprofiler_files:
     input:
         #image = stitching_dir + '{path}/cycle' + phenotype_cycle + '.tif',
-        image = get_phenotyping_pt,
+        #image = get_phenotyping_pt,
+        images = get_channels,
         cells = segmentation_dir + '{path}/cells_mask.tif',
         nuclei = segmentation_dir + '{path}/nuclei_mask.tif',
         #puncta = phenotyping_dir + '{path}/puncta_mask.tif',
         #lines = phenotyping_dir + '{path}/line_mask.tif',
     output:
         file_list = phenotyping_dir + '{path}/cellprofiler{cycle}/files.csv',
-        images = expand(phenotyping_dir + '{path}/cellprofiler{cycle}/channel{channel}.tif', channel=range(max_num_channels), allow_missing=True),
+        #images = expand(phenotyping_dir + '{path}/cellprofiler{cycle}/channel{channel}.tif', channel=range(max_num_channels), allow_missing=True),
         cells = temp(phenotyping_dir + '{path}/cellprofiler{cycle}/cells.tif'),
         nuclei = temp(phenotyping_dir + '{path}/cellprofiler{cycle}/nuclei.tif'),
         #puncta = phenotyping_dir + '{path}/cellprofiler/puncta.tif',
@@ -105,55 +138,38 @@ rule copy_cellprofiler_files:
         import numpy as np
         import tifffile
 
-        channel_indices = [(0, i) for i in range(len(config['phenotyping_channels']))]
-
-        image = tifffile.imread(input.image)
-        if wildcards.cycle != '':
-            cycle = int(wildcards.cycle[5:])
-            debug(wildcards.cycle, cycle)
-            image = image[cycle:cycle+1]
-        else:
-            if params.channels is not None:
-                #image = image.reshape(-1, image.shape[2], image.shape[3])
-                channel_indices = list(map(channel_index_phenotyping, params.channels))
-
-        debug (params.channels)
-        debug (channel_indices)
-        #remove this
-        #bad_shape = tifffile.memmap(input.cells, mode='r').shape
-
         with open(output.file_list, 'w') as ofile:
             if len(input) > 3:
-                ofile.write(','.join(['FileName_CH{}'.format(i) for i in range(len(channel_indices))]) + ',FileName_Cells,FileName_Nuclei,FileName_Puncta,FileName_Line\n')
+                ofile.write(','.join(['FileName_CH{}'.format(i) for i in range(len(input.images))]) + ',FileName_Cells,FileName_Nuclei,FileName_Puncta,FileName_Line\n')
             else:
-                ofile.write(','.join(['FileName_CH{}'.format(i) for i in range(len(channel_indices))]) + ',FileName_Cells,FileName_Nuclei\n')
-            for i,path in enumerate(output.images):
-                ofile.write(os.path.basename(path) + ',')
-                tifffile.imwrite(path, image[channel_indices[i][0],channel_indices[i][1]])
-                #tifffile.imwrite(path, image[i,:bad_shape[0],:bad_shape[1]])
+                ofile.write(','.join(['FileName_CH{}'.format(i) for i in range(len(input.images))]) + ',FileName_Cells,FileName_Nuclei\n')
 
-            for path in input[1:]:
+            for i, path in enumerate(input.images):
+                ofile.write(os.path.basename(path) + ',')
+
+            for i, path, outpath in zip(range(len(input[1:])), input[1:], output[1:]):
                 with tifffile.TiffFile(path) as cells_file:
                     dtype = cells_file.pages[0].dtype
-                    assert dtype == np.uint16, (
-                        "Segmentation input to cellprofiler must be in uint16 form. "
-                        "'{}' has dtype {}, this may be due to there being more than 65535 "
-                        "cells in the image. To solve this increase the grid size for phenotyping "
-                        " in config.yaml.".format(path, dtype))
 
-            #os.symlink(input.cells, output.cells)
-            os.symlink(os.path.relpath(input.cells, os.path.dirname(output.cells)), output.cells)
-            ofile.write(os.path.basename(output.cells))
-            os.symlink(os.path.relpath(input.nuclei, os.path.dirname(output.nuclei)), output.nuclei)
-            ofile.write(',' + os.path.basename(output.nuclei))
+                if dtype != np.uint16:
+                    image = tifffile.imread(path)
+                    if image.max() > np.iinfo(np.uint16).max:
+                        assert dtype == np.uint16, (
+                            "Segmentation input to cellprofiler must be in uint16 form. "
+                            "'{}' has dtype {}, this may be due to there being more than 65535 "
+                            "cells in the image. To solve this increase the grid size for phenotyping "
+                            " in config.yaml.".format(path, dtype))
+                    else:
+                        tifffile.imwrite(outpath, image.astype(np.uint16))
+                else:
+                    os.symlink(os.path.relpath(path, os.path.dirname(outpath)), outpath)
 
-            if len(input) > 3:
-                os.symlink(os.path.relpath(input.puncta, os.path.dirname(output.puncta)), output.puncta)
-                ofile.write(',' + os.path.basename(output.puncta))
-                os.symlink(os.path.relpath(input.lines, os.path.dirname(output.lines)), output.lines)
-                ofile.write(',' + os.path.basename(output.lines))
+                if i != 0:
+                    ofile.write(',')
+                ofile.write(os.path.basename(outpath))
 
             ofile.write('\n')
+
 
 def find_pipeline(wildcards):
     pipeline = glob.glob('*{}.cppipe'.format(wildcards.pipeline))
