@@ -15,7 +15,6 @@ elif os.path.exists('default-config.yaml'):
 include: "rules/config.smk"
 
 ### load rules ###
-include: "rules/setup.smk"
 include: "rules/io.smk"
 include: "rules/merging.smk"
 include: "rules/alignment.smk"
