@@ -15,13 +15,34 @@ elif os.path.exists('default-config.yaml'):
 include: "rules/config.smk"
 
 ### load rules ###
+
+# Contains rules for loading input files of different types (tif, nd2, different directory structures).
 include: "rules/io.smk"
+
+# Contains rules for merging the phenotype and genotype tables together, as well as any other
+# tables that were created.
 include: "rules/merging.smk"
+
+# Rules for alignment of images, calculates optimal positions for each tile in each cycle and well.
 include: "rules/alignment.smk"
+
+# Rules using the positions from alignment to create full well stitched images. Also
+# handles creating grids of tiles or smaller sections of the well.
 include: "rules/stitching.smk"
+
+# Rules for segmenting cells and nuclei, and merging the segmentations together to get a full well
+# segmentation map.
 include: "rules/segmentation.smk"
+
+# Rules that take the stitched and aligned sequencing images and extracts the sequences
 include: "rules/sequencing.smk"
+
+# Rules that extract cellular features from the phenotyping images. Includes running cellprofiler,
+# manual feature extraction or custom methods
 include: "rules/phenotyping.smk"
+
+# Quality control plots and visualziations, such as read calling plots, stitching performance plots,
+# or example cell images
 include: "rules/qc.smk"
 
 ### target rules ###
