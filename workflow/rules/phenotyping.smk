@@ -99,7 +99,6 @@ max_num_channels = max(len(channels) for channels in config['phenotyping_channel
 
 def get_channels(wildcards):
     params_channels = config['phenotyping'].get('channels', None)
-    print (params_channels, wildcards.cycle)
     if wildcards.cycle != '':
         cycle = int(wildcards.cycle[5:])
         channel_indices = [(cycle, i) for i in range(len(config['phenotyping_channels']))]
@@ -109,7 +108,6 @@ def get_channels(wildcards):
         channel_indices = []
         for cycle, channels in enumerate(config['phenotyping_channels']):
             channel_indices.extend((cycle, i) for i in range(len(channels)))
-    print (channel_indices)
     return [phenotyping_dir + '{path}/cellprofiler{cycle}/channel' + str(cycle) + '.' + str(chan) + '.tif' for cycle,chan in channel_indices]
 
 
