@@ -180,9 +180,9 @@ def find_pipeline(wildcards):
 rule run_cellprofiler:
     input:
         file_list = phenotyping_dir + '{path}/cellprofiler{cycle}/files.csv',
-        images = expand(phenotyping_dir + '{path}/cellprofiler{cycle}/channel{channel}.tif', channel=range(len(config['phenotyping_channels'])), allow_missing=True),
-        cells = phenotyping_dir + '{path}/cellprofiler{cycle}/cells.tif',
-        nuclei = phenotyping_dir + '{path}/cellprofiler{cycle}/nuclei.tif',
+        #images = expand(phenotyping_dir + '{path}/cellprofiler{cycle}/channel{channel}.tif', channel=range(len(config['phenotyping_channels'])), allow_missing=True),
+        #cells = phenotyping_dir + '{path}/cellprofiler{cycle}/cells.tif',
+        #nuclei = phenotyping_dir + '{path}/cellprofiler{cycle}/nuclei.tif',
         #puncta = phenotyping_dir + '{path}/cellprofiler/puncta.tif',
         #lines = phenotyping_dir + '{path}/cellprofiler/lines.tif',
         pipeline = find_pipeline,
