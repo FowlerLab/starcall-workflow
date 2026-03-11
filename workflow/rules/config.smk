@@ -30,6 +30,36 @@ phenotype_date = config.get('phenotype_date', 'phenotype')
 phenotype_scale = config['phenotype_scale']
 bases_scale = config['bases_scale']
 
+
+
+##### Finding all input files #####
+
+if 'inputfiles' not in config:
+    possible_files_input = []
+    for root, dirs, files in os.walk(input_dir):
+        possible_files_input.extend(root + '/' + filename for filename in files)
+
+    possible_files_raw = []
+    for root, dirs, files in os.walk(rawinput_dir, followlinks=True):
+        possible_files_raw.extend(root + '/' + filename for filename in files)
+
+    #possible_files = sorted(possible_files_input) + sorted(possible_files_raw)
+    possible_files = sorted(possible_files_raw)
+
+    detect_wells = 'wells' not in config
+    config['wells'] = []
+
+    for path in possible_files:
+        if not path.endswith('.tif') and not path.endswith('.tiff') and not path.endswith('.nd2'):
+            continue
+
+        if detect_wells:
+            if path.count('well') or path.count('Well')
+        print (path)
+
+skdjflskdjf
+
+
 if os.path.exists(rawinput_dir):
     dates = sorted(os.listdir(rawinput_dir))
     dates_pt = dates.copy()
@@ -126,6 +156,7 @@ wildcard_constraints:
     path_nogrid = '((?!_grid\d)[^.])*',
 
     segmentation_type = 'cells|nuclei|cellsbases|nucleibases',
+
 
 if type(config['phenotyping_channels'][0]) != list:
     config['phenotyping_channels'] = [config['phenotyping_channels']]
