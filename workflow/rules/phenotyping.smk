@@ -137,7 +137,7 @@ rule copy_cellprofiler_files:
         import tifffile
 
         with open(output.file_list, 'w') as ofile:
-            if len(input) > 3:
+            if len(input) - len(input.images) > 2:
                 ofile.write(','.join(['FileName_CH{}'.format(i) for i in range(len(input.images))]) + ',FileName_Cells,FileName_Nuclei,FileName_Puncta,FileName_Line\n')
             else:
                 ofile.write(','.join(['FileName_CH{}'.format(i) for i in range(len(input.images))]) + ',FileName_Cells,FileName_Nuclei\n')
