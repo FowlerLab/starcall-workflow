@@ -145,7 +145,8 @@ rule copy_cellprofiler_files:
             for i, path in enumerate(input.images):
                 ofile.write(os.path.basename(path) + ',')
 
-            for i, path, outpath in zip(range(len(input[1:])), input[1:], output[1:]):
+            startindex = len(input.images)
+            for i, path, outpath in zip(range(len(input) - startindex), input[startindex:], output[1:]):
                 with tifffile.TiffFile(path) as cells_file:
                     dtype = cells_file.pages[0].dtype
 
