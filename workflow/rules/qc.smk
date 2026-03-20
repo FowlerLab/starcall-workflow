@@ -817,11 +817,14 @@ rule make_3d_read_plot:
     output:
         #plots = expand(qc_dir + '{path}/bases_cycle{cycle}_plot.html', cycle=cycles, allow_missing=True),
         plot = qc_dir + '{path}/bases_plot.html',
+    resources:
+        #mem_mb = lambda wildcards, input: 10000 + input.size_mb * 50
+        mem_mb = 8000
     run:
         import starcall.reads
         import pandas
 
-        table = pandas.read_csv(input.bases, index_col=0)
+        table = pandas.read_csv(input.bases, nrows=50000, index_col=0)
         #make_dot_values_plot.plot_testset_plotly(table.reads.values, table.reads.sequences, output.plots)
         table.reads.plot_values(output.plot)
 
