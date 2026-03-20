@@ -811,3 +811,18 @@ rule make_variant_cell_images:
 
 
 
+rule make_3d_read_plot:
+    input:
+        bases = sequencing_dir + '{path}/bases.csv',
+    output:
+        #plots = expand(qc_dir + '{path}/bases_cycle{cycle}_plot.html', cycle=cycles, allow_missing=True),
+        plot = qc_dir + '{path}/bases_plot.html',
+    run:
+        import starcall.reads
+        import pandas
+
+        table = pandas.read_csv(input.bases, index_col=0)
+        #make_dot_values_plot.plot_testset_plotly(table.reads.values, table.reads.sequences, output.plots)
+        table.reads.plot_values(output.plot)
+
+
