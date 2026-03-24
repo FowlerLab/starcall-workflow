@@ -124,6 +124,25 @@ rule segment_cells:
             tifffile.imwrite(output[0], cells)#, compression='deflate')
 
 
+rule expand_segmentation:
+    input:
+        cells = segmentation_dir + '{path_nogrid}/{segmentation_type}_mask.tif',
+    output:
+        cells = segmentation_dir + '{path_nogrid}/{segmentation_type}expanded{size,\d+}_mask.tif',
+    resources:
+        mem_mb = lambda wildcards, input: input.size_mb * 2 + 5000,
+    run:
+        import tifffile
+        import numpy as np
+        import skimage.segmentation
+
+        size = int(wildcards.size)
+
+        cells = tifffile.imread(input.cells)
+        cells = skimage.segmentation.expand_labels(cells, size)
+        tifffile.imwrite(output.cells, cells)
+
+
 def get_segmentation_bases(wildcards):
     path = wildcards.path_nogrid.replace('_cellgrid', '_grid')
     return stitching_dir + path + '/raw.tif'
@@ -141,7 +160,7 @@ rule segment_cells_bases:
         diameter = '|_diameter\d+',
         nuclearchannel = '|_nuclearchannel' + sequencing_channel_regex,
     resources:
-        mem_mb = lambda wildcards, input: input.size_mb * 8 + 10000,
+        mem_mb = lambda wildcards, input: input.size_mb * 16 + 10000,
         #cuda = 1,
     threads: 8
     run:
@@ -188,7 +207,7 @@ rule segment_nuclei_bases:
     wildcard_constraints:
         nuclearchannel = '|_nuclearchannel' + sequencing_channel_regex,
     resources:
-        mem_mb = lambda wildcards, input: input.size_mb * 8 + 10000
+        mem_mb = lambda wildcards, input: input.size_mb * 16 + 10000
         #cuda=1
     threads: 8
     run:
@@ -229,7 +248,7 @@ rule downscale_segmentation:
 
         mask = tifffile.imread(input[0])
 
-        if wildcards.segmentation_type in ('cellsbases', 'nucleibases'):
+        if wildcards.segmentation_type.count('bases') != 0:
             tifffile.imwrite(output[0], mask)
         else:
             tifffile.imwrite(output[0], skimage.transform.rescale(mask, bases_scale/phenotype_scale, order=0))

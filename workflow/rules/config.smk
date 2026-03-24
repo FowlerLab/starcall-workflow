@@ -125,7 +125,7 @@ wildcard_constraints:
     path = '([^/]*/)*[^/.]*',
     path_nogrid = '((?!_grid\d)[^.])*',
 
-    segmentation_type = 'cells|nuclei|cellsbases|nucleibases',
+    segmentation_type = '(cells|nuclei)(|bases)(|(expanded\d+))',
 
 if type(config['phenotyping_channels'][0]) != list:
     config['phenotyping_channels'] = [config['phenotyping_channels']]
