@@ -39,11 +39,11 @@ def find_phenotype_table(wildcards):
 
 rule merge_phenotype_genotype:
     input:
-        cell_table = segmentation_dir + '{well}{possible_grid}/cells.csv',
-        reads = sequencing_dir + '{well}{possible_grid}/cells_reads.csv',
+        cell_table = segmentation_dir + '{well}{possible_grid}/{segmentation_type}.csv',
+        reads = sequencing_dir + '{well}{possible_grid}/{segmentation_type}_reads.csv',
         phenotype_tables = find_phenotype_table,
     output:
-        table = output_dir + '{well}{possible_grid}.{phenotype_type}cells_full.csv'
+        table = output_dir + '{well}{possible_grid}.{phenotype_type}{segmentation_type}_full.csv'
     resources:
         mem_mb = lambda wildcards, input: input.size_mb * 5 + 10000
     wildcard_constraints:
