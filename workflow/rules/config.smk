@@ -30,6 +30,21 @@ phenotype_date = config.get('phenotype_date', 'phenotype')
 phenotype_scale = config['phenotype_scale']
 bases_scale = config['bases_scale']
 
+##### Parsing alternative config options ####
+
+if 'wells' in config and type(config['wells']) == int:
+    config['wells'] = ['well{}'.format(i) for i in range(1, config['wells'] + 1)]
+    print (config['wells'])
+
+if 'cycles' in config:
+    if type(config['cycles']) == int:
+        config['cycles'] = ['{:02}'.format(i) for i in range(config['cycles'])]
+    if type(config['cycles'][0]) == int:
+        cycles = ['{:02}'.format(i) for i in config['cycles']]
+
+if 'phenotype_cycles' in config:
+    if type(config['phenotype_cycles']) == int:
+        config['phenotype_cycles'] = (['PT'] + ['P{}'.format(i) for i in range(1, config['phenotype_cycles'])])[:config['phenotype_cycles']]
 
 
 ##### Finding all input files #####
@@ -47,19 +62,91 @@ if 'inputfiles' not in config:
     possible_files = sorted(possible_files_raw)
 
     detect_wells = 'wells' not in config
-    config['wells'] = []
+    inputfiles = {}
 
     for path in possible_files:
-        if not path.endswith('.tif') and not path.endswith('.tiff') and not path.endswith('.nd2'):
+        if not (path.endswith('.tif') or path.endswith('.tiff') or path.endswith('.nd2')):
             continue
 
         if detect_wells:
-            if path.count('well') or path.count('Well')
-        print (path)
+            if path.count('well') or path.count('Well'):
+                well = path.replace('Well', 'well')
+                well = well[well.index('well'):].split('_')[0]
+                inputfiles.setdefault(well, []).append(path)
+        else:
+            matching_wells = []
+            for well in config['wells']:
+                if any(option in path for option in [well, well[:4].replace('well', 'Well') + well[4:], 'well' + well, 'Well' + well]):
+                    matching_wells.append(well)
+            matching_wells = sorted(matching_wells, key=lambda path: len(path))
+            if len(matching_wells) != 0:
+                inputfiles.setdefault(matching_wells[-1], []).append(path)
 
-skdjflskdjf
+    if detect_wells:
+        config['wells'] = list(inputfiles.keys())
 
 
+    if 'cycles' not in config:
+        cycles = ['{:02}'.format(i) for i in range(max(map(len, inputfiles.values())))]
+    else:
+        cycles = config['cycles']
+        if type(cycles) == int:
+            cycles = ['{:02}'.format(i) for i in range(cycles)]
+        if len(cycles) and type(cycles[0]) == int:
+            cycles = ['{:02}'.format(i) for i in cycles]
+
+    if 'phenotype_cycles' not in config:
+        phenotype_cycles = ['PT', 'P1', 'P2', 'P3', 'P4'][:len(phenotype_dates)]
+    else:
+        phenotype_cycles = config['phenotype_cycles']
+        if type(phenotype_cycles) == int:
+            phenotype_cycles = ['PT', 'P1', 'P2', 'P3', 'P4'][:phenotype_cycles]
+
+    detected_cycles = set()
+    detected_pt_cycles = set()
+
+    for well in inputfiles.keys():
+        cyclepaths = {}
+        index = 0
+        pt_index = 0
+        for path in inputfiles[well]:
+            if phenotype_date in path:
+                if 'phenotype_cycles' in config:
+                    if pt_index >= len(config['phenotype_cycles']): continue
+                    cycle = config['phenotype_cycles'][pt_index]
+                else:
+                    cycle = 'PT' if pt_index == 0 else 'P{}'.format(pt_index)
+                pt_index += 1
+                detected_pt_cycles.add(cycle)
+            else:
+                if 'cycles' in config:
+                    if index >= len(config['cycles']): continue
+                    cycle = config['cycles'][index]
+                else:
+                    cycle = '{:02}'.format(index)
+                index += 1
+                detected_cycles.add(cycle)
+
+            cyclepaths[cycle] = path
+
+        inputfiles[well] = cyclepaths
+
+    if 'cycles' not in config:
+        config['cycles'] = sorted(detected_cycles)
+    if 'phenotype_cycles' not in config:
+        config['phenotype_cycles'] = sorted(detected_pt_cycles)
+
+    #for well, files in inputfiles.items():
+        #print (well)
+        #print ('\n'.join('\t{}: {}'.format(*pair) for pair in files.items()))
+
+    #print (config['cycles'])
+    #print (config['phenotype_cycles'])
+
+    config['inputfiles'] = inputfiles
+
+
+"""
 if os.path.exists(rawinput_dir):
     dates = sorted(os.listdir(rawinput_dir))
     dates_pt = dates.copy()
@@ -133,6 +220,11 @@ else:
             cycles = ['{:02}'.format(i) for i in cycles]
         if type(phenotype_cycles) == int:
             phenotype_cycles = ['PT', 'P1', 'P2', 'P3', 'P4'][:phenotype_cycles]
+"""
+
+cycles = config['cycles']
+phenotype_cycles = config['phenotype_cycles']
+wells = config['wells']
 
 cycles_pt = cycles + phenotype_cycles
 #cycles_pt = sorted(cycles_pt)
@@ -257,6 +349,16 @@ ashlar_params = ashlar_params_nooverlap + ['overlap', 'input', 'ashlar']
 wildcard_constraints:
     ashlar_params = params_regex(*ashlar_params)
 
+
+def find_input_file(wildcards=None, well=None, cycle=None):
+    if well is None:
+        well = [value for key, value in wildcards.items() if key[:4] == 'well'][0]
+    if cycle is None:
+        cycle = wildcards.cycle
+    alternate_path = input_dir + '{well}/cycle{cycle}/raw.tif'.format(well=well, cycle=cycle)
+    return config['inputfiles'].get(well, {}).get(cycle, alternate_path)
+
+
 def coredump():
     if os.fork() == 0:
         os.abort()
@@ -268,13 +370,15 @@ def print_info():
     print ('  input directory:', input_dir)
     print ('  stitching directory:', stitching_dir)
     print ('  sequencing directory:', sequencing_dir)
+    print ('  segmentation directory:', segmentation_dir)
     print ('  phenotyping directory:', phenotyping_dir)
     print ('  output directory:', output_dir)
     print ()
     print ('Input found:')
-    print ('  Cycles:')
-    for cycle,date in zip(cycles_pt, dates_pt):
-        print ('    cycle' + cycle + ':', rawinput_dir + date + '/')
+    for well, files in inputfiles.items():
+        print ('  ' + well + ':')
+        print ('\n'.join('    {}: {}'.format(*pair) for pair in files.items()))
+    print ('  Cycles:', ', '.join(cycles))
     print ()
     print ('  Wells:', ', '.join(wells))
     print ()

@@ -8,9 +8,9 @@ import glob
 
 def get_phenotyping_pt(wildcards):
     if config['phenotyping']['use_corrected']:
-        return stitching_dir + '{path}/corrected_pt.tif'
+        return phenotyping_dir + '{path}/corrected_pt.tif'
     else:
-        return stitching_dir + '{path}/raw_pt.tif'
+        return phenotyping_dir + '{path}/raw_pt.tif'
 
 rule calc_features:
     input:

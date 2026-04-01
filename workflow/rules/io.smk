@@ -6,6 +6,35 @@ import math
 ##  Extracting the images and metadata from the microscope format
 ##################################################
 
+def imread(path):
+    """ Wrapper to read both tif and nd2 based on filename"""
+
+    if path.endswith('.nd2'):
+        import nd2
+        return nd2.imread(path)
+    else:
+        import tifffile
+        return tifffile.imread(path)
+
+def iminfo(path):
+    """ Reads the shape and dtype of the tif or nd2 image file without loading
+    the image data into memory
+    """
+
+    if path.endswith('.nd2'):
+        import nd2
+        ifile = nd2.ND2File(path)
+        shape, dtype         = ifile.shape, ifile.dtype
+        ifile.close()
+        return shape, dtype
+    else:
+        import tifffile
+        tmp = tifffile.memmap(path, mode='r')
+        shape, dtype = tmp.shape, tmp.dtype
+        del tmp
+        return shape, dtype
+
+
 def read_nd2(path):
     import nd2
     return nd2.imread(path)
@@ -91,7 +120,8 @@ if os.path.exists(rawinput_dir):
         and the second two are the estimated pixel position of each tile.
         """
         input:
-            get_nd2filename
+            find_input_file,
+            #get_nd2filename
         output:
             input_dir + '{well_base}/cycle{cycle}/positions.csv',
             input_dir + '{well_base}/cycle{cycle}/metadata.json',
@@ -204,7 +234,8 @@ rule make_section:
     it reduces the processing needed to stitch the well dramatically.
     """
     input:
-        images = expand(input_dir + '{well_nosubset}/cycle{cycle}/raw.tif', cycle=cycles_pt, allow_missing=True),
+        images = lambda wildcards: [find_input_file(wildcards, cycle=cycle) for cycle in cycles_pt],
+        #images = expand(input_dir + '{well_nosubset}/cycle{cycle}/raw.tif', cycle=cycles_pt, allow_missing=True),
         positions = expand(input_dir + '{well_nosubset}/cycle{cycle}/positions.csv', cycle=cycles_pt, allow_missing=True),
     output:
         images = expand(input_dir + '{well_nosubset}_subset{size,\d+}/cycle{cycle}/raw.tif', cycle=cycles_pt, allow_missing=True),
@@ -217,10 +248,10 @@ rule make_section:
 
         all_poses = []
         mins, maxes = [], []
-        for path in input.positions:
+        for path, cycle in zip(input.positions, cycles_pt):
             poses = np.loadtxt(path, delimiter=',', dtype=int)
             cur_mins, cur_maxes = poses[:,:2].min(axis=0), poses[:,:2].max(axis=0)
-            if any(path.count('cycle' + cycle) for cycle in phenotype_cycles):
+            if cycle in phenotype_cycles:
                 cur_mins = np.round(cur_mins * bases_scale / phenotype_scale)
                 cur_maxes = np.round(cur_maxes * bases_scale / phenotype_scale)
             all_poses.append(poses)
@@ -243,19 +274,28 @@ rule make_section:
         low_bound = center - (tile_size // 2)
         high_bound = center + tile_size - (tile_size // 2)
 
-        for i, poses, path in zip(range(len(all_poses)), all_poses, input.images):
+        for i, poses, path, cycle in zip(range(len(all_poses)), all_poses, input.images, cycles_pt):
             low, high = low_bound, high_bound
-            if any(path.count('cycle' + cycle) for cycle in phenotype_cycles):
+            if cycle in phenotype_cycles:
                 low = np.round(low * phenotype_scale / bases_scale)
                 high = np.round(high * phenotype_scale / bases_scale)
 
-            images = tifffile.imread(path)
+            images = imread(path)
             mask = np.all((low <= poses[:,:2]) & (poses[:,:2] < high), axis=1)
+
+            if path.endswith('.nd2'):
+                import nd2
+                with nd2.ND2File(path) as ifile:
+                    images = np.array([ifile.read_frame(i).copy() for i in np.argwhere(mask).reshape(-1)])
+            else:
+                images = tifffile.memmap(path, mode='r')[mask]
+
             debug (path, low, high)
             debug (poses[mask,:2])
 
             np.savetxt(output.positions[i], poses[mask], delimiter=',', fmt='%d')
-            tifffile.imwrite(output.images[i], images[mask])
+            debug (images.shape)
+            tifffile.imwrite(output.images[i], images)
             del images
 
 

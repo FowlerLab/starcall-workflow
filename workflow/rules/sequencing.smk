@@ -30,7 +30,7 @@ rule find_dots:
                 for each cycle and channel.
     """
     input:
-        stitching_dir + '{path}/raw.tif'
+        sequencing_dir + '{path}/raw.tif'
     output:
         sequencing_dir + '{path}/bases{min}{max}{num}.csv',
         #sequencing_dir + '{path}/dot_filter.tif',
@@ -321,7 +321,7 @@ ruleorder: segment_cells > segment_cells_bases
 
 rule annotate_dots:
     input:
-        image = stitching_dir + '{path}/raw.tif',
+        image = sequencing_dir + '{path}/raw.tif',
         bases = sequencing_dir + '{path}/bases{params}.csv',
         #'tmp_dot_greyimage.tif',
         #sequencing_dir + '{path}/clusters.csv',

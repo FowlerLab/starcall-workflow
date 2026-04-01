@@ -12,7 +12,8 @@ rule make_initial_composite:
     each cycle and between neighboring tiles
     """
     input:
-        images = expand(input_dir + '{well_stitching}/cycle{cycle}/raw.tif', cycle=cycles_pt, allow_missing=True),
+        images = lambda wildcards: [find_input_file(well=wildcards.well_stitching, cycle=cycle) for cycle in cycles_pt],
+        #images = expand(input_dir + '{well_stitching}/cycle{cycle}/raw.tif', cycle=cycles_pt, allow_missing=True),
         rawposes = expand(input_dir + '{well_stitching}/cycle{cycle}/positions.csv', cycle=cycles_pt, allow_missing=True),
     output:
         composite = stitching_dir + '{well_stitching}/initial_composite.json',
@@ -20,7 +21,6 @@ rule make_initial_composite:
     resources:
         mem_mb = 5000
     run:
-        import tifffile
         import constitch
         import numpy as np
 
@@ -31,7 +31,9 @@ rule make_initial_composite:
 
             poses = np.loadtxt(input.rawposes[i], delimiter=',', dtype=int)
             poses = poses[:,:2]
-            images = tifffile.memmap(input.images[i], mode='r')[:,0]
+            #images = tifffile.memmap(input.images[i], mode='r')[:,0]
+            shape, dtype = iminfo(input.images[i])
+            images = np.empty(shape[:1] + shape[2:], dtype)
             debug(poses.shape, images.shape)
 
             subcomposite.add_images(images, poses, scale='tile')
@@ -71,8 +73,10 @@ rule calculate_constraints:
     """
     input:
         composite = stitching_dir + '{well_stitching}/initial_composite.json',
-        images1 = input_dir + '{well_stitching}/cycle{cycle1}/raw.tif',
-        images2 = input_dir + '{well_stitching}/cycle{cycle2}/raw.tif',
+        images1 = lambda wildcards: find_input_file(well=wildcards.well_stitching, cycle=wildcards.cycle1),
+        images2 = lambda wildcards: find_input_file(well=wildcards.well_stitching, cycle=wildcards.cycle2),
+        #images1 = input_dir + '{well_stitching}/cycle{cycle1}/raw.tif',
+        #images2 = input_dir + '{well_stitching}/cycle{cycle2}/raw.tif',
     output:
         constraints = stitching_dir + '{well_stitching}/cycle{cycle1}/cycle{cycle2}/constraints{channel}{subpix}.json',
         plot = qc_dir + '{well_stitching}/cycle{cycle1}_cycle{cycle2}_scores_calculated{channel}{subpix}.png',
@@ -86,7 +90,6 @@ rule calculate_constraints:
         mem_mb = lambda wildcards, input: input.size_mb + 5000
     threads: 1
     run:
-        import tifffile
         import constitch
         import concurrent.futures
         import numpy as np
@@ -97,14 +100,16 @@ rule calculate_constraints:
 
         executor = concurrent.futures.ThreadPoolExecutor(max_workers=max(2, threads))
         composite = constitch.load(input.composite, debug=True, progress=True, executor=executor)
-        images = tifffile.memmap(input.images1, mode='r')
-        images = images[:,channel_index(alignment_channel,cycle=cycles_pt[cycle1])]
+        #images = tifffile.memmap(input.images1, mode='r')
+        images = imread(input.images1)
+        images = images[:,channel_index(alignment_channel,cycle=cycles_pt[cycle1])].copy()
 
         composite.layer(cycle1).setimages(images)
 
         if cycle1 != cycle2:
-            images = tifffile.memmap(input.images2, mode='r')
-            images = images[:,channel_index(alignment_channel,cycle=cycles_pt[cycle2])]
+            #images = tifffile.memmap(input.images2, mode='r')
+            images = imread(input.images2)
+            images = images[:,channel_index(alignment_channel,cycle=cycles_pt[cycle2])].copy()
             composite.layer(cycle2).setimages(images)
 
             def constraint_filter(const):

@@ -6,9 +6,9 @@ import re
 def get_segmentation_pt(wildcards):
     path = wildcards.path_nogrid.replace('_cellgrid', '_grid')
     if config['segmentation']['use_corrected']:
-        return stitching_dir + path + '/corrected_pt.tif'
+        return segmentation_dir + path + '/corrected_pt.tif'
     else:
-        return stitching_dir + path + '/raw_pt.tif'
+        return segmentation_dir + path + '/raw_pt.tif'
 
 rule segment_nuclei:
     """ Uses Stardist to segment the nuclei of cells in the phenotyping
@@ -126,7 +126,7 @@ rule segment_cells:
 
 def get_segmentation_bases(wildcards):
     path = wildcards.path_nogrid.replace('_cellgrid', '_grid')
-    return stitching_dir + path + '/raw.tif'
+    return segmentation_dir + path + '/raw.tif'
 
 rule segment_cells_bases:
     input:
@@ -461,6 +461,17 @@ rule merge_grid_segmentation:
         del composite
         tifffile.imwrite(output.image, full_image)
 
+def get_segmentation_grid(wildcards):
+    grid_size = int(wildcards.grid_size)
+    numbers = ['{:02}'.format(i) for i in range(grid_size)]
+    return expand(segmentation_dir + '{well}_cellgrid{grid_size}/tile{x}x{y}y/{segmentation_type}.csv', x=numbers, y=numbers, allow_missing=True)
+
+rule merge_segmentation_tables:
+    input:
+        tables = get_segmentation_grid,
+        composite = stitching_dir + '{well}_grid{grid_size}/grid_composite.json',
+    output:
+        table = segmentation_dir + '{well}_'
 
 segmentation_grid_size = config.get('segmentation_grid_size', 1)
 
