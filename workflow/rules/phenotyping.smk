@@ -84,7 +84,7 @@ rule extract_cellprofiler_channel:
     input:
         image = get_phenotyping_pt,
     output:
-        image = phenotyping_dir + '{path}/cellprofiler{cycle}/channel{channel,\d+\.\d+}.tif',
+        image = temp(phenotyping_dir + '{path}/cellprofiler{cycle}/channel{channel,\d+\.\d+}.tif'),
     wildcard_constraints:
         cycle = '|cycle\d+',
     run:
@@ -147,6 +147,7 @@ rule copy_cellprofiler_files:
 
             startindex = len(input.images)
             for i, path, outpath in zip(range(len(input) - startindex), input[startindex:], output[1:]):
+                debug (i, path, outpath)
                 with tifffile.TiffFile(path) as cells_file:
                     dtype = cells_file.pages[0].dtype
 
@@ -161,7 +162,8 @@ rule copy_cellprofiler_files:
                     else:
                         tifffile.imwrite(outpath, image.astype(np.uint16))
                 else:
-                    os.symlink(os.path.relpath(path, os.path.dirname(outpath)), outpath)
+                    #os.symlink(os.path.relpath(path, os.path.dirname(outpath)), outpath)
+                    os.link(path, outpath)
 
                 if i != 0:
                     ofile.write(',')
@@ -180,8 +182,9 @@ rule run_cellprofiler:
     input:
         file_list = phenotyping_dir + '{path}/cellprofiler{cycle}/files.csv',
         #images = expand(phenotyping_dir + '{path}/cellprofiler{cycle}/channel{channel}.tif', channel=range(len(config['phenotyping_channels'])), allow_missing=True),
-        #cells = phenotyping_dir + '{path}/cellprofiler{cycle}/cells.tif',
-        #nuclei = phenotyping_dir + '{path}/cellprofiler{cycle}/nuclei.tif',
+        images = get_channels,
+        cells = phenotyping_dir + '{path}/cellprofiler{cycle}/cells.tif',
+        nuclei = phenotyping_dir + '{path}/cellprofiler{cycle}/nuclei.tif',
         #puncta = phenotyping_dir + '{path}/cellprofiler/puncta.tif',
         #lines = phenotyping_dir + '{path}/cellprofiler/lines.tif',
         pipeline = find_pipeline,
@@ -193,7 +196,7 @@ rule run_cellprofiler:
     params:
         cellprofiler_executable = config['phenotyping'].get('cellprofiler_executable', 'cellprofiler'),
     resources:
-        mem_mb = lambda wildcards, input, attempt: input.size_mb * 150 + 55000 #+ (attempt - 1) * 200000
+        mem_mb = lambda wildcards, input, attempt: input.size_mb * 15 + 55000 #+ (attempt - 1) * 200000
     threads: 2
     conda:
         'cp4'
