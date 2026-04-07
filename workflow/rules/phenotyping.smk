@@ -12,6 +12,87 @@ def get_phenotyping_pt(wildcards):
     else:
         return phenotyping_dir + '{path}/raw_pt.tif'
 
+
+rule make_cell_images:
+    """ Create small crops of each cell segmented, useful if the cell images are being provided
+    to an image embedding network or similar procedure. The images are cropped to a set size, specified
+    in the output filename, with the centroid of the cell in the center of the image. The output
+    tifffile has shape (num_cells, num_channels, window_size, window_size). In addition the cell masks
+    are cropped and saved as boolean masks with shape (num_cells, window_size, window_size)
+    """
+    input:
+        image = get_phenotyping_pt,
+        cells = segmentation_dir + '{path}/{segmentation_type}_mask.tif',
+        cell_table = segmentation_dir + '{path}/{segmentation_type}.csv',
+    output:
+        cell_images = phenotyping_dir + '{path}/{segmentation_type}_crops_{window,\d+}.tif',
+        mask_images = phenotyping_dir + '{path}/{segmentation_type}_mask_crops_{window,\d+}.tif',
+    resources:
+        mem_mb = lambda wildcards, input: input.size_mb * 2.5 + 5000
+    run:
+        import numpy as np
+        import tifffile
+        import pandas
+        
+        #cell_table = np.genfromtxt(input.cell_table, delimiter=',', dtype=None, names=None)
+        cell_table = pandas.read_csv(input.cell_table, index_col=0)
+
+        if len(cell_table.index) == 0:
+            os.system('touch {}'.format(output.cell_images))
+            os.system('touch {}'.format(output.mask_images))
+
+        else:
+            cells = tifffile.imread(input.cells)
+            image = tifffile.imread(input.image)
+
+            image = image.reshape(-1, *image.shape[2:])
+            debug (image.shape)
+
+            window = int(wildcards.window)
+            window_low = window // 2
+            window_high = window - window_low
+
+            cell_images = np.zeros((len(cell_table), image.shape[0], window, window), image.dtype)
+            mask_images = np.zeros((len(cell_table), window, window), dtype=np.uint8) # bool images are not memory mappable
+
+            for i, cell_index in enumerate(cell_table.index):
+                debug (cell_index)
+                centroid = int(cell_table['xpos'][cell_index]), int(cell_table['ypos'][cell_index])
+                x1, x2, y1, y2 = centroid[0] - window_low, centroid[0] + window_high, centroid[1] - window_low, centroid[1] + window_high
+                x1, x2, y1, y2 = max(0, x1), min(cells.shape[0], x2), max(0, y1), min(cells.shape[1], y2)
+                debug (x1, x2, y1, y2)
+                subset = image[:,x1:x2,y1:y2]
+                mask = cells[x1:x2,y1:y2] == i + 1
+                x1, x2 = window_low - (centroid[0] - x1), window_low + (x2 - centroid[0])
+                y1, y2 = window_low - (centroid[1] - y1), window_low + (y2 - centroid[1])
+                cell_images[i,:,x1:x2,y1:y2] = subset
+                mask_images[i,x1:x2,y1:y2] = mask
+
+            tifffile.imwrite(output.cell_images, cell_images)
+            tifffile.imwrite(output.mask_images, mask_images)
+
+rule extract_embeddings:
+    input:
+        cell_images = phenotyping_dir + '{path}/cells_crops_100.tif',
+        cells = segmentation_dir + '{path}/cells.csv',
+    output:
+        embeddings = phenotyping_dir + '{path}/embeddings_morphem{cycle,|_cycle\d+}.csv',
+    resources:
+        mem_mb = lambda wildcards, input: input.size_mb * 5 + 5000,
+        cuda = 1,
+    run:
+        import starcall.embedding
+        import pandas
+        import tifffile
+
+        images = tifffile.imread(input.cell_images)
+        features = starcall.embedding.morphem(images, device='cuda')
+
+        cells_table = pandas.read_csv(input.cells, index_col=0)
+
+        feature_table = pandas.DataFrame({'morphem-{:04}'.format(i): features[:,i] for i in range(features.shape[1])}, index=cells_table.index)
+        feature_table.to_csv(output.embeddings)
+
 rule calc_features:
     input:
         cell_table = segmentation_dir + '{path}/cells.csv',

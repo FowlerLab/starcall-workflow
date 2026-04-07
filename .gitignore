@@ -1,8 +1,10 @@
 __pycache__
 *.pyc
+/.snakemake/
 /rawinput/
 /input/
 /stitching/
+/segmentation/
 /sequencing/
 /phenotyping/
 /output/

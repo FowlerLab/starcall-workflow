@@ -50,6 +50,7 @@ rule segment_nuclei:
         else:
             del data
             nuclei = starcall.segmentation.segment_nuclei(dapi, method=params.method)
+            nuclei = skimage.segmentation.clear_border(nuclei)
             debug ('Found', nuclei.max(), 'nuclei')
             tifffile.imwrite(output[0], nuclei)
 
@@ -118,6 +119,7 @@ rule segment_cells:
                 diameter = params.diameter,
                 gpu = use_gpu,
             )
+            cells = skimage.segmentation.clear_border(cells)
 
             debug ('Found', cells.max(), 'cells')
 
@@ -263,8 +265,8 @@ rule make_cell_overlay:
         image = get_segmentation_pt,
         cells = segmentation_dir + '{path_nogrid}/{segmentation_type}_mask{params}.tif',
     output:
-        qc_dir + '{path_nogrid}/{segmentation_type}_overlay{params}.tif',
-        qc_dir + '{path_nogrid}/{segmentation_type}_overlay{params}.png',
+        qc_dir + '{path_nogrid,.*}/{segmentation_type}_overlay{params}.tif',
+        qc_dir + '{path_nogrid,.*}/{segmentation_type}_overlay{params}.png',
     wildcard_constraints:
         params = params_regex('diameter', 'nuclearchannel', 'cytochannel'),
     resources:
@@ -335,64 +337,6 @@ else:
             "cp -l {input[0]} {output[0]}"
 
 
-rule make_cell_images:
-    """ Create small crops of each cell segmented, useful if the cell images are being provided
-    to an image embedding network or similar procedure. The images are cropped to a set size, specified
-    in the output filename, with the centroid of the cell in the center of the image. The output
-    tifffile has shape (num_cells, num_channels, window_size, window_size). In addition the cell masks
-    are cropped and saved as boolean masks with shape (num_cells, 2 (cell and nuclear), window_size, window_size)
-    """
-    input:
-        #image = stitching_dir + '{path}/cycle' + phenotype_cycle + '.tif',
-        image = get_segmentation_pt,
-        cells = segmentation_dir + '{path_nogrid}/cells_mask.tif',
-        nuclei = segmentation_dir + '{path_nogrid}/nuclei_mask.tif',
-        #cells_nuclei = processing_dir + '{path}/cells_nuclei_mask.tif',
-        cell_table = segmentation_dir + '{path_nogrid}/cells.csv',
-    output:
-        cell_images = segmentation_dir + '{path_nogrid}/cell_images_{window,\d+}.tif',
-        mask_images = segmentation_dir + '{path_nogrid}/mask_images_{window,\d+}.tif',
-        #mask_nuclei_images = processing_dir + '{path}/mask_nuclei_images_{window,\d+}.tif',
-    resources:
-        mem_mb = lambda wildcards, input: input.size_mb * 2.5 + 5000
-    run:
-        import numpy as np
-        import tifffile
-        import pandas
-        
-        #cell_table = np.genfromtxt(input.cell_table, delimiter=',', dtype=None, names=None)
-        cell_table = pandas.read_csv(input.cell_table, index_col=0)
-        cells = tifffile.imread(input.cells)
-        nuclei = tifffile.imread(input.nuclei)
-        image = tifffile.imread(input.image)
-
-        image = image.reshape(-1, *image.shape[2:])
-        debug (image.shape)
-
-        window = int(wildcards.window)
-        window_low = window // 2
-        window_high = window - window_low
-
-        cell_images = np.zeros((len(cell_table), image.shape[0], window, window), image.dtype)
-        mask_images = np.zeros((len(cell_table), 2, window, window), dtype=bool)
-
-        for i, cell_index in enumerate(cell_table.index):
-            debug (cell_index)
-            centroid = int(cell_table['xpos'][cell_index]) * 2, int(cell_table['ypos'][cell_index]) * 2
-            x1, x2, y1, y2 = centroid[0] - window_low, centroid[0] + window_high, centroid[1] - window_low, centroid[1] + window_high
-            x1, x2, y1, y2 = max(0, x1), min(image.shape[1], x2), max(0, y1), min(image.shape[2], y2)
-            subset = image[:,x1:x2,y1:y2]
-            mask = cells[x1:x2,y1:y2] == cell_index, nuclei[x1:x2,y1:y2] == cell_index
-            x1, x2 = window_low - (centroid[0] - x1), window_low + (x2 - centroid[0])
-            y1, y2 = window_low - (centroid[1] - y1), window_low + (y2 - centroid[1])
-            cell_images[i,:,x1:x2,y1:y2] = subset
-            mask_images[i,0,x1:x2,y1:y2] = mask[0]
-            mask_images[i,1,x1:x2,y1:y2] = mask[1]
-
-        tifffile.imwrite(output.cell_images, cell_images)
-        tifffile.imwrite(output.mask_images, mask_images)
-
-
 rule tabulate_cells:
     """ Simple information is recorded about the segmented cells, such as position, bbox.
     """
@@ -440,6 +384,7 @@ def get_grid_filenames(wildcards):
     numbers = ['{:02}'.format(i) for i in range(grid_size)]
     return expand(segmentation_dir + '{well}_cellgrid{grid_size}/tile{x}x{y}y/{segmentation_type}_mask_unmatched.tif', x=numbers, y=numbers, allow_missing=True)
 
+'''
 rule merge_grid_segmentation:
     """ If cell segmentation was run on a grid of tiles, the segmentations must be merged together.
     For each cell mask in an overlapping region between tiles, a possible match is found based on overlap.
@@ -451,7 +396,7 @@ rule merge_grid_segmentation:
         images = get_grid_filenames,
         composite = stitching_dir + '{well}_grid{grid_size}/grid_composite.json',
     output:
-        image = segmentation_dir + '{well}_cellgrid{grid_size,\d+}/{segmentation_type}_mask_unmatched.tif',
+        image = segmentation_dir + '{well}_cellgrid{grid_size,\d+}/{segmentation_type}_mask_unmatched3.tif',
     resources:
         mem_mb = lambda wildcards, input: input.size_mb * 10 + 25000
     run:
@@ -474,11 +419,16 @@ rule merge_grid_segmentation:
         composite.boxes.positions[:,:2] //= bases_scale
         composite.boxes.sizes[:,:2] *= phenotype_scale
         composite.boxes.sizes[:,:2] //= bases_scale
-        merger = constitch.MaskMerger(dtype=dtype)
+        merger = constitch.EfficientMaskMerger(dtype=dtype)
 
         full_image = composite.stitch(merger=merger)
         del composite
+        
+        max_label, num_unique = full_image.max(), np.unique(full_image).shape[0]
+        debug ('Max label', max_label, 'Num unique', num_unique)
+        assert max_label == num_unique - 1
         tifffile.imwrite(output.image, full_image)
+'''
 
 def get_segmentation_grid(wildcards):
     grid_size = int(wildcards.grid_size)
@@ -490,27 +440,322 @@ rule merge_segmentation_tables:
         tables = get_segmentation_grid,
         composite = stitching_dir + '{well}_grid{grid_size}/grid_composite.json',
     output:
-        table = segmentation_dir + '{well}_'
+        #table = segmentation_dir + '{well}_cellgrid{grid_size,\d+}/{segmentation_type}.csv',
+        mappings = segmentation_dir + '{well}_cellgrid{grid_size,\d+}/{segmentation_type}_mappings.csv',
+    resources:
+        mem_mb = lambda wildcards, input: input.size_mb * 10 + 10000
+    run:
+        import pandas
+        import numpy as np
+        import constitch
+        import sklearn.neighbors
+        import matplotlib.pyplot as plt
+
+        overlap_threshold = 0.5
+
+        composite = constitch.load(input.composite)
+
+        # scaling from base images to phenotype
+        composite.boxes.positions[:,:2] *= phenotype_scale
+        composite.boxes.positions[:,:2] //= bases_scale
+        composite.boxes.sizes[:,:2] *= phenotype_scale
+        composite.boxes.sizes[:,:2] //= bases_scale
+
+        tables = []
+        boxes = []
+        table_indices = []
+        cell_indices = []
+        for i,path in enumerate(input.tables):
+            table = pandas.read_csv(path, index_col=0)
+            tables.append(table)
+
+            boxes.extend(constitch.BBox(
+                    point1=[table['bbox_x1'][j] + composite.boxes[i].point1[0],
+                        table['bbox_y1'][j] + composite.boxes[i].point1[1]],
+                    point2=[table['bbox_x2'][j] + composite.boxes[i].point1[0],
+                        table['bbox_y2'][j] + composite.boxes[i].point1[1]])
+                        for j in table.index)
+
+            for j in table.index:
+                box = constitch.BBox(
+                        point1=[table['bbox_x1'][j] + composite.boxes[i].point1[0],
+                            table['bbox_y1'][j] + composite.boxes[i].point1[1]],
+                        point2=[table['bbox_x2'][j] + composite.boxes[i].point1[0],
+                            table['bbox_y2'][j] + composite.boxes[i].point1[1]])
+                if box.size.max() > 1000:
+                    debug (box.point1, box.point2)
+                    debug (
+                        'point1', [table['bbox_x1'][j] + composite.boxes[i].point1[0],
+                            table['bbox_y1'][j] + composite.boxes[i].point1[1]],
+                        'point2', [table['bbox_x2'][j] + composite.boxes[i].point1[0],
+                            table['bbox_y2'][j] + composite.boxes[i].point1[1]])
+                    debug ('tile box', composite.boxes[i].point1, composite.boxes[i].point2)
+                    debug (table['bbox_x1'][j], table['bbox_y1'][j], table['bbox_x2'][j], table['bbox_y2'][j])
+                    debug (i, j)
+                    skjdflskjdflsk
+
+            table_indices.extend([i] * len(table.index))
+            cell_indices.extend(table.index)
+
+
+        largest_cell = max(np.linalg.norm(box.size) for box in boxes)
+        centers = np.array([box.center for box in boxes])
+        debug ('centers', centers.shape, largest_cell)
+
+        neighbors = sklearn.neighbors.NearestNeighbors(n_neighbors=5).fit(centers)
+        distances, indices = neighbors.radius_neighbors(centers, radius=largest_cell)
+        debug ('found neighbors', distances.shape)
+
+        fig, axes = plt.subplots(figsize=(50,50))
+        fig2, axes2 = plt.subplots(figsize=(50,50))
+        fig3, axes3 = plt.subplots(figsize=(50,50))
+        for i, ibox in enumerate(composite.boxes):
+            ibox.plot(axes)
+            ibox.plot(axes2)
+            ibox.plot(axes3, color='C{}'.format(i%10))
+
+        matches = {}
+        matches_reverse = {}
+        to_remove = set()
+        for i in range(len(boxes)):
+            should_be_matched = sum(box.intersection(boxes[i]).area() > 0 for box in composite.boxes) > 1
+
+            dists_to_others = []
+            for k, other_image_box in enumerate(composite.boxes):
+                if k == table_indices[i]: continue
+                #dist_to_edge = np.minimum(boxes[i].point2 - other_image_box.point1, other_image_box.point2 - boxes[i].point1).min()
+                dist_to_edge = np.minimum(boxes[i].point1 - other_image_box.point1, other_image_box.point2 - boxes[i].point2).min()
+                dists_to_others.append(dist_to_edge)
+
+            image_box = composite.boxes[table_indices[i]]
+            dist_to_edge = np.minimum(boxes[i].point2 - image_box.point1, image_box.point2 - boxes[i].point1).min()
+            #dist_to_edge = np.minimum(box.point1 - image_box.point1, image_box.point2 - box.point2).min()
+            #print (dists_to_others, dist_to_edge, file=sys.stderr)
+            if any((dist > dist_to_edge) for dist in dists_to_others):
+                #boxes[i].plot(axes3)
+                debug ('too farr', boxes[i].point1, boxes[i].point2)
+                to_remove.add(i)
+                continue
+
+            for j, dist in zip(indices[i], distances[i]):
+                if table_indices[i] == table_indices[j]:
+                    continue
+
+                area = boxes[i].intersection(boxes[j]).area()
+                if area / boxes[i].area() >= overlap_threshold and area / boxes[j].area() >= overlap_threshold:
+                    pair = [i, j]
+                    if pair[0] > pair[1]: pair = [pair[1], pair[0]]
+
+                    while pair[0] in matches:
+                        pair[0] = matches[pair[0]]
+
+                    boxes[pair[0]].plot(axes, color='C{}'.format(i % 10))
+                    boxes[pair[1]].plot(axes, color='C{}'.format(i % 10))
+
+                    matches[pair[1]] = pair[0]
+                    matches_reverse[pair[0]] = pair[1]
+                    break
+            else:
+                if should_be_matched:
+                    boxes[i].plot(axes2)
+                    boxes[i].plot(axes, color='grey')
+                #else:
+                    #boxes[i].plot(axes2, color='grey')
+
+        fig.savefig('tmp_boxes_matched_50p.png')
+        fig2.savefig('tmp_boxes_matched2_50p.png')
+
+        mapping = []
+        label = 1
+        for i in range(len(boxes)):
+            if i in matches:
+                mapping.append(mapping[matches[i]])
+            elif i in to_remove and i not in matches_reverse:
+                boxes[i].plot(axes3, color='C{}'.format(table_indices[i]%10))
+                mapping.append(0)
+            else:
+                mapping.append(label)
+                label += 1
+
+        fig3.savefig('tmp_boxes_matched3_50p.png')
+
+        mapping_table = pandas.DataFrame(dict(table_index=table_indices, cell=cell_indices, new_cell=mapping))
+        mapping_table.to_csv(output.mappings)
+
+        """
+        full_table = pandas.concat(tables, ignore_index=True)
+        full_table['cell'] = mapping
+        full_table = full_table.drop_duplicates(subset='cell', keep='first')
+        full_table = full_table.set_index('cell')
+        #full_table = full_table.set_index(mapping)
+        full_table.to_csv(output.table)
+
+        dtype = [dtype for dtype in [np.uint16, np.uint32, np.uint64] if np.iinfo(dtype).max > len(boxes) + 1][0]
+
+        # scaling from base images to phenotype
+        composite.boxes.positions[:,:2] *= phenotype_scale
+        composite.boxes.positions[:,:2] //= bases_scale
+        composite.boxes.sizes[:,:2] *= phenotype_scale
+        composite.boxes.sizes[:,:2] //= bases_scale
+
+        merger = constitch.EfficientMaskMerger(dtype=dtype)
+
+        mapping_table = dict(table_index=[], cell=[], new_cell=[])
+        #filtered_tables = []
+
+        for i, table in enumerate(tables):
+            boxes = [constitch.BBox(
+                    point1=[table['bbox_x1'][i] + composite.boxes[i].point1[0],
+                        table['bbox_x2'][i] + composite.boxes[i].point2[0]],
+                    point2=[table['bbox_y1'][i] + composite.boxes[i].point1[1],
+                        table['bbox_y2'][i] + composite.boxes[i].point2[1]])
+                        for i in table.index]
+            mapping = merger.find_mapping(composite.boxes[i], boxes)
+
+            mapping_table['table_index'].extend(i for j in range(len(table.index)))
+            mapping_table['cell'].extend(table.index)
+            mapping_table['new_cell'].extend(mapping)
+
+        mapping_table = pandas.DataFrame(mapping_table).set_index('table_index')
+        mapping_table.to_csv(output.mappings)
+        """
+
+def get_cells_mapping(wildcards):
+    if config['segmentation'].get('match_masks', False):
+        return (segmentation_dir + '{well}_cellgrid{grid_size,\d+}/'
+                + wildcards.segmentation_type.replace('cells', 'nuclei')
+                + '_mappings.csv')
+    return segmentation_dir + '{well}_cellgrid{grid_size,\d+}/{segmentation_type}_mappings.csv'
+
+rule merge_tables_mapping:
+    input:
+        tables = get_segmentation_grid,
+        mappings = get_cells_mapping,
+        composite = stitching_dir + '{well}_grid{grid_size}/grid_composite.json',
+        #mappings = lambda wildcards: (segmentation_dir + '{well}_cellgrid{grid_size,\d+}/'
+                #+ (wildcards.segmentation_type.replace('cells', 'nuclei')
+                    #if config['segmentation'].get('match_masks', False) else wildcards.segmentation_type)
+                #+ '_mappings.csv')
+    output:
+        table = segmentation_dir + '{well}_cellgrid{grid_size,\d+}/{segmentation_type}.csv',
+    resources:
+        mem_mb = lambda wildcards, input: input.size_mb * 10 + 10000
+    run:
+        import pandas
+        import numpy as np
+        import constitch
+
+        composite = constitch.load(input.composite)
+
+        # scaling from base images to phenotype
+        composite.boxes.positions[:,:2] *= phenotype_scale
+        composite.boxes.positions[:,:2] //= bases_scale
+        composite.boxes.sizes[:,:2] *= phenotype_scale
+        composite.boxes.sizes[:,:2] //= bases_scale
+
+        tables = []
+        for i,path in enumerate(input.tables):
+            table = pandas.read_csv(path, index_col=0)
+            table['bbox_x1'] += composite.boxes[i].point1[0]
+            table['bbox_y1'] += composite.boxes[i].point1[1]
+            table['bbox_x2'] += composite.boxes[i].point1[0]
+            table['bbox_y2'] += composite.boxes[i].point1[1]
+            tables.append(table)
+
+        mapping_table = pandas.read_csv(input.mappings)
+
+        full_table = pandas.concat(tables, ignore_index=True)
+        full_table['cell'] = mapping_table['new_cell']
+        full_table = full_table.drop_duplicates(subset='cell', keep='first')
+        full_table = full_table.set_index('cell')
+        full_table = full_table.sort_index()
+        full_table.to_csv(output.table)
+        
+
+ruleorder: merge_segmentation_tables > tabulate_cells
+
+def stitch_segmentation_section(image_paths, composite_path, mappings_path, section_box, section_table_path):
+    import constitch
+    import numpy as np
+    import tifffile
+    import pandas
+
+    composite = constitch.load(composite_path)
+
+    # scaling from base images to phenotype
+    composite.boxes.positions[:,:2] *= phenotype_scale
+    composite.boxes.positions[:,:2] //= bases_scale
+    composite.boxes.sizes[:,:2] *= phenotype_scale
+    composite.boxes.sizes[:,:2] //= bases_scale
+
+    table = pandas.read_csv(section_table_path, index_col=0)
+
+    dtype = [dtype for dtype in [np.uint16, np.uint32, np.uint64] if np.iinfo(dtype).max > len(table.index) + 1][0]
+    touching_indices = [i for i, box in enumerate(composite.boxes) if box.collides(section_box)]
+
+    #composite.images = [tifffile.memmap(path, mode='r') for path in image_paths]
+
+    composite.images = []
+    mapping_table = pandas.read_csv(mappings_path)
+
+    second_mapping = {table.index[i]: i+1 for i in range(len(table.index))}
+
+    for i in range(len(composite.boxes)):
+        if i not in touching_indices:
+            composite.images.append(np.empty((1, 1), dtype))
+            continue
+
+        image = tifffile.imread(image_paths[i])
+        mapping = mapping_table[mapping_table['table_index']==i]
+        mapping_arr = np.zeros(mapping['cell'].max() + 1, dtype)
+        for cell, newcell in zip(mapping['cell'], mapping['new_cell']):
+            mapping_arr[cell] = second_mapping.get(newcell, 0)
+
+        debug (mapping_arr.shape, image.max())
+        debug (max(second_mapping.keys()), max(second_mapping.values()))
+        debug (mapping['cell'].max(), mapping['new_cell'].max())
+        image = mapping_arr[image]
+        composite.images.append(image)
+
+    debug (len(composite.boxes), len(composite.images), len(image_paths))
+    merger = constitch.EfficientNearestMerger()
+
+    full_image = composite.stitch(merger=merger, indices=touching_indices, mins=section_box.point1, maxes=section_box.point2)
+    del composite
+    
+    max_label, num_unique = full_image.max(), np.unique(full_image).shape[0]
+    debug ('Max label', max_label, 'Num unique', num_unique)
+    #assert max_label == num_unique - 1
+
+    return full_image
+
+
+
+
+
 
 segmentation_grid_size = config.get('segmentation_grid_size', 1)
 
 def get_grid_size_file(wildcards):
     grid_size = config.get('segmentation_{}_grid_size'.format(wildcards.segmentation_type), segmentation_grid_size)
     if grid_size == 1:
-        return segmentation_dir + '{well}/{segmentation_type}_mask_unmatched.tif'
-    return segmentation_dir + '{well}_cellgrid' + str(grid_size) + '/{segmentation_type}_mask_unmatched.tif',
+        return segmentation_dir + '{well}/{segmentation_type}{filetype}'
+    return segmentation_dir + '{well}_cellgrid' + str(grid_size) + '/{segmentation_type}{filetype}',
 
 rule link_merged_grid:
     input:
         get_grid_size_file,
     output:
-        segmentation_dir + '{well}_grid/{segmentation_type}_mask_unmatched.tif',
+        segmentation_dir + '{well}_grid/{segmentation_type}{filetype,.csv|_mask.tif}',
     localrule: True
     shell:
         "cp -l {input[0]} {output[0]}"
 
 ruleorder: link_merged_grid > segment_cells
 ruleorder: link_merged_grid > segment_nuclei
+ruleorder: link_merged_grid > match_masks
+ruleorder: link_merged_grid > tabulate_cells
+ruleorder: merge_tables_mapping > tabulate_cells
 
 
 rule split_grid_table:
@@ -521,10 +766,10 @@ rule split_grid_table:
     contained in any tile (>20%) this step will fail and the overlap should be increased.
     """
     input:
-        table = segmentation_dir + '{well}_grid/cells.csv',
+        table = segmentation_dir + '{well}_grid/{segmentation_type}.csv',
         composite = stitching_dir + '{well}_grid{grid_size}/grid_composite.json',
     output:
-        table = segmentation_dir + '{well}_grid{grid_size,\d+}/tile{x,\d+}x{y,\d+}y/cells.csv'
+        table = segmentation_dir + '{well}_grid{grid_size,\d+}/tile{x,\d+}x{y,\d+}y/{segmentation_type}.csv'
     resources:
         mem_mb = lambda wildcards, input: 5000 + input.size_mb * 2
     run:
@@ -593,7 +838,47 @@ rule split_grid_table:
         table['ypos'] -= box.position[1]
         table.to_csv(output.table)
 
+def get_grid_filenames(wildcards):
+    grid_size = int(wildcards.grid_size)
+    numbers = ['{:02}'.format(i) for i in range(segmentation_grid_size)]
+    return expand(segmentation_dir + '{well}_cellgrid' + str(segmentation_grid_size)
+                + '/tile{x}x{y}y/{segmentation_type}_mask.tif', x=numbers, y=numbers, allow_missing=True)
 
+def get_cells_mapping2(wildcards):
+    if config['segmentation'].get('match_masks', False):
+        return (segmentation_dir + '{well}_cellgrid' + str(segmentation_grid_size) + '/'
+                + wildcards.segmentation_type.replace('cells', 'nuclei')
+                + '_mappings.csv')
+    return segmentation_dir + '{well}_cellgrid{grid_size,\d+}/{segmentation_type}_mappings.csv'
+
+rule stitch_tile_segmentation:
+    input:
+        images = get_grid_filenames,
+        composite = stitching_dir + '{well}_grid' + str(segmentation_grid_size) + '/grid_composite.json',
+        #mappings = segmentation_dir + '{well}_cellgrid' + str(segmentation_grid_size) + '/{segmentation_type}_mappings.csv',
+        mappings = get_cells_mapping2,
+        composite2 = stitching_dir + '{well}_grid{grid_size}/grid_composite.json',
+        table = segmentation_dir + '{well}_grid{grid_size}/tile{x}x{y}y/{segmentation_type}.csv',
+    output:
+        image = segmentation_dir + '{well}_grid{grid_size,\d+}/tile{x,\d+}x{y,\d+}y/{segmentation_type}_mask.tif',
+    resources:
+        mem_mb = lambda wildcards, input: 5000 + input.size_mb * 2
+    run:
+        import tifffile
+        import constitch
+
+        composite = constitch.load(input.composite2)
+        # scaling from base images to phenotype
+        composite.boxes.positions[:,:2] *= phenotype_scale
+        composite.boxes.positions[:,:2] //= bases_scale
+        composite.boxes.sizes[:,:2] *= phenotype_scale
+        composite.boxes.sizes[:,:2] //= bases_scale
+        tile_index = int(wildcards.x) * int(wildcards.grid_size) + int(wildcards.y)
+
+        tifffile.imwrite(output.image, stitch_segmentation_section(input.images,
+                input.composite, input.mappings, composite.boxes[tile_index], input.table))
+
+'''
 rule split_grid_segmentation:
     """ Splits the segmentation masks into a smaller tile in a grid. Using the cell assignments made
     in the rule split_grid_table, only cells in the cell info table are copied into the segmentation mask
@@ -661,5 +946,5 @@ rule split_grid_segmentation:
             newimage = newimage.astype(dtype)
 
         tifffile.imwrite(output.image, newimage)
-
+'''
 

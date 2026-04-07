@@ -6,15 +6,27 @@ import math
 ##  Extracting the images and metadata from the microscope format
 ##################################################
 
-def imread(path):
-    """ Wrapper to read both tif and nd2 based on filename"""
+def imread(path, indices=None, mask=None):
+    """ Wrapper to read both tif and nd2 based on filename.
+    Param indices specifies a subset of indices to include, equivalent to imread(path)[indices].
+    Param mask specifies a boolean mask of images to include, also equivalent to imread(path)[mask],
+    but both don't load in the excluded images."""
 
     if path.endswith('.nd2'):
         import nd2
+        if indices is not None:
+            return np.array([ifile.read_frame(i).copy() for i in indices])
+        if mask is not None:
+            return np.array([ifile.read_frame(i).copy() for i, include in enumerate(mask) if include])
         return nd2.imread(path)
     else:
         import tifffile
-        return tifffile.imread(path)
+        image = tifffile.imread(path)
+        if indices is not None:
+            return image[indices]
+        if mask is not None:
+            return image[mask]
+        return image
 
 def iminfo(path):
     """ Reads the shape and dtype of the tif or nd2 image file without loading
@@ -280,15 +292,9 @@ rule make_section:
                 low = np.round(low * phenotype_scale / bases_scale)
                 high = np.round(high * phenotype_scale / bases_scale)
 
-            images = imread(path)
             mask = np.all((low <= poses[:,:2]) & (poses[:,:2] < high), axis=1)
 
-            if path.endswith('.nd2'):
-                import nd2
-                with nd2.ND2File(path) as ifile:
-                    images = np.array([ifile.read_frame(i).copy() for i in np.argwhere(mask).reshape(-1)])
-            else:
-                images = tifffile.memmap(path, mode='r')[mask]
+            images = imread(path, mask=mask)
 
             debug (path, low, high)
             debug (poses[mask,:2])
