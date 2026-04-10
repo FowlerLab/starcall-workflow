@@ -14,10 +14,13 @@ def imread(path, indices=None, mask=None):
 
     if path.endswith('.nd2'):
         import nd2
+        import numpy as np
         if indices is not None:
-            return np.array([ifile.read_frame(i).copy() for i in indices])
+            with nd2.ND2File(path) as ifile:
+                return np.array([ifile.read_frame(i).copy() for i in indices])
         if mask is not None:
-            return np.array([ifile.read_frame(i).copy() for i, include in enumerate(mask) if include])
+            with nd2.ND2File(path) as ifile:
+                return np.array([ifile.read_frame(i).copy() for i, include in enumerate(mask) if include])
         return nd2.imread(path)
     else:
         import tifffile

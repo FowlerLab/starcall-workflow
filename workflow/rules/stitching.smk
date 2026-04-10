@@ -482,8 +482,8 @@ rule split_grid_composite:
     input:
         composite = stitching_dir + '{well_stitching}/composite.json'
     output:
-        composite = stitching_dir + '{well_stitching}_grid{grid_size,\d+}/grid_composite.json',
-        table = stitching_dir + '{well_stitching}_grid{grid_size,\d+}/grid_positions.csv',
+        composite = '{output_dir}{well_stitching}_grid{grid_size,\d+}/grid_composite.json',
+        table = '{output_dir}{well_stitching}_grid{grid_size,\d+}/grid_positions.csv',
     resources:
         mem_mb = 5000
     run:
