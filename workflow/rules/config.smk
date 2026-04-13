@@ -85,23 +85,6 @@ if 'inputfiles' not in config:
     if detect_wells:
         config['wells'] = list(inputfiles.keys())
 
-
-    if 'cycles' not in config:
-        cycles = ['{:02}'.format(i) for i in range(max(map(len, inputfiles.values())))]
-    else:
-        cycles = config['cycles']
-        if type(cycles) == int:
-            cycles = ['{:02}'.format(i) for i in range(cycles)]
-        if len(cycles) and type(cycles[0]) == int:
-            cycles = ['{:02}'.format(i) for i in cycles]
-
-    if 'phenotype_cycles' not in config:
-        phenotype_cycles = ['PT', 'P1', 'P2', 'P3', 'P4'][:len(phenotype_dates)]
-    else:
-        phenotype_cycles = config['phenotype_cycles']
-        if type(phenotype_cycles) == int:
-            phenotype_cycles = ['PT', 'P1', 'P2', 'P3', 'P4'][:phenotype_cycles]
-
     detected_cycles = set()
     detected_pt_cycles = set()
 
