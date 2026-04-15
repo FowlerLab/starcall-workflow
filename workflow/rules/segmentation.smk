@@ -127,9 +127,9 @@ rule segment_cells:
 
 rule expand_segmentation:
     input:
-        cells = segmentation_dir + '{path}/{segmentation_type}_mask.tif',
+        cells = segmentation_dir + '{path}/{segmentation_type}_mask_unmerged.tif',
     output:
-        cells = segmentation_dir + '{path}/{segmentation_type}expanded{size,\d+}_mask.tif',
+        cells = segmentation_dir + '{path}/{segmentation_type}expanded{size,\d+}_mask_unmerged.tif',
     resources:
         mem_mb = lambda wildcards, input: input.size_mb * 2 + 5000,
     run:
@@ -302,11 +302,13 @@ if config['segmentation'].get('match_masks', False):
         nuclei and nuclei with no cells are discarded.
         """
         input:
-            cells = segmentation_dir + '{path}/cells_mask_unmatched.tif',
-            nuclei = segmentation_dir + '{path}/nuclei_mask_unmatched.tif',
+            cells = segmentation_dir + '{path}/cells{extraparams}_mask_unmatched.tif',
+            nuclei = segmentation_dir + '{path}/nuclei{extraparams}_mask_unmatched.tif',
         output:
-            cells = segmentation_dir + '{path}/cells_mask_unmerged.tif',
-            nuclei = segmentation_dir + '{path}/nuclei_mask_unmerged.tif',
+            cells = segmentation_dir + '{path}/cells{extraparams}_mask_unmerged.tif',
+            nuclei = segmentation_dir + '{path}/nuclei{extraparams}_mask_unmerged.tif',
+        wildcard_constraints:
+            extraparams = '(|bases)(|expanded\d+)',
         resources:
             mem_mb = lambda wildcards, input: input.size_mb * 5 + 5000
         run:
