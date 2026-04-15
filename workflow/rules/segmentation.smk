@@ -655,7 +655,7 @@ def get_grid_size_file(wildcards):
     grid_size = config.get('segmentation_{}_grid_size'.format(wildcards.segmentation_type), segmentation_grid_size)
     if grid_size == 1:
         return segmentation_dir + '{well}/{segmentation_type}{filetype}'
-    return segmentation_dir + '{well}_cellgrid' + str(grid_size) + '/{segmentation_type}{filetype}',
+    return segmentation_dir + '{well}_grid' + str(grid_size) + '/{segmentation_type}{filetype}',
 
 rule link_merged_grid:
     input:
@@ -788,7 +788,7 @@ def get_cells_mapping2(wildcards):
         return (segmentation_dir + '{well}_grid' + str(segmentation_grid_size) + '/'
                 + wildcards.segmentation_type.replace('cells', 'nuclei')
                 + '_mappings.csv')
-    return segmentation_dir + '{well}_cellgrid{grid_size,\d+}/{segmentation_type}_mappings.csv'
+    return segmentation_dir + '{well}_grid{grid_size,\d+}/{segmentation_type}_mappings.csv'
 
 rule stitch_tile_segmentation:
     input:
