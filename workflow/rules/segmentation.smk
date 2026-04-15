@@ -339,8 +339,10 @@ rule tabulate_cells:
     """
     input:
         cells = segmentation_dir + '{path}/{segmentation_type}_mask_unmerged.tif',
+        #cells = segmentation_dir + '{path}/{segmentation_type}_mask.tif',
     output:
         table = segmentation_dir + '{path}/{segmentation_type}_unmerged.csv',
+        #table = segmentation_dir + '{path}/{segmentation_type}.csv',
     resources:
         mem_mb = lambda wildcards, input: 5000 + input.size_mb * 1.5
     run:

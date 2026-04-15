@@ -228,7 +228,7 @@ wildcard_constraints:
     cycle = '|'.join(cycles_pt),
 
     path = '([^/]*/)*[^/.]*',
-    path_nogrid = '((?!_grid\d)[^.])*',
+    path_nogrid = '((?!_grid)[^.])*',
 
     segmentation_type = '(cells|nuclei)(|bases)(|(expanded\d+))',
 

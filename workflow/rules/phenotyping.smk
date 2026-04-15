@@ -78,7 +78,7 @@ rule extract_embeddings:
     output:
         embeddings = phenotyping_dir + '{path}/embeddings_morphem{cycle,|_cycle\d+}.csv',
     resources:
-        mem_mb = lambda wildcards, input: input.size_mb * 5 + 5000,
+        mem_mb = lambda wildcards, input: input.size_mb * 7 + 5000,
         cuda = 1,
     run:
         import starcall.embedding
@@ -86,7 +86,8 @@ rule extract_embeddings:
         import tifffile
 
         images = tifffile.imread(input.cell_images)
-        features = starcall.embedding.morphem(images, device='cuda')
+        debug (images.shape)
+        features = starcall.embedding.morphem(images, device='cuda', debug=True, progress=True)
 
         cells_table = pandas.read_csv(input.cells, index_col=0)
 
