@@ -650,7 +650,7 @@ def stitch_segmentation_section(image_paths, composite, mappings_table, section_
 
 segmentation_grid_size = config.get('segmentation_grid_size', 1)
 
-"""
+#"""
 def get_grid_size_file(wildcards):
     grid_size = config.get('segmentation_{}_grid_size'.format(wildcards.segmentation_type), segmentation_grid_size)
     if grid_size == 1:
@@ -670,7 +670,7 @@ ruleorder: link_merged_grid > segment_cells
 ruleorder: link_merged_grid > segment_nuclei
 ruleorder: link_merged_grid > match_masks
 ruleorder: link_merged_grid > tabulate_cells
-"""
+#"""
 ruleorder: merge_tables_mapping > tabulate_cells
 
 rule link_merged:
