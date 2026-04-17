@@ -4,7 +4,7 @@ import glob
 import time
 
 wildcard_constraints:
-    params_alignment = params_regex('channel', 'subpix', 'onlyfirst', 'solver', *ashlar_params),
+    params_alignment = params_regex('channel', 'subpix', 'numpeaks', 'onlyfirst', 'solver', *ashlar_params),
 
 ##################################################
 ## Background calculation / correction
@@ -572,6 +572,7 @@ rule stitch_well_ashlar_rawinput:
         images = lambda wildcards: [get_nd2filename(well=wildcards.well_stitching, cycle=cycle) for cycle in cycles]
     output:
         image = stitching_dir + '{well_stitching}/raw{ashlar_params}_inputraw_ashlar.ome.tif',
+        #image = stitching_dir + '{well_stitching}/raw{ashlar_params}_inputraw_ashlar.ome.tif.cmd',
     resources:
         mem_mb = 16000
     params:
@@ -579,6 +580,7 @@ rule stitch_well_ashlar_rawinput:
         ashlar_executable = config['stitching']['ashlar_executable'],
     shell:
         '{params.ashlar_executable} {input.images} -o {output.image} {params.params} -c 1 --output-channels 1'
+        #"echo 'ashlar {input.images} -o {output.image} {params.params} -c 1 --output-channels 1' > {output.image}"
 
 rule stitch_well_poses_ashlar_rawinput:
     input:
@@ -617,6 +619,7 @@ rule prepare_tiles_ashlar:
             for i in range(images.shape[0]):
                 chan = 1
                 path = outpath + 'cycle{:02}/chan{}_row{:03}_col{:03}.tif'.format(cycle, chan, poses[i,0], poses[i,1])
+                chan = 0
                 tifffile.imwrite(path, images[i,chan])
 
             del images
@@ -756,3 +759,31 @@ rule convert_well_ashlar:
 
 
 
+
+
+
+rule stitch_well_ashlar_mist:
+    input:
+        imagedir = expand('mist-dataset/Day{day}_Plate/{percent}Perc_Tiling', percent=[10,20,30,40,50], allow_missing=True)
+    output:
+        image = stitching_dir + 'well_mist_day{day}/raw{params}_mist_ashlar.ome.tif',
+    wildcard_constraints:
+        params = params_regex(*ashlar_params_nooverlap),
+    resources:
+        mem_mb = 16000
+    run:
+        import tifffile
+        import numpy as np
+
+        flags = parse_ashlar_params(wildcards.params)
+        filepattern = []
+        for i, dirpath in enumerate(input.imagedir):
+            filepattern.append("'filepattern|{}/|pattern=img_w1_r{{row:03}}_c{{col:03}}_t000000000_Cy5_000.tif|overlap={}'".format(
+                        dirpath, (i + 1) / 10))
+        filepattern = ' '.join(filepattern)
+
+        command = config['stitching']['ashlar_executable'] + ' {} -o {} {}'.format(
+                filepattern, output.image, flags)
+        debug(command)
+
+        assert os.system(command) == 0

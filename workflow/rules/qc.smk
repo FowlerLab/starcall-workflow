@@ -639,7 +639,7 @@ rule make_alignment_error_plot:
     output:
         plot = qc_dir + '{path}/alignment_error{params}.svg',
     wildcard_constraints:
-        params = params_regex('channel', 'subpix', 'sigma', 'input', 'ashlar'),
+        params = params_regex('channel', 'subpix', 'sigma', 'solver', 'merger', *ashlar_params),#'input', 'ashlar'),
     resources:
         #mem_mb = lambda wildcards, input: 5000 + input.size_mb / 3
         mem_mb = 16000
@@ -739,4 +739,36 @@ rule make_alignment_error_plot:
 
             return all_results
 
+
+rule make_alignment_scores_table:
+    input:
+        composite = qc_dir + '{path}/alignment_scores{params}.json',
+    output:
+        table = qc_dir + '{path}/alignment_scores{params}.csv',
+        #plot = qc_dir + '{path}/alignment_scores{params}.svg',
+    wildcard_constraints:
+        #params = params_regex('channel', 'subpix', 'solver', 'sigma', 'input', 'ashlar'),
+        params = params_regex('channel', 'subpix', 'onlyfirst', 'solver', *ashlar_params, 'merger')
+    resources:
+        #mem_mb = lambda wildcards, input: 5000 + input.size_mb / 3
+        mem_mb = 16000
+    run:
+        import constitch
+        import numpy as np
+        import pandas
+
+        composite, constraints = constitch.load(input.composite)
+
+        poses = np.array([const.box1.position[:2] for const in constraints])
+        cycle1 = np.array([const.box1.position[2] for const in constraints])
+        cycle2 = np.array([const.box2.position[2] for const in constraints])
+        alignment = np.array([(const.dx, const.dy) for const in constraints])
+        scores = np.array([const.score for const in constraints])
+
+        table = pandas.DataFrame(dict(
+            pixel_x=poses[:,0], pixel_y=poses[:,1], cycle1=cycle1, cycle2=cycle2,
+            alignment_dx=alignment[:,0], alignment_dy=alignment[:,1],
+            alignment_error=np.linalg.norm(alignment, axis=1), scores=scores))
+
+        table.to_csv(output.table)
 

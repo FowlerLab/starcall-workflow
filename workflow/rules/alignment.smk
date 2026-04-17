@@ -30,14 +30,14 @@ rule make_initial_composite:
             subcomposite = composite.layer(i)
 
             poses = np.loadtxt(input.rawposes[i], delimiter=',', dtype=int)
-            poses = poses[:,:2]
             images = tifffile.memmap(input.images[i], mode='r')[:,0]
             debug(poses.shape, images.shape)
 
-            if i == 11:
-                poses[:,0] += 1
+            #if i == 11:
+                #poses[:,0] += 1
 
-            subcomposite.add_images(images, poses, scale='tile')
+            #subcomposite.add_images(images, poses[:,:2], scale='tile')
+            subcomposite.add_images(images, poses[:,2:], scale='pixel')
             subcomposite.setimages([None] * len(subcomposite.images))
 
             if cycle in phenotype_cycles:
@@ -77,14 +77,16 @@ rule calculate_constraints:
         images1 = input_dir + '{well_stitching}/cycle{cycle1}/raw.tif',
         images2 = input_dir + '{well_stitching}/cycle{cycle2}/raw.tif',
     output:
-        constraints = stitching_dir + '{well_stitching}/cycle{cycle1}/cycle{cycle2}/constraints{channel}{subpix}.json',
-        plot = qc_dir + '{well_stitching}/cycle{cycle1}_cycle{cycle2}_scores_calculated{channel}{subpix}.png',
+        constraints = stitching_dir + '{well_stitching}/cycle{cycle1}/cycle{cycle2}/constraints{channel}{subpix}{numpeaks}.json',
+        plot = qc_dir + '{well_stitching}/cycle{cycle1}_cycle{cycle2}_scores_calculated{channel}{subpix}{numpeaks}.png',
     params:
         channel = parse_param('channel', config['stitching']['channel']),
         subpixel_alignment = parse_param('subpix', config['stitching']['subpixel_alignment']),
+        numpeaks = parse_param('numpeaks', None),
     wildcard_constraints:
         channel = '|_channel' + any_channel_regex,
         subpix = '|_subpix\d+',
+        numpeaks = '|_numpeaks\d+',
     resources:
         mem_mb = lambda wildcards, input: input.size_mb + 5000
     threads: 1
@@ -110,24 +112,33 @@ rule calculate_constraints:
             images = images[:,channel_index(alignment_channel,cycle=cycles_pt[cycle2])]
             composite.layer(cycle2).setimages(images)
 
-            def constraint_filter(const):
-                return const.box1.position[2] == cycle1 and const.box2.position[2] == cycle2 and const.overlap_ratio >= 0.1
+            #def constraint_filter(const):
+                #return const.box1.position[2] == cycle1 and const.box2.position[2] == cycle2 and const.overlap_ratio >= 0.1
+                #return const.box1.position[2] == cycle1 and const.box2.position[2] == cycle2 and const.overlap_ratio >= 0.75
         else:
-            def constraint_filter(const):
-                return const.box1.position[2] == cycle1 and const.box2.position[2] == cycle2 and const.touching == True
+            pass
+            #def constraint_filter(const):
+                #return const.box1.position[2] == cycle1 and const.box2.position[2] == cycle2 and const.touching == True
+                #return const.box1.position[2] == cycle1 and const.box2.position[2] == cycle2 and max(const.overlap_ratio_x, const.overlap_ratio_y) > 0.75
 
         if cycle1 == cycle2:
             overlapping = composite.constraints(lambda const:
-                    const.box1.position[2] == cycle1 and const.box2.position[2] == cycle2 and const.touching == True)
+                    const.box1.position[2] == cycle1 and const.box2.position[2] == cycle2
+                    #and const.overlap_ratio > 0.000000001)
+                    #and const.touching == True)
+                    and const.touching == True and max(const.overlap_ratio_x, const.overlap_ratio_y) > 0.75)
         else:
             overlapping = composite.constraints(lambda const:
-                    const.box1.position[2] == cycle1 and const.box2.position[2] == cycle2 and const.overlap_ratio >= 0.1)
+                    const.box1.position[2] == cycle1 and const.box2.position[2] == cycle2 and const.overlap_ratio >= 0.5)
+                    #const.box1.position[2] == cycle1 and const.box2.position[2] == cycle2 and const.overlap_ratio >= 0.1)
 
         debug ('constraints', len(overlapping), cycle1, cycle2, np.unique(composite.boxes.positions[:,2]))
 
         calculate_params = {}
         if params.subpixel_alignment != 1:
             calculate_params['aligner'] = constitch.FFTAligner(upscale_factor=params.subpixel_alignment)
+        if params.numpeaks:
+            calculate_params['aligner'] = constitch.FFTAligner(num_peaks=params.numpeaks)
 
         constraints = overlapping.calculate(**calculate_params)
 
@@ -154,7 +165,7 @@ rule filter_constraints:
         constraints = stitching_dir + '{well_stitching}/cycle{cycle1}/cycle{cycle2}/filtered_constraints{params}.json',
         plot = qc_dir + '{well_stitching}/cycle{cycle1}_cycle{cycle2}_scores_filtered{params}.png',
     wildcard_constraints:
-        params = params_regex('channel', 'subpix')
+        params = params_regex('channel', 'subpix', 'numpeaks')
     resources:
         mem_mb = lambda wildcards, input: input.size_mb + 5000
     run:
@@ -209,7 +220,7 @@ rule merge_constraints:
     output:
         constraints = stitching_dir + '{well_stitching}/constraints{params}{onlyfirst}.json',
     wildcard_constraints:
-        params = params_regex('channel', 'subpix'),
+        params = params_regex('channel', 'subpix', 'numpeaks'),
         onlyfirst = '|_onlyfirst',
     run:
         import constitch
@@ -248,13 +259,14 @@ rule solve_constraints:
     params:
         solver = parse_param('solver', config['stitching']['solver']),
     wildcard_constraints:
-        params = params_regex('channel', 'subpix', 'onlyfirst'),
-        solver = '|_solver(mse|mae|spantree|lp|ilp|pulp|rounded)',
+        params = params_regex('channel', 'subpix', 'numpeaks', 'onlyfirst'),
+        solver = '|_solver(mse|mae|spantree|lp|ilp|pulp|rounded|separatecycles)',
     resources:
         mem_mb = lambda wildcards, input: input.size_mb * 10000 + 25000
     threads: lambda wildcards: 8 if wildcards.solver == '_solverpulp' else 1
     run:
         import constitch
+        import numpy as np
 
         composite = constitch.load(input.composite)
 
@@ -263,12 +275,47 @@ rule solve_constraints:
 
         composite.plot_scores(output.plot1, solving_constraints)
 
-        if solver == 'pulp':
-            solution = solving_constraints.solve(solver=solver, threads=threads*2)
-        else:
-            solution = solving_constraints.solve(solver=solver)
+        for const in solving_constraints:
+            const.score = 1
 
-        composite.setpositions(solution)
+        if params.solver == 'separatecycles':
+            # not actually a good solving method, included here as a control test for no alignment
+            cycle_composite = constitch.CompositeImage()
+            cycle_composite.add_images(
+                np.empty((len(cycles), 1, 1), dtype=np.uint16),
+                boxes=[constitch.BBox([0,0], [1000000, 1000000]) for i in range(len(cycles))],
+            )
+            cycle_constraints = constitch.ConstraintSet()
+
+            for cycle in range(len(cycles)):
+                subcomposite = composite.layer(cycle)
+                subconsts = solving_constraints.filter(lambda const: const.box1.position[2] == cycle and const.box2.position[2] == cycle)
+                subcomposite.setpositions(subconsts.solve())#solver=params.solver))
+
+            for cycle in range(len(cycles)):
+                subconsts = solving_constraints.filter(lambda const: (const.box1.position[2] == cycle) ^ (const.box2.position[2] == cycle))
+                for const in subconsts:
+                    cycle_constraints.add(constitch.Constraint(
+                        composite=cycle_composite,
+                        index1=const.box1.position[2],
+                        index2=const.box2.position[2],
+                        dx=const.dx + const.box2.position[0] - const.box1.position[0],
+                        dy=const.dy + const.box2.position[1] - const.box1.position[1],
+                        score=const.score,
+                        error=const.error,
+                    ))
+
+            cycle_composite.setpositions(cycle_constraints.solve())#solver=params.solver))
+            for box in composite.boxes:
+                box.position[:2] += cycle_composite.boxes[box.position[2]].position[:2]
+
+        elif params.solver == 'pulp':
+            solution = solving_constraints.solve(solver=params.solver, threads=threads*2)
+            composite.setpositions(solution)
+        else:
+            solution = solving_constraints.solve(solver=params.solver)
+            composite.setpositions(solution)
+
         composite.plot_scores(output.plot2, solving_constraints)
         composite.plot_scores(output.plot3, solving_constraints, score_func='accuracy')
 
@@ -283,7 +330,7 @@ rule split_composite:
     output:
         composite = stitching_dir + '{well_stitching}/cycle{cycle}/composite{params}.json',
     wildcard_constraints:
-        params = params_regex('channel', 'subpix', 'onlyfirst', 'solver', *ashlar_params),
+        params = params_regex('channel', 'subpix', 'numpeaks', 'onlyfirst', 'solver', *ashlar_params),
     run:
         import constitch
 

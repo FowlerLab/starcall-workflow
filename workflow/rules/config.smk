@@ -189,7 +189,7 @@ def channel_index(channel, kind=None, cycle=None):
     return channel
 
 ashlar_params_nooverlap  = [name.replace('_', '') for name in config['stitching']['ashlar'].keys()]
-ashlar_params = ashlar_params_nooverlap + ['overlap', 'input', 'ashlar']
+ashlar_params = ashlar_params_nooverlap + ['overlap', 'input', 'mist', 'ashlar']
 #ashlar_params = ['flip-x', 'flip-y', 'transpose', 'interp', 'filter-sigma', 'input']
 #print (params_regex('channel', 'subpix', 'solver', *ashlar_params))
 

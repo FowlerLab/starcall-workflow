@@ -348,3 +348,41 @@ rule make_noisy_cycle_well:
         for src, dest in zip(input, output):
             os.link(src, dest)
 
+def find_files(wildcards):
+    percent = (int(wildcards.cycle) + 1) * 10
+    return sorted(glob.glob('mist-dataset/Day{day}_Plate/{percent}Perc_Tiling/img_w1_r*_c*_t*_Cy5_*.tif'.format(
+        day=wildcards.day, percent=percent)))
+
+rule make_mist_dataset_well:
+    input:
+        images = find_files,
+    output:
+        images = input_dir + 'well_mist_day{day}_perc10/cycle{cycle}/raw.tif',
+        positions = input_dir + 'well_mist_day{day}_perc10/cycle{cycle}/positions.csv',
+    run:
+        import tifffile
+        import numpy as np
+
+        tiles = []
+        grid_poses = []
+
+        percent = (int(wildcards.cycle) + 1) * 10
+
+        assert len(input.images)
+
+        for path in input.images:
+            row = int(path.split('_r')[1][:3])
+            col = int(path.split('_c')[1][:3])
+            image = tifffile.imread(path)
+            tiles.append([image])
+            grid_poses.append((row, col))
+            #grid_poses.append((row * (1 - percent / 100) * image.width, col * (1 - percent / 100) * image.height))
+
+        tiles = np.array(tiles)
+        tifffile.imwrite(output.images, tiles)
+        grid_poses = np.array(grid_poses) * (1 - percent / 100.0)
+        positions = grid_poses.copy()
+        positions[:,0] *= tiles.shape[2]
+        positions[:,1] *= tiles.shape[3]
+        np.savetxt(output.positions, np.concatenate((grid_poses, positions), axis=1), fmt='%d', delimiter=',')
+
