@@ -352,7 +352,7 @@ rule merge_tables_phenotype:
         cell_table = segmentation_dir + '{path}/cells.csv',
         other_tables = get_other_tables,
     output:
-        table = phenotyping_dir + '{path}/{phenotype_tables}.cells_phenotype.csv',
+        table = temp(phenotyping_dir + '{path}/{phenotype_tables}.cells_phenotype.csv'),
     resources:
         mem_mb = lambda wildcards, input: input.size_mb * 2 + 10000
     run:
@@ -376,7 +376,7 @@ rule merge_grid_pheno_tables:
         tables = get_grid_filenames_pheno,
         #composite = stitching_dir + '{well}_grid{grid_size}/grid_composite.json',
     output:
-        table = phenotyping_dir + '{well}_grid{grid_size,\d+}/{type,[^/]*}.cells_phenotype.csv',
+        table = temp(phenotyping_dir + '{well}_grid{grid_size,\d+}/{type,[^/]*}.cells_phenotype.csv'),
     resources:
         #mem_mb = lambda wildcards, input: input.size_mb * 50 + 5000
         mem_mb = 5000
@@ -402,7 +402,7 @@ rule link_merged_grid_phenotype:
                 if phenotyping_grid_size != 1 else
                 (phenotyping_dir + '{well}/{type}.cells_phenotype.csv')),
     output:
-        phenotyping_dir + '{well}_grid/{type,[^/]*}.cells_phenotype.csv',
+        temp(phenotyping_dir + '{well}_grid/{type,[^/]*}.cells_phenotype.csv'),
     localrule: True
     wildcard_constraints:
         type = '[^/]+',

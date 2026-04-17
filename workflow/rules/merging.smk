@@ -96,7 +96,7 @@ rule convert_to_parquet:
     output:
         table = output_dir + '{output_path}.parquet',
     resources:
-        mem_mb = 50000
+        mem_mb = 20000
     run:
         import pandas
 
