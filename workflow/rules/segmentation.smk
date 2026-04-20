@@ -33,6 +33,7 @@ rule segment_nuclei:
         import numpy as np
         import tifffile
         import starcall.segmentation
+        import skimage.segmentation
 
         nuclearchannel = channel_index_phenotyping(params.nuclearchannel)
 
