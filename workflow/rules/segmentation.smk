@@ -589,7 +589,7 @@ rule merge_tables_mapping:
 
 ruleorder: merge_segmentation_tables > tabulate_cells
 
-def stitch_segmentation_section(image_paths, composite, mappings_table, section_box, section_table_path):
+def stitch_segmentation_section(image_paths, composite, mapping_table, section_box, section_table_path):
     import constitch
     import numpy as np
     import tifffile
@@ -613,7 +613,7 @@ def stitch_segmentation_section(image_paths, composite, mappings_table, section_
 
     composite.images = []
     if type(mapping_table) == str:
-        mapping_table = pandas.read_csv(mappings_table)
+        mapping_table = pandas.read_csv(mapping_table)
 
     second_mapping = {table.index[i]: i+1 for i in range(len(table.index))}
 
