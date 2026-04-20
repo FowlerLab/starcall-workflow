@@ -615,6 +615,7 @@ def stitch_segmentation_section(image_paths, composite, mapping_table, section_b
     if type(mapping_table) == str:
         mapping_table = pandas.read_csv(mapping_table)
 
+    debug (table)
     second_mapping = {table.index[i]: i+1 for i in range(len(table.index))}
 
     for i in range(len(composite.boxes)):
@@ -628,9 +629,9 @@ def stitch_segmentation_section(image_paths, composite, mapping_table, section_b
         for cell, newcell in zip(mapping['cell'], mapping['new_cell']):
             mapping_arr[cell] = second_mapping.get(newcell, 0)
 
-        debug (mapping_arr.shape, image.max())
-        debug (max(second_mapping.keys()), max(second_mapping.values()))
-        debug (mapping['cell'].max(), mapping['new_cell'].max())
+        #debug (mapping_arr.shape, image.max())
+        #debug (max(second_mapping.keys()), max(second_mapping.values()))
+        #debug (mapping['cell'].max(), mapping['new_cell'].max())
         image = mapping_arr[image]
         composite.images.append(image)
 
