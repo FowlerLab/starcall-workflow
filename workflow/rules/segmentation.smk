@@ -571,6 +571,8 @@ rule merge_tables_mapping:
         tables = []
         for i,path in enumerate(input.tables):
             table = pandas.read_csv(path, index_col=0)
+            table['xpos'] += composite.boxes[i].point1[0]
+            table['ypos'] += composite.boxes[i].point1[1]
             table['bbox_x1'] += composite.boxes[i].point1[0]
             table['bbox_y1'] += composite.boxes[i].point1[1]
             table['bbox_x2'] += composite.boxes[i].point1[0]
@@ -643,7 +645,7 @@ def stitch_segmentation_section(image_paths, composite, mapping_table, section_b
     
     max_label, num_unique = full_image.max(), np.unique(full_image).shape[0]
     debug ('Max label', max_label, 'Num unique', num_unique)
-    #assert max_label == num_unique - 1
+    assert max_label == num_unique - 1
 
     return full_image
 
@@ -701,6 +703,13 @@ rule link_merged_grid:
         "cp -l {input[0]} {output[0]}"
 '''
 
+def find_othertable(wildcards):
+    if config['segmentation'].get('match_masks', False) and wildcards.segmentation_type.count('cells') != 0:
+        newtype = wildcards.segmentation_type.replace('cells', 'nuclei')
+        return ['{output_dir}{well}_grid{grid_size,\d+}/tile{x,\d+}x{y,\d+}y/' + newtype + '.csv']
+    return []
+
+
 rule split_grid_table:
     """ Splits the cell info table into a tile in a grid, for use in later steps such as sequencing
     or phenotyping. Cells are matched to the tile closest to their centroid, ensuring no cells
@@ -709,8 +718,10 @@ rule split_grid_table:
     contained in any tile (>20%) this step will fail and the overlap should be increased.
     """
     input:
+        #table = segmentation_dir + '{well}_grid/{segmentation_type}.csv',
         table = segmentation_dir + '{well}_grid' + str(segmentation_grid_size) + '/{segmentation_type}.csv',
         composite = segmentation_dir + '{well}_grid{grid_size}/grid_composite.json',
+        othertable = find_othertable,
     output:
         table = '{output_dir}{well}_grid{grid_size,\d+}/tile{x,\d+}x{y,\d+}y/{segmentation_type}.csv'
     resources:
@@ -732,47 +743,55 @@ rule split_grid_table:
 
         split_cells = 0
 
-        contained = []
-        for i, cell in table.iterrows():
-            cellbox = constitch.BBox(point1=[cell.bbox_x1, cell.bbox_y1], point2=[cell.bbox_x2 // 2 * 2, cell.bbox_y2 // 2 * 2])
-            # rounding down point2 of cellbox to avoid off by one error on the edge of the grid,
-            # cause the grid will always be rounded down
+        if len(input.othertable) == 0:
+            contained = []
+            for i, cell in table.iterrows():
+                cellbox = constitch.BBox(point1=[cell.bbox_x1, cell.bbox_y1], point2=[cell.bbox_x2 // 2 * 2, cell.bbox_y2 // 2 * 2])
+                # rounding down point2 of cellbox to avoid off by one error on the edge of the grid,
+                # cause the grid will always be rounded down
 
-            closest = np.linalg.norm(box.center - cellbox.center)
-            closest_box = box
-            closest_index = x * grid_size + y
-            for j in range(len(composite.boxes)):
-                dist = np.linalg.norm(composite.boxes[j].center - cellbox.center)
-                if dist <= closest:
-                    closest, closest_box = dist, composite.boxes[j]
-                    closest_index = j
+                closest = np.linalg.norm(box.center - cellbox.center)
+                closest_box = box
+                closest_index = x * grid_size + y
+                for j in range(len(composite.boxes)):
+                    dist = np.linalg.norm(composite.boxes[j].center - cellbox.center)
+                    if dist <= closest:
+                        closest, closest_box = dist, composite.boxes[j]
+                        closest_index = j
 
-            #debug ('----- here ----', closest_index, closest_index//grid_size, closest_index%grid_size)
+                #debug ('----- here ----', closest_index, closest_index//grid_size, closest_index%grid_size)
 
-            if not closest_box.contains(cellbox):
-                split_cells += 1
-                debug ('split cell:', closest_index, closest_index//grid_size, closest_index%grid_size)
-                #debug (closest_box.point1, closest_box.point2, cellbox.point1, cellbox.point2)
-                #debug ('   ', np.linalg.norm(closest_box.center - cellbox.center))
-                #for curbox in composite.boxes:
-                    #debug (curbox.point1, curbox.point2)
-                    #debug ('   ', cellbox.point1 - curbox.point1, curbox.point2 - cellbox.point2)
-                    #debug ('   ', np.linalg.norm(cellbox.center - curbox.center))
-            #assert closest_box.contains(cellbox)
+                if not closest_box.contains(cellbox):
+                    split_cells += 1
+                    debug ('split cell:', closest_index, closest_index//grid_size, closest_index%grid_size)
+                    #debug (closest_box.point1, closest_box.point2, cellbox.point1, cellbox.point2)
+                    #debug ('   ', np.linalg.norm(closest_box.center - cellbox.center))
+                    #for curbox in composite.boxes:
+                        #debug (curbox.point1, curbox.point2)
+                        #debug ('   ', cellbox.point1 - curbox.point1, curbox.point2 - cellbox.point2)
+                        #debug ('   ', np.linalg.norm(cellbox.center - curbox.center))
+                #assert closest_box.contains(cellbox)
 
-            contained.append(closest_box is box)
+                contained.append(closest_box is box)
 
-            #is_contained = box.contains(cellbox)
-            #for j in range(x*grid_size+y):
-                #is_contained = is_contained and not composite.boxes[j].contains(cellbox)
-            #contained.append(is_contained)
+                #is_contained = box.contains(cellbox)
+                #for j in range(x*grid_size+y):
+                    #is_contained = is_contained and not composite.boxes[j].contains(cellbox)
+                #contained.append(is_contained)
 
-        assert split_cells < max(50, 0.2 * len(table.index)), (
-                "{} out of {} cells in the well were split by the grid. "
-                "Occasional cells are split if they are larger than overlap, but if "
-                "this is too many consider increasing the overlap in config file".format(split_cells, len(table.index)))
+            assert split_cells < max(50, 0.2 * len(table.index)), (
+                    "{} out of {} cells in the well were split by the grid. "
+                    "Occasional cells are split if they are larger than overlap, but if "
+                    "this is too many consider increasing the overlap in config file".format(split_cells, len(table.index)))
 
-        table = table[contained]
+        else:
+            othertable = pandas.read_csv(input.othertable[0], index_col=0)
+            debug ('othertable', othertable)
+            contained = list(othertable.index)
+            debug ('contained', len(contained))
+
+        table = table.loc[contained,:]
+        #table = table[contained]
         table['bbox_x1'] -= box.position[0]
         table['bbox_x2'] -= box.position[0]
         table['bbox_y1'] -= box.position[1]
