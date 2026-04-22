@@ -826,7 +826,7 @@ rule stitch_tile_segmentation:
         composite2 = stitching_dir + '{well}_grid{grid_size}/grid_composite.json',
         table = '{output_dir}{well}_grid{grid_size}/tile{x}x{y}y/{segmentation_type}.csv',
     output:
-        image = '{output_dir}{well}_grid{grid_size,\d+}/tile{x,\d+}x{y,\d+}y/{segmentation_type}_mask.tif',
+        image = temp('{output_dir}{well}_grid{grid_size,\d+}/tile{x,\d+}x{y,\d+}y/{segmentation_type}_mask.tif'),
     resources:
         mem_mb = lambda wildcards, input: 5000 + input.size_mb * 2
     run:

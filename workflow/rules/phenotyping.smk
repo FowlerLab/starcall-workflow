@@ -22,8 +22,8 @@ rule make_cell_images:
     """
     input:
         image = get_phenotyping_pt,
-        cells = segmentation_dir + '{path}/{segmentation_type}_mask.tif',
-        cell_table = segmentation_dir + '{path}/{segmentation_type}.csv',
+        cells = phenotyping_dir + '{path}/{segmentation_type}_mask.tif',
+        cell_table = phenotyping_dir + '{path}/{segmentation_type}.csv',
     output:
         cell_images = phenotyping_dir + '{path}/{segmentation_type}_crops_{window,\d+}.tif',
         mask_images = phenotyping_dir + '{path}/{segmentation_type}_mask_crops_{window,\d+}.tif',
@@ -74,7 +74,7 @@ rule make_cell_images:
 rule extract_embeddings:
     input:
         cell_images = phenotyping_dir + '{path}/cells_crops_100.tif',
-        cells = segmentation_dir + '{path}/cells.csv',
+        cells = phenotyping_dir + '{path}/cells.csv',
     output:
         embeddings = phenotyping_dir + '{path}/embeddings_morphem{cycle,|_cycle\d+}.csv',
     resources:
@@ -96,9 +96,9 @@ rule extract_embeddings:
 
 rule calc_features:
     input:
-        cell_table = segmentation_dir + '{path}/cells.csv',
-        cells = segmentation_dir + '{path}/cells_mask.tif',
-        nuclei = segmentation_dir + '{path}/nuclei_mask.tif',
+        cell_table = phenotyping_dir + '{path}/cells.csv',
+        cells = phenotyping_dir + '{path}/cells_mask.tif',
+        nuclei = phenotyping_dir + '{path}/nuclei_mask.tif',
         image = get_phenotyping_pt,
     output:
         features = phenotyping_dir + '{path}/features.csv'
@@ -198,8 +198,8 @@ rule copy_cellprofiler_files:
         #image = stitching_dir + '{path}/cycle' + phenotype_cycle + '.tif',
         #image = get_phenotyping_pt,
         images = get_channels,
-        cells = segmentation_dir + '{path}/cells_mask.tif',
-        nuclei = segmentation_dir + '{path}/nuclei_mask.tif',
+        cells = phenotyping_dir + '{path}/cells_mask.tif',
+        nuclei = phenotyping_dir + '{path}/nuclei_mask.tif',
         #puncta = phenotyping_dir + '{path}/puncta_mask.tif',
         #lines = phenotyping_dir + '{path}/line_mask.tif',
     output:
