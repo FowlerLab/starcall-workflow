@@ -619,6 +619,8 @@ def stitch_segmentation_section(image_paths, composite, mapping_table, section_b
 
     debug (table)
     second_mapping = {table.index[i]: i+1 for i in range(len(table.index))}
+    debug (second_mapping)
+    debug ('59667 mapped to', second_mapping.get(59667, 0))
 
     for i in range(len(composite.boxes)):
         if i not in touching_indices:
@@ -635,10 +637,12 @@ def stitch_segmentation_section(image_paths, composite, mapping_table, section_b
         #debug (max(second_mapping.keys()), max(second_mapping.values()))
         #debug (mapping['cell'].max(), mapping['new_cell'].max())
         image = mapping_arr[image]
+        debug (i, 'is 18 in image', 18 in list(np.unique(image)))
         composite.images.append(image)
 
     debug (len(composite.boxes), len(composite.images), len(image_paths))
-    merger = constitch.EfficientNearestMerger()
+    #merger = constitch.EfficientNearestMerger()
+    merger = constitch.MaxMerger()
 
     full_image = composite.stitch(merger=merger, indices=touching_indices, mins=section_box.point1, maxes=section_box.point2)
     del composite
