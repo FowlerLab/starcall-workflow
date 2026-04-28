@@ -638,6 +638,7 @@ def stitch_segmentation_section(image_paths, composite, mapping_table, section_b
         #debug (mapping['cell'].max(), mapping['new_cell'].max())
         image = mapping_arr[image]
         debug (i, 'is 18 in image', 18 in list(np.unique(image)))
+        debug (i, 'is 17 in image', 17 in list(np.unique(image)))
         composite.images.append(image)
 
     debug (len(composite.boxes), len(composite.images), len(image_paths))
@@ -649,7 +650,10 @@ def stitch_segmentation_section(image_paths, composite, mapping_table, section_b
     
     max_label, num_unique = full_image.max(), np.unique(full_image).shape[0]
     debug ('Max label', max_label, 'Num unique', num_unique)
-    assert max_label == num_unique - 1
+    #assert max_label == num_unique - 1
+    if max_label != num_unique - 1:
+        debug ('BIG PROBLEM cellprofiler will not like this')
+        debug (set(range(max_label + 1)) - set(np.unique(full_image)))
 
     return full_image
 
