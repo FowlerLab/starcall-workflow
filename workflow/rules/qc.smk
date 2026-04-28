@@ -9,11 +9,12 @@ import time
 
 rule make_qc_read_plots:
     input:
-        full_table = sequencing_output_dir + '{prefix}/{segmentation_type}_reads.csv',
+        #full_table = sequencing_output_dir + '{prefix}/{segmentation_type}_reads.csv',
+        full_table = 'old_sequencing_output/' + '{prefix}/{segmentation_type}_reads.csv',
         barcodes = get_aux_data,
     output:
-        plot = qc_dir + '{prefix}/{segmentation_type}_reads.svg',
-        plots = [qc_dir + '{prefix}/{segmentation_type}_reads_plot' + str(i) + '.svg' for i in range(16)],
+        plot = qc_dir + '{prefix}_old/{segmentation_type}_reads.pdf',
+        plots = [qc_dir + '{prefix}_old/{segmentation_type}_reads_plot' + str(i) + '.pdf' for i in range(16)],
     resources:
         mem_mb = lambda wildcards, input: 5000 + input.size_mb * 10
     run:
@@ -28,6 +29,8 @@ rule make_qc_read_plots:
         #12 for ticks, 14 for labels, important to be consistent
 
         read_table = pandas.read_csv(input.full_table, index_col=0)
+        if 'edit_distance' not in read_table.columns:
+            read_table['edit_distance'] = read_table['editDistance']
         num_cycles = len(read_table['read_0'].iloc[0])
         library_paths = [path for path in input.barcodes if path.count('barcodes.csv')]
         has_library = len(library_paths) != 0
@@ -100,20 +103,26 @@ rule make_qc_read_plots:
 
             total_cells = max(read_table.index)
             labels, values = np.unique(read_table['total_count'], return_counts=True)
-            labels, values = labels[labels<10], values[labels<10]
+            #labels, values = labels[labels<10], values[labels<10]
             labels = np.array([0] + list(labels))
             values = np.array([total_cells - len(read_table.index)] + list(values))
             debug ('labels = ', labels[:30].tolist())
             debug ('values = ', values[:30].tolist())
-            axes[0,1].bar(labels[:30], values[:30], width=1)
+            axes[0,1].bar(labels[:30], values[:30] / values.sum(), width=1)
             #axes[0,1].set_title('Read count of cells')
-            axes[0,1].set_ylabel('Count')
+            axes[0,1].set_ylabel('Density')
             axes[0,1].set_xlabel('Total read count per cell' if double_barcode else 'Read count per cell') # total read count for double barcode
-            axes[0,1].ticklabel_format(axis='y', style='sci', scilimits=(0,0))
-            if 'blainey' in wildcards.prefix:
-                axes[0,1].set_title('Image set 2.1: Feldman method')
-            else:
-                axes[0,1].set_title('Image set 2.1: STARCall')
+
+            #axes[0,1].ticklabel_format(axis='y', style='sci', scilimits=(0,0))
+            # set the y axis ticks to 10^x
+            #axes[0,1].yaxis.set_major_formatter(mpl.ticker.FuncFormatter(lambda x, _: '{:.0e}'.format(x)))
+            # set the y axis tick labels to 10^x
+            #axes[0,1].set_yticklabels(['$10^{'+str(int(np.log10(y)))+'}$' for y in ax.get_yticks()])
+
+            #if 'blainey' in wildcards.prefix:
+                #axes[0,1].set_title('Image set 2.1: Feldman method')
+            #else:
+                #axes[0,1].set_title('Image set 2.1: STARCall')
             # todo make heatmap of first and second barcode edit distance in double barcode
             # total read count, combined edit distance
             # edit distance to first matching barcode pair
@@ -131,6 +140,7 @@ rule make_qc_read_plots:
             axes[0,2].set_xlabel('Unique read count')
 
             if has_library:
+                '''
                 labels, values = np.unique(read_table['edit_distance'], return_counts=True)
                 #debug (labels)
                 #none_vals = values[0]
@@ -162,6 +172,7 @@ rule make_qc_read_plots:
                 matched_reads = []
                 matched_barcs = []
                 for i in read_table.index:
+                    break
                     matched_index = read_table.loc[i,'matched_read_index_0']
                     if matched_index != -1:
                         matched_reads.append(read_table.loc[i,'read_{}'.format(matched_index)])
@@ -380,6 +391,7 @@ rule make_qc_read_plots:
                 axes[3,0].plot(errors.sum(axis=(1,2)) / total_count)
                 axes[3,0].set_xlabel('Cycle')
                 axes[3,0].set_ylabel('Error rate')
+                '''
 
 
                 matched_edit_distances = []
@@ -417,15 +429,17 @@ rule make_qc_read_plots:
                 debug ('values = ', values)
                 #labels = ['None'] + list(map(str, labels))
                 #values = [total_not_included] + list(values)
-                axes[3,2].bar(labels, values, width=1, label='sing.')
+                axes[3,2].bar(labels, values / sum(values), width=1, label='sing.')
 
                 #plotting all reads that were removed in the none bar
                 #axes[0,3].bar(['None'], [total_not_included], width=1)
 
                 #axes[0,3].set_title('Edit distance, single v multiple')
                 axes[3,2].set_xlabel('Combined edit distance' if double_barcode else 'Edit distance')
-                axes[3,2].set_ylabel('Count')
-                axes[3,2].ticklabel_format(axis='y', style='sci', scilimits=(0,0))
+                axes[3,2].set_ylabel('Density')
+                axes[3,2].plot([2.1/6, 2.1/6], [0, 1], transform=axes[3,2].transAxes, color='red', linestyle='-')
+                #axes[3,2].ticklabel_format(axis='y', style='sci', scilimits=(0,0))
+                #'''
 
 
 

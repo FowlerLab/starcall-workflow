@@ -131,7 +131,8 @@ rule segment_cells_bases:
         else:
             dapi = data[0]
             #cyto = data[2]
-            cyto = starcall.segmentation.estimate_cyto(data[2:])
+            debug (data[-4:].shape)
+            cyto = starcall.segmentation.estimate_cyto(data[-4:])
             del data
             del full_well
 
@@ -264,9 +265,10 @@ rule find_dots:
     input:
         sequencing_input_dir + '{prefix}/raw.tif'
     output:
-        #sequencing_dir + '{prefix}/bases.csv'
-        sequencing_dir + '{prefix}/bases.csv',
-        sequencing_dir + '{prefix}/dot_filter.tif',
+        sequencing_dir + '{prefix}/bases.csv'
+        #sequencing_dir + '{prefix}/bases_offset{offset,\d+}.csv',
+        #sequencing_dir + '{prefix}/bases_randomoffset{offset,\d+}_shift{shift}.csv',
+        #sequencing_dir + '{prefix}/dot_filter.tif',
     resources:
         mem_mb = lambda wildcards, input: input.size_mb * 10 + 15000
     threads: 4
@@ -276,22 +278,31 @@ rule find_dots:
         import starcall.dotdetection
         import starcall.correction
         import skimage.morphology
+        import scipy.ndimage
 
         min_sigma = 1#2
         max_sigma = 2#3
         num_sigma = 7
 
+        #offset = int(wildcards.offset)
+        #shift = float(wildcards.shift)
+
         full_well = tifffile.memmap(input[0], mode='r')
-        image = full_well[...,2:,:,:].astype(np.float32, copy=True)
+        image = full_well[...,-4:,:,:].astype(np.float32, copy=True)
+        #image = full_well[...,2:,:,:].astype(np.float32, copy=True)
         del full_well
 
         if np.all(image == 0):
             reads = ReadSet()
         else:
+            #if shift != 0:
+                #image = scipy.ndimage.shift(image, (0, 0, shift, shift))
+                #image[4] = scipy.ndimage.shift(image[4], (0, shift, 0))
+
             dot_filter = starcall.dotdetection.dot_filter_new(image)
-            tifffile.imwrite(output[1], dot_filter)
+            #tifffile.imwrite(output[1], dot_filter)
             reads = starcall.dotdetection.detect_dots(
-                image,
+                image, #offset=offset,
                 min_sigma = min_sigma,
                 max_sigma = max_sigma,
                 num_sigma = num_sigma,
@@ -322,11 +333,11 @@ def read_value_dist(values1, values2):
 
 rule call_raw_reads:
     input:
-        bases = sequencing_dir + '{prefix}/bases.csv',
+        bases = sequencing_dir + '{prefix}/bases_offset{params}.csv',
         cells = sequencing_output_dir + '{prefix}/{segmentation_type}_mask_downscaled.tif',
         #cells_table = sequencing_output_dir + '{prefix}/{segmentation_type}.csv',
     output:
-        table = sequencing_dir + '{prefix}/{segmentation_type}_raw_reads.csv',
+        table = sequencing_dir + '{prefix}/{segmentation_type}_offset{params}_raw_reads.csv',
     resources:
         mem_mb = lambda wildcards, input: 5000 + input.size_mb * 10
     run:
@@ -671,6 +682,8 @@ rule call_reads:
 def get_aux_data(wildcards, prefix=None):
     prefix = wildcards.prefix if prefix is None else prefix
 
+    if prefix[-8:] == '_blainey': prefix = prefix[:-8]
+
     #if prefix != '': prefix = prefix + '.'
 
     files = []
@@ -836,4 +849,205 @@ ruleorder: call_reads > merge_grid
 ruleorder: match_masks > merge_grid
 ruleorder: merge_final_tables > merge_grid
 ruleorder: calc_features > merge_grid
+
+
+rule webserver_read_calling:
+    input:
+        image = sequencing_input_dir + '{prefix}/raw.tif',
+        cells = sequencing_output_dir + '{prefix}/{segmentation_type}_mask_downscaled.tif',
+        cells_table = sequencing_output_dir + '{prefix}/{segmentation_type}.csv',
+        reads = sequencing_dir + '{prefix}/{segmentation_type}_interactive_reads_partial.csv',
+    output:
+        reads = sequencing_dir + '{prefix}/{segmentation_type}_revised_reads_partial.csv',
+        #reads = sequencing_dir + '{prefix}/{segmentation_type}_interactive2_reads_partial.csv',
+    run:
+        import http
+        import http.server
+        import skimage.io
+        import tifffile
+        import urllib.parse
+        import numpy as np
+        import io
+        import os
+        import json
+        import base64
+        import email
+        import datetime
+        import time
+        import sys
+        import pandas
+
+        image = tifffile.imread(input.image)
+        cells = tifffile.imread(input.cells)
+        cells_table = pandas.read_csv(input.cells_table, index_col=0)
+        cells_table = cells_table.sample(n=len(cells_table.index), random_state=12345)
+        prev_reads = pandas.read_csv(input.reads, index_col=0)
+
+        low_percentiles = [
+            np.percentile(image[:,2:], 0.5, axis=(2,3)),
+            #np.percentile(image[:,2:], 1, axis=(2,3)),
+            #np.percentile(image[:,2:], 0.1, axis=(2,3)),
+        ]
+        high_percentiles = [
+            np.percentile(image[:,2:], 99.5, axis=(2,3)),
+            #np.percentile(image[:,2:], 99, axis=(2,3)),
+            #np.percentile(image[:,2:], 99.9, axis=(2,3)),
+        ]
+
+        result_sequences = {}
+
+        def save_sequences():
+            table = pandas.DataFrame()
+            table['cell'] = [cells_table.index[i] for i in result_sequences]
+            table['sequence'] = list(result_sequences.values())
+            table = table.set_index('cell')
+            table.to_csv(output.reads)
+
+        class ImageRequestHandler(http.server.BaseHTTPRequestHandler):
+
+            def do_POST(self):
+                data = self.rfile.read(int(self.headers['Content-Length'])).decode()
+                data = urllib.parse.parse_qs(data)
+                print ('data', data)
+                cellno = int(data['cellno'][0])
+                if 'sequence' in data:
+                    result_sequences[cellno] = data['sequence'][0].upper()
+                    save_sequences()
+
+                self.do_GET()
+
+                #if 'continue' not in data:
+                    #print ('breaking')
+                    #httpd.shutdown()
+                    #print ('done')
+                    #raise KeyboardInterrupt()
+
+            def do_GET(self):
+                if self.path != '/' and self.path[:5] != '/cell':
+                    self.send_error(http.HTTPStatus.NOT_FOUND, "File not found")
+                    self.send_header("Content-Length", "0")
+                    self.end_headers()
+                    return
+
+                style = """
+                <style>
+                input[name="sequence"] {
+                    font-family: monospace;
+                    font-size: 100px;
+                    letter-spacing: 40px;
+                }
+                .colorbar span {
+                    display: inline-block;
+                    width: 100px;
+                    height: 10px;
+                }
+                .colorbar span.g {
+                    background: violet;
+                }
+                .colorbar span.t {
+                    background: cyan;
+                }
+                .colorbar span.a {
+                    background: green;
+                }
+                .colorbar span.c {
+                    background: red;
+                }
+                </style>
+                """
+
+                if self.path == '/':
+                    cellindex = 0
+                else:
+                    cellindex = int(self.path[5:])
+
+                cellno = prev_reads.index[cellindex]
+                #cellno = cells_table.index[cellindex]
+
+                def make_images(radius, low_percentiles, high_percentiles):
+                    #radius = 50
+                    xpos, ypos = int(cells_table['xpos'][cellno]), int(cells_table['ypos'][cellno])
+                    xpos, ypos = xpos // 2, ypos // 2
+                    x1, x2 = max(0, xpos - radius), xpos + radius
+                    y1, y2 = max(0, ypos - radius), ypos + radius
+
+                    cellimage = image[:,2:,x1:x2,y1:y2]
+                    print (image.shape)
+                    print (x1, x2, y1, y2)
+                    print (cellimage.shape, cellimage.max())
+                    cellimage = cellimage - low_percentiles[:,:,None,None]#np.percentile(cellimage, 0.1, axis=(2,3))[:,:,None,None]
+                    print (cellimage.shape, cellimage.max())
+                    cellimage = cellimage / high_percentiles[:,:,None,None]#np.percentile(cellimage, 99.9, axis=(2,3))[:,:,None,None]
+                    print (cellimage.shape, cellimage.max())
+                    np.clip(cellimage, 0, 1, out=cellimage)
+                    cellimage = (cellimage * 255).astype(np.uint8)
+
+                    maskimage = cells[x1:x2,y1:y2]
+                    maskimage = maskimage == cellno
+                    maskimage = skimage.morphology.dilation(maskimage) & ~maskimage
+
+                    cellimage[:,:,maskimage] = 255
+
+                    cellimage = np.concatenate(cellimage, axis=2)
+                    print (cellimage.shape, cellimage.max())
+
+                    #cellimage[1:] = 0
+
+                    colormap = np.array([
+                        [1, 0, 0, 1],
+                        [0, 1, 1, 0],
+                        [1, 1, 0, 0],
+                    ], dtype=np.uint8)
+
+                    cellimage = colormap[:,:,None,None] * cellimage[None,:,:,:]
+                    cellimage = cellimage.max(axis=1).transpose(1,2,0)
+                    print (cellimage.shape, cellimage.max())
+                    print (cellimage.shape)
+
+                    image_data = io.BytesIO()
+                    skimage.io.imsave(image_data, cellimage, format='png')
+                    image_data.seek(0)
+
+                    encoded = 'data:image/{};base64,'.format(format) + base64.b64encode(image_data.getvalue()).decode()
+                    return encoded
+
+                all_encoded = [make_images(50, low_percentiles[i], high_percentiles[i]) for i in range(len(low_percentiles))]
+                all_encoded = '\n'.join('<img src="{}" />'.format(enc) for enc in all_encoded)
+                onkeydown = "setTimeout(() => { document.querySelector('.colorbar').innerHTML = Array.from(document.querySelector('input[name=sequence]').value.toLowerCase()).map(base => '<span class=' + base + '></span>').join('')}, 1)"
+
+                response = """
+                {}
+                <h1>HELLO page {}</h1>
+                <div><a href="/">Reset</a></div>
+                {}
+                <div class="colorbar"></div>
+                <form action="/cell{}" method="post">
+                    <input type="hidden" name="cellno" value="{}" />
+                    <input type="text" name="sequence" onkeydown="{}" value="{}"/>
+                    <label><input type="checkbox" name="continue" checked />Next cell</label>
+                    <input type="submit" />
+                </form>
+                <script>document.querySelector('input[name="sequence"]').focus()</script>
+                """.format(style, cellindex, all_encoded, cellindex + 1, cellindex, onkeydown, prev_reads['sequence'].iloc[cellindex])
+
+                self.send_response(http.HTTPStatus.OK)
+                self.send_header("Content-type", "text/html")
+                self.send_header("Content-Length", str(len(response)))
+                #self.send_header("Last-Modified",
+                    #self.date_time_string(fs.st_mtime))
+                self.end_headers()
+
+                self.wfile.write(response.encode('utf-8'))
+
+        #def run(server_class=http.server.HTTPServer, handler_class=http.server.SimpleHTTPRequestHandler):
+        print ('running', file=sys.stderr)
+        server_address = ('', 8000)
+        print ('go', file=sys.stderr)
+        httpd = http.server.HTTPServer(server_address, ImageRequestHandler)
+        print ("Running on address", server_address, file=sys.stderr)
+        httpd.serve_forever()
+
+        #print ('Starting', file=sys.stderr)
+        #run(handler_class=ImageRequestHandler)
+
 
