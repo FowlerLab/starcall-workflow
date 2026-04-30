@@ -647,13 +647,44 @@ def stitch_segmentation_section(image_paths, composite, mapping_table, section_b
 
     full_image = composite.stitch(merger=merger, indices=touching_indices, mins=section_box.point1, maxes=section_box.point2)
     del composite
-    
+
     max_label, num_unique = full_image.max(), np.unique(full_image).shape[0]
     debug ('Max label', max_label, 'Num unique', num_unique)
     #assert max_label == num_unique - 1
     if max_label != num_unique - 1:
         debug ('BIG PROBLEM cellprofiler will not like this')
         debug (set(range(max_label + 1)) - set(np.unique(full_image)))
+
+        """
+        missing_index = next(iter(set(range(max_label + 1)) - set(np.unique(full_image))))
+        nuclei = tifffile.imread('segmentation/tmpwell3_grid20/tile12x14y/nuclei_mask.tif')
+
+        for index in [missing_index, 1016, 1891]:
+            debug ('index', index)
+            orig_index = table.index[index-1]
+            xpos, ypos = int(table['bbox_x1'][orig_index]), int(table['bbox_y1'][orig_index])
+            radius = 500
+            section_x1, section_y1 = max(0, xpos - radius), max(0, ypos - radius)
+            section = full_image[section_x1:xpos+radius,section_y1:ypos+radius]
+            section2 = nuclei[section_x1:xpos+radius,section_y1:ypos+radius]
+            section, section2 = section.astype(int), section2.astype(int)
+            section[section==0] = -1000
+            section2[section2==0] = -1000
+            debug (xpos, ypos, section_x1, section_y1, section.shape)
+
+            import matplotlib.pyplot as plt
+            fig, axes = plt.subplots(nrows=2, figsize=(5, 8))
+            axes[0].imshow(section)
+            axes[1].imshow(section2)
+            x1, y1, x2, y2 = table['bbox_x1'][orig_index], table['bbox_y1'][orig_index], table['bbox_x2'][orig_index], table['bbox_y2'][orig_index]
+            x1, y1, x2, y2 = x1 - section_x1, y1 - section_y1, x2 - section_x1, y2 - section_y1
+            debug (x1, y1, x2, y2)
+            debug (np.unique(section[x1:x2,y1:y2]))
+            debug (np.unique(section2[x1:x2,y1:y2]))
+            axes[0].plot([y1, y2, y2, y1, y1], [x1, x1, x2, x2, x1])
+            axes[1].plot([y1, y2, y2, y1, y1], [x1, x1, x2, x2, x1])
+            fig.savefig('tmp_missing_cell{}.png'.format(index))
+        """
 
     return full_image
 
