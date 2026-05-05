@@ -354,11 +354,11 @@ rule tabulate_cells:
     """ Simple information is recorded about the segmented cells, such as position, bbox.
     """
     input:
-        cells = segmentation_dir + '{path}{grid}{path2}/{segmentation_type}_mask{unmatched}{grid}.tif',
+        cells = segmentation_dir + '{path_nogrid}{grid}{path_nogrid2}/{segmentation_type}_mask{unmatched}{grid}.tif',
         #cells = segmentation_dir + '{path}/{segmentation_type}_mask.tif',
     output:
         #table = segmentation_dir + '{path}/{segmentation_type}{unmerged}.csv',
-        table = segmentation_dir + '{path}{grid}{path2}/{segmentation_type}{unmatched}{grid}.csv',
+        table = segmentation_dir + '{path_nogrid}{grid}{path_nogrid2}/{segmentation_type}{unmatched}{grid}.csv',
         #table = segmentation_dir + '{path}/{segmentation_type}.csv',
     #wildcard_constraints:
         #unmerged = '_unmatched(|_grid\d+)' if config['segmentation'].get('match_masks', False) else '(|_grid\d+)',
