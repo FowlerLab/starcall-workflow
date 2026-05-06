@@ -704,7 +704,7 @@ rule relabel_segmentation:
         image = segmentation_dir + '{path_nogrid}{grid}{path_nogrid2}/{segmentation_type}_mask' + unmatched + '{grid}.tif',
         table = segmentation_dir + '{path_nogrid}{grid}{path_nogrid2}/{segmentation_type}.csv',
     output:
-        image = segmentation_dir + '{path_nogrid}{grid}{path_nogrid2}/{segmentation_type}_mask.tif',
+        image = '{output_dir}{path_nogrid}{grid}{path_nogrid2}/{segmentation_type}_mask.tif',
     run:
         import tifffile
         import pandas
@@ -713,6 +713,7 @@ rule relabel_segmentation:
         image = tifffile.imread(input.image)
         table = pandas.read_csv(input.table, index_col=0)
 
+        dtype = [dtype for dtype in [np.uint16, np.uint32, np.uint64] if np.iinfo(dtype).max > len(table.index) + 1][0]
         mapping_arr = np.zeros(image.max() + 1, dtype)
         for i, orig_cell in enumerate(table['orig_index']):
             mapping_arr[orig_cell] = i + 1
