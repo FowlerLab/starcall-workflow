@@ -768,10 +768,10 @@ rule split_grid_table:
         if len(input.othertable) == 0:
             neighbors = sklearn.neighbors.NearestNeighbors(n_neighbors=1).fit(composite.boxes.centers)
             distances, indices = neighbors.kneighbors(table.cells.centers)
-            table = table[indices==index]
+            table = table.loc[indices==index]
         else:
             othertable = pandas.read_csv(input.othertable[0], index_col=0)
-            table = table[othertable.index]
+            table = table.loc[othertable.index]
 
         table = table.copy()
         table['bbox_x1'] -= box.position[0]
