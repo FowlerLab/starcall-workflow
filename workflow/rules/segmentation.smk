@@ -22,8 +22,8 @@ rule segment_nuclei:
                 if config['segmentation']['use_corrected'] else
                 segmentation_dir + '{path_nogrid}{grid}{path_nogrid2}/raw_pt.tif'),
     output:
-        segmentation_dir + '{path_nogrid}{grid}{path_nogrid2}/nuclei{nuclearchannel}_mask' + (
-                '_unmatched{grid}.tif' if config['segmentation'].get('match_masks', False) else '{grid}.tif')
+        # grid is included twice as segmentation on grid tiles needs to be merged, so the output is marked with '_grid'
+        segmentation_dir + '{path_nogrid}{grid}{path_nogrid2}/nuclei{nuclearchannel}_mask{unmatched}{grid}.tif',
     params:
         nuclearchannel = parse_param('nuclearchannel', config['segmentation']['channels'][0]),
         method = config['segmentation']['nuclei_method'],
@@ -70,8 +70,7 @@ rule segment_cells:
                 if config['segmentation']['use_corrected'] else
                 segmentation_dir + '{path_nogrid}{grid}{path_nogrid2}/raw_pt.tif'),
     output:
-        segmentation_dir + '{path_nogrid}{grid}{path_nogrid2}/cells{diameter}{nuclearchannel}{cytochannel}_mask' + (
-                '_unmatched{grid}.tif' if config['segmentation'].get('match_masks', False) else '{grid}.tif')
+        segmentation_dir + '{path_nogrid}{grid}{path_nogrid2}/cells{diameter}{nuclearchannel}{cytochannel}_mask{unmatched}{grid}.tif',
     resources:
         mem_mb = lambda wildcards, input: input.size_mb * 20 + 10000,
         #cuda = 1,
@@ -152,11 +151,9 @@ rule expand_segmentation:
 
 rule segment_cells_bases:
     input:
-        segmentation_dir + '{path}/raw.tif'
+        segmentation_dir + '{path_nogrid}{grid}{path_nogrid2}/raw.tif'
     output:
-        (segmentation_dir + '{path}/cellsbases{diameter}{nuclearchannel}{cytochannel}_mask.tif'
-                if not config['segmentation'].get('match_masks', []) else 
-                    segmentation_dir + '{path}/cellsbases{diameter}{nuclearchannel}{cytochannel}_mask_unmatched.tif'),
+        segmentation_dir + '{path_nogrid}{grid}{path_nogrid2}/cellsbases{diameter}{nuclearchannel}_mask_downscaled{unmatched}{grid}.tif',
     params:
         diameter = parse_param('diameter', config['segmentation']['diameter']),
         nuclearchannel = parse_param('nuclearchannel', config['segmentation']['channels'][0]),
@@ -205,11 +202,9 @@ rule segment_cells_bases:
 
 rule segment_nuclei_bases:
     input:
-        segmentation_dir + '{path}/raw.tif'
+        segmentation_dir + '{path_nogrid}{grid}{path_nogrid2}/raw.tif'
     output:
-        (segmentation_dir + '{path}/nucleibases{nuclearchannel}_mask.tif'
-                if not config['segmentation'].get('match_masks', []) else 
-                segmentation_dir + '{path}/nucleibases{nuclearchannel}_mask_unmatched.tif'),
+        segmentation_dir + '{path_nogrid}{grid}{path_nogrid2}/nucleibases{nuclearchannel}_mask_downscaled{unmatched}{grid}.tif',
     params:
         nuclearchannel = parse_param('nuclearchannel', config['segmentation']['channels'][0])
     wildcard_constraints:
@@ -263,98 +258,15 @@ rule downscale_segmentation:
             tifffile.imwrite(output[0], skimage.transform.rescale(mask, bases_scale/phenotype_scale, order=0))
 
 
-rule make_cell_overlay:
-    """ Overlays the cell segmentation boundaries onto the phenotyping images used to
-    create the segmentation. Useful to make sure segmentation is working well and to
-    test different parameters, such as the diameter provided to cellpose.
-    """
-    input:
-        image = (segmentation_dir + '{path}/corrected_pt.tif'
-                if config['segmentation']['use_corrected'] else
-                segmentation_dir + '{path}/raw_pt.tif'),
-        cells = segmentation_dir + '{path}/{segmentation_type}_mask{params}.tif',
-    output:
-        qc_dir + '{path}/{segmentation_type}_overlay{params}.tif',
-        qc_dir + '{path}/{segmentation_type}_overlay{params}.png',
-    wildcard_constraints:
-        params = params_regex('diameter', 'nuclearchannel', 'cytochannel'),
-    resources:
-        mem_mb = lambda wildcards, input: input.size_mb * 15 + 10000
-    run:
-        import numpy as np
-        import tifffile
-        import starcall.utils
-
-        cells = tifffile.imread(input.cells)
-        cell_borders = np.roll(cells, (1,1), axis=(0,1)) != cells
-        debug (cell_borders.min(), cell_borders.max())
-        cell_borders = cell_borders | (np.roll(cells, (-1,1), axis=(0,1)) != cells)
-        debug (cell_borders.min(), cell_borders.max())
-        cell_mask = cells != 0
-        del cells
-
-        tmp_image = tifffile.memmap(input.image, mode='r')
-        debug(tmp_image.shape)
-        image = np.zeros((tmp_image.shape[1] + 1, *tmp_image.shape[2:]), tmp_image.dtype)
-        del tmp_image
-        out_image = image[:-1]
-        tifffile.imread(input.image, out=out_image.reshape(1, *out_image.shape))
-        image[-1] = cell_borders * np.iinfo(image.dtype).max
-        np.maximum(image[-1], cell_mask * image.dtype.type(np.iinfo(image.dtype).max // 3), out=image[-1])
-        debug (image[-1].min(), image[-1].max())
-        tifffile.imwrite(output[0], image)
-        rgbimage = starcall.utils.to_rgb8(image)
-        tifffile.imwrite(output[1], rgbimage)
-
-
-if False:
-#if config['segmentation'].get('match_masks', False):
-    ruleorder: link_merged_grid > match_masks
-    rule match_masks:
-        """ Links cells and nuclei segmented previously, by matching overlapping
-        cells/nuclei and choosing the pair with the highest overlap. Cells with no
-        nuclei and nuclei with no cells are discarded.
-        """
-        input:
-            cells = segmentation_dir + '{path}/cells{extraparams}_mask_unmatched.tif',
-            nuclei = segmentation_dir + '{path}/nuclei{extraparams}_mask_unmatched.tif',
-        output:
-            cells = segmentation_dir + '{path}/cells{extraparams}_mask_unmerged.tif',
-            nuclei = segmentation_dir + '{path}/nuclei{extraparams}_mask_unmerged.tif',
-        wildcard_constraints:
-            extraparams = '(|bases)(|expanded\d+)',
-        resources:
-            mem_mb = lambda wildcards, input: input.size_mb * 5 + 5000
-        run:
-            import collections
-            import tifffile
-            import numpy as np
-            import skimage.measure
-            import starcall.segmentation
-
-            cells = tifffile.imread(input.cells)
-            nuclei = tifffile.imread(input.nuclei)
-
-            cells, nuclei = starcall.segmentation.match_segmentations(cells, nuclei)
-
-            tifffile.imwrite(output.cells, cells)
-            tifffile.imwrite(output.nuclei, nuclei)
-#else:
-    rule match_masks:
-        input:
-            segmentation_dir + '{path}/{segmentation_type}_mask_unmatched.tif',
-        output:
-            segmentation_dir + '{path}/{segmentation_type}_mask_unmerged.tif',
-        localrule: True
-        shell:
-            "cp -l {input[0]} {output[0]}"
-
 
 rule tabulate_cells:
     """ Simple information is recorded about the segmented cells, such as position, bbox.
     """
     input:
-        cells = segmentation_dir + '{path_nogrid}{grid}{path_nogrid2}/{segmentation_type}_mask{unmatched}{grid}.tif',
+        cells = lambda wildcards: (
+                segmentation_dir + '{path_nogrid}{grid}{path_nogrid2}/{segmentation_type}_mask{unmatched}{grid}.tif'
+                if 'bases' not in wildcards.segmentation_type else
+                segmentation_dir + '{path_nogrid}{grid}{path_nogrid2}/{segmentation_type}_mask_downscaled{unmatched}{grid}.tif'),
         #cells = segmentation_dir + '{path}/{segmentation_type}_mask.tif',
     output:
         #table = segmentation_dir + '{path}/{segmentation_type}{unmerged}.csv',
@@ -375,34 +287,16 @@ rule tabulate_cells:
         cells = tifffile.imread(input.cells)
         table = starcall.cells.make_cell_table(cells)
         table.cells.rescale_masks(8)
+
+        if 'bases' in wildcards.segmentation_type:
+            table.cells.bboxes *= phenotype_scale
+            table.cells.bboxes //= bases_scale
+            newscale = 8 * phenotype_scale // bases_scale
+            table['mask{}'.format(newscale)] = table['mask8']
+            table = table.drop('mask8', axis=1)
+
         table.to_csv(output.table)
 
-        """
-        table = {}
-
-        props = skimage.measure.regionprops(cells, cache=False)
-        props = {prop.label: prop for prop in props}
-
-        index = sorted(list(props.keys()))
-
-        bboxes = np.array([props[cell].bbox for cell in index])
-        centroids = np.array([props[cell].centroid for cell in index])
-
-        table['xpos'] = centroids[:,0]
-        table['ypos'] = centroids[:,1]
-        table['bbox_x1'] = bboxes[:,0]
-        table['bbox_y1'] = bboxes[:,1]
-        table['bbox_x2'] = bboxes[:,2]
-        table['bbox_y2'] = bboxes[:,3]
-
-        table['area'] = np.array([int(props[cell].area) for cell in index])
-        table['axis_major'] = np.array([int(props[cell].axis_major_length) for cell in index])
-        table['axis_minor'] = np.array([int(props[cell].axis_minor_length) for cell in index])
-        table['orientation'] = np.array([int(props[cell].orientation) for cell in index])
-
-        table = pandas.DataFrame(table, index=index)
-        table.to_csv(output.table)
-        """
 
 rule plot_cells:
     input:
@@ -664,16 +558,32 @@ def get_segmentation_grid(wildcards):
 rule concat_cell_tables:
     input:
         tables = get_segmentation_grid,
+        composite = segmentation_dir + '{well}_grid{grid_size}/grid_composite.json',
     output:
         table = segmentation_dir + '{well}_grid{grid_size,\d+}/{segmentation_type}.csv',
     run:
         import pandas
         import numpy as np
+        import constitch
+
+        composite = constitch.load(input.composite)
+
+        composite.boxes.positions[:,:2] *= phenotype_scale
+        composite.boxes.positions[:,:2] //= bases_scale
+        composite.boxes.sizes[:,:2] *= phenotype_scale
+        composite.boxes.sizes[:,:2] //= bases_scale
 
         tables = []
-        for i, path in enumerate(input):
+        for i, path in enumerate(input.tables):
             table = pandas.read_csv(path, index_col=0)
+            box = composite.boxes[i]
+
+            table['bbox_x1'] += box.position[0]
+            table['bbox_x2'] += box.position[0]
+            table['bbox_y1'] += box.position[1]
+            table['bbox_y2'] += box.position[1]
             table['orig_file_index'] = np.full(len(table.index), i)
+
             tables.append(table)
 
         table = pandas.concat(tables)
@@ -709,6 +619,7 @@ def stitch_segmentation_section(image_paths, composite, section_box, table):
 
     composite.images = []
 
+    table['new_index'] = np.arange(1, len(table.index) + 1)
     debug (table)
     #second_mapping = {table.index[i]: i+1 for i in range(len(table.index))}
     #debug (second_mapping)
@@ -724,8 +635,8 @@ def stitch_segmentation_section(image_paths, composite, section_box, table):
 
         #mapping_arr = np.zeros(cur_table['orig_index'].max() + 1, dtype)
         mapping_arr = np.zeros(image.max() + 1, dtype)
-        for i, orig_cell in enumerate(cur_table['orig_index']):
-            mapping_arr[orig_cell] = i + 1
+        for orig_cell, new_cell in zip(cur_table['orig_index'], cur_table['new_index']):
+            mapping_arr[orig_cell] = new_cell
         #mapping = mapping_table[mapping_table['table_index']==i]
         #for cell, newcell in zip(mapping['cell'], mapping['new_cell']):
             #mapping_arr[cell] = second_mapping.get(newcell, 0)
@@ -786,57 +697,34 @@ def stitch_segmentation_section(image_paths, composite, section_box, table):
     return full_image
 
 
+unmatched = '_unmatched' if config['segmentation'].get('match_masks', False) else ''
 
+rule relabel_segmentation:
+    input:
+        image = segmentation_dir + '{path_nogrid}{grid}{path_nogrid2}/{segmentation_type}_mask' + unmatched + '{grid}.tif',
+        table = segmentation_dir + '{path_nogrid}{grid}{path_nogrid2}/{segmentation_type}.csv',
+    output:
+        image = segmentation_dir + '{path_nogrid}{grid}{path_nogrid2}/{segmentation_type}_mask.tif',
+    run:
+        import tifffile
+        import pandas
+        import numpy as np
+
+        image = tifffile.imread(input.image)
+        table = pandas.read_csv(input.table, index_col=0)
+
+        mapping_arr = np.zeros(image.max() + 1, dtype)
+        for i, orig_cell in enumerate(table['orig_index']):
+            mapping_arr[orig_cell] = i + 1
+
+        image = mapping_arr[image]
+        tifffile.imwrite(output.image, image)
+
+ruleorder: relabel_segmentation > stitch_tile_segmentation
 
 
 
 segmentation_grid_size = config.get('segmentation_grid_size', 1)
-
-#"""
-def get_grid_size_file(wildcards):
-    grid_size = config.get('segmentation_{}_grid_size'.format(wildcards.segmentation_type), segmentation_grid_size)
-    if grid_size == 1:
-        return segmentation_dir + '{well}/{segmentation_type}{filetype}'
-    return segmentation_dir + '{well}_grid' + str(grid_size) + '/{segmentation_type}{filetype}',
-
-rule link_merged_grid:
-    input:
-        get_grid_size_file,
-    output:
-        segmentation_dir + '{well}_grid/{segmentation_type}{filetype,.csv|_mask.tif}',
-    localrule: True
-    shell:
-        "cp -l {input[0]} {output[0]}"
-
-ruleorder: link_merged_grid > segment_cells
-ruleorder: link_merged_grid > segment_nuclei
-ruleorder: link_merged_grid > tabulate_cells
-#"""
-#ruleorder: merge_tables_mapping > tabulate_cells
-
-rule link_merged:
-    input:
-        segmentation_dir + '{path_nogrid}/{segmentation_type}{mask}_unmerged.{filetype}',
-    output:
-        '{output_dir}{path_nogrid}/{segmentation_type}{mask,|_mask}.{filetype,tif|csv}',
-    localrule: True
-    shell:
-        "cp -l {input[0]} {output[0]}"
-
-'''
-rule link_merged_grid:
-    input:
-        ((segmentation_dir + '{well}_grid' + str(segmentation_grid_size) + '/{segmentation_type}{filetype}')
-                if segmentation_grid_size != 1 else
-                (segmentation_dir + '{well}/{segmentation_type}{filetype}')),
-    output:
-        phenotyping_dir + '{well}_grid/{segmentation_type}{filetype}',
-    localrule: True
-    wildcard_constraints:
-        filetype = '_mask.tif|.csv',
-    shell:
-        "cp -l {input[0]} {output[0]}"
-'''
 
 def find_othertable(wildcards):
     if config['segmentation'].get('match_masks', False) and wildcards.segmentation_type.count('cells') != 0:
@@ -846,6 +734,53 @@ def find_othertable(wildcards):
 
 
 rule split_grid_table:
+    input:
+        #table = segmentation_dir + '{well}_grid/{segmentation_type}.csv',
+        table = segmentation_dir + '{well}_grid' + str(segmentation_grid_size) + '/{segmentation_type}.csv',
+        composite = segmentation_dir + '{well}_grid{grid_size}/grid_composite.json',
+        othertable = find_othertable,
+    output:
+        table = '{output_dir}{well}_grid{grid_size,\d+}/tile{x,\d+}x{y,\d+}y/{segmentation_type}.csv'
+    resources:
+        mem_mb = lambda wildcards, input: 5000 + input.size_mb * 2
+    run:
+        import pandas
+        import numpy as np
+        import constitch
+        import sklearn.neighbors
+        import starcall.cells
+
+        table = pandas.read_csv(input.table, index_col=0)
+        composite = constitch.load(input.composite)
+        grid_size, x, y = int(wildcards.grid_size), int(wildcards.x), int(wildcards.y)
+        index = x * grid_size + y
+
+        composite.boxes.positions[:,:2] *= phenotype_scale
+        composite.boxes.positions[:,:2] //= bases_scale
+        composite.boxes.sizes[:,:2] *= phenotype_scale
+        composite.boxes.sizes[:,:2] //= bases_scale
+        box = composite.boxes[index]
+        debug (table)
+
+        if len(input.othertable) == 0:
+            neighbors = sklearn.neighbors.NearestNeighbors(n_neighbors=1).fit(composite.boxes.centers)
+            distances, indices = neighbors.kneighbors(table.cells.centers)
+            table = table[indices==index]
+        else:
+            othertable = pandas.read_csv(input.othertable[0], index_col=0)
+            table = table[othertable.index]
+
+        table = table.copy()
+        table['bbox_x1'] -= box.position[0]
+        table['bbox_x2'] -= box.position[0]
+        table['bbox_y1'] -= box.position[1]
+        table['bbox_y2'] -= box.position[1]
+        debug (table)
+
+        table.to_csv(output.table)
+
+
+rule split_grid_table_old:
     """ Splits the cell info table into a tile in a grid, for use in later steps such as sequencing
     or phenotyping. Cells are matched to the tile closest to their centroid, ensuring no cells
     are included in two tiles. The overlap between tiles, specified in config.yaml, should be
@@ -858,7 +793,7 @@ rule split_grid_table:
         composite = segmentation_dir + '{well}_grid{grid_size}/grid_composite.json',
         othertable = find_othertable,
     output:
-        table = '{output_dir}{well}_grid{grid_size,\d+}/tile{x,\d+}x{y,\d+}y/{segmentation_type}.csv'
+        table = '{output_dir}{well}_grid{grid_size,\d+}/tile{x,\d+}x{y,\d+}y/{segmentation_type}_so_old.csv'
     resources:
         mem_mb = lambda wildcards, input: 5000 + input.size_mb * 2
     run:
@@ -1047,3 +982,79 @@ rule stitch_tile_from_well_segmentation:
         tifffile.imwrite(output.image, stitch_segmentation_section([input.image],
                 input_composite, fake_mapping, composite.boxes[tile_index], input.table))
 """
+
+
+
+
+def get_grid_size_file(wildcards):
+    grid_size = config.get('segmentation_{}_grid_size'.format(wildcards.segmentation_type), segmentation_grid_size)
+    if grid_size == 1:
+        return segmentation_dir + '{well}/{segmentation_type}{filetype}'
+    return segmentation_dir + '{well}_grid' + str(grid_size) + '/{segmentation_type}{filetype}',
+
+rule link_merged_grid:
+    input:
+        get_grid_size_file,
+    output:
+        segmentation_dir + '{well}_grid/{segmentation_type}{filetype,.csv|_mask.tif}',
+    localrule: True
+    shell:
+        "cp -l {input[0]} {output[0]}"
+
+ruleorder: link_merged_grid > segment_cells
+ruleorder: link_merged_grid > segment_nuclei
+ruleorder: link_merged_grid > tabulate_cells
+
+
+
+
+
+
+
+
+
+#### QC
+
+rule make_cell_overlay:
+    """ Overlays the cell segmentation boundaries onto the phenotyping images used to
+    create the segmentation. Useful to make sure segmentation is working well and to
+    test different parameters, such as the diameter provided to cellpose.
+    """
+    input:
+        image = (segmentation_dir + '{path}/corrected_pt.tif'
+                if config['segmentation']['use_corrected'] else
+                segmentation_dir + '{path}/raw_pt.tif'),
+        cells = segmentation_dir + '{path}/{segmentation_type}_mask{params}.tif',
+    output:
+        qc_dir + '{path}/{segmentation_type}_overlay{params}.tif',
+        qc_dir + '{path}/{segmentation_type}_overlay{params}.png',
+    wildcard_constraints:
+        params = params_regex('diameter', 'nuclearchannel', 'cytochannel'),
+    resources:
+        mem_mb = lambda wildcards, input: input.size_mb * 15 + 10000
+    run:
+        import numpy as np
+        import tifffile
+        import starcall.utils
+
+        cells = tifffile.imread(input.cells)
+        cell_borders = np.roll(cells, (1,1), axis=(0,1)) != cells
+        debug (cell_borders.min(), cell_borders.max())
+        cell_borders = cell_borders | (np.roll(cells, (-1,1), axis=(0,1)) != cells)
+        debug (cell_borders.min(), cell_borders.max())
+        cell_mask = cells != 0
+        del cells
+
+        tmp_image = tifffile.memmap(input.image, mode='r')
+        debug(tmp_image.shape)
+        image = np.zeros((tmp_image.shape[1] + 1, *tmp_image.shape[2:]), tmp_image.dtype)
+        del tmp_image
+        out_image = image[:-1]
+        tifffile.imread(input.image, out=out_image.reshape(1, *out_image.shape))
+        image[-1] = cell_borders * np.iinfo(image.dtype).max
+        np.maximum(image[-1], cell_mask * image.dtype.type(np.iinfo(image.dtype).max // 3), out=image[-1])
+        debug (image[-1].min(), image[-1].max())
+        tifffile.imwrite(output[0], image)
+        rgbimage = starcall.utils.to_rgb8(image)
+        tifffile.imwrite(output[1], rgbimage)
+
