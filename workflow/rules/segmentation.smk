@@ -705,6 +705,8 @@ rule relabel_segmentation:
         table = segmentation_dir + '{path_nogrid}{grid}{path_nogrid2}/{segmentation_type}.csv',
     output:
         image = '{output_dir}{path_nogrid}{grid}{path_nogrid2}/{segmentation_type}_mask.tif',
+    resources:
+        mem_mb = lambda wildcards, input: input.size_mb * 5 + 10000,
     run:
         import tifffile
         import pandas
