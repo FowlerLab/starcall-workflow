@@ -209,14 +209,14 @@ rule stitch_cycle:
             )
 
             full_image = full_image.transpose([2,0,1])
-            debug (full_image.min(), full_image.max(), full_image.dtype, full_image.shape, full_image.nbytes)
-            debug (full_image.min(), full_image.max(), full_image.dtype, full_image.shape, full_image.nbytes)
+            #debug (full_image.min(), full_image.max(), full_image.dtype, full_image.shape, full_image.nbytes)
+            #debug (full_image.min(), full_image.max(), full_image.dtype, full_image.shape, full_image.nbytes)
             del composite
             del images
-            debug (full_image.min(), full_image.max(), full_image.dtype, full_image.shape, full_image.nbytes)
+            #debug (full_image.min(), full_image.max(), full_image.dtype, full_image.shape, full_image.nbytes)
             #tifffile.imwrite(output.image, full_image)
-            print_mem('full_image', resources.mem_mb)
-            debug (starcall.utils.human_readable(full_image.nbytes))
+            #print_mem('full_image', resources.mem_mb)
+            #debug (starcall.utils.human_readable(full_image.nbytes))
             tifffile.imwrite(output.image, full_image)
         except:
             import traceback

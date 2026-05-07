@@ -195,6 +195,7 @@ rule cluster_reads:
     its own cluster and combines clusters, maintaining a combined distance of the cluster below the threshold.
     """
     input:
+        bases = sequencing_dir + '{path}/bases{params}.csv',
         distances = sequencing_dir + '{path}/{segmentation_type}_reads_distance_matrix{params}.csv'
     output:
         clusters = sequencing_dir + '{path}/{segmentation_type}_reads_clusters{params}{thresh}{linkage}.csv',
@@ -214,6 +215,9 @@ rule cluster_reads:
 
         #threshold = 0.5
         #linkage = 'min'
+        table = pandas.read_csv(input.bases, index_col=0)
+        num_reads = len(table.index)
+        del table
 
         distance_matrix = {}
         with open(input.distances) as ifile:
@@ -226,6 +230,7 @@ rule cluster_reads:
             distance_matrix,
             threshold=params.threshold,
             linkage=params.linkage,
+            num_reads=num_reads,
             debug=True, progress=True,
         )
 
@@ -261,6 +266,13 @@ rule combine_reads:
 
         table = pandas.read_csv(input.raw_reads, index_col=0)
         clusters = np.loadtxt(input.clusters, skiprows=1, dtype=int, delimiter=',').reshape(-1)
+
+        #if len(clusters) < len(table.index):
+            #index = len(clusters)
+            #max_cluster = clusters.max()
+            #clusters = clusters.resize(len(table.index))
+            #clusters[index:] = np.arange(max_cluster + 1, max_cluster + 1 + len(clusters) - index)
+
         table['cluster'] = clusters
         table['count'] = np.ones(len(clusters))
 

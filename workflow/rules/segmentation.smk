@@ -152,6 +152,7 @@ rule expand_segmentation:
 rule segment_cells_bases:
     input:
         segmentation_dir + '{path_nogrid}{grid}{path_nogrid2}/raw.tif'
+        #segmentation_dir + '{path_nogrid}{grid}{path_nogrid2}/cycle' + cycles[-1] + '/raw.tif'
     output:
         segmentation_dir + '{path_nogrid}{grid}{path_nogrid2}/cellsbases{diameter}{nuclearchannel}_mask_downscaled{unmatched}{grid}.tif',
     params:
@@ -169,6 +170,7 @@ rule segment_cells_bases:
         import numpy as np
         import starcall.segmentation
         import tifffile
+        import skimage.segmentation
 
         diameter = params.diameter
         nuclearchannel = channel_index(params.nuclearchannel, kind='sequencing')
@@ -197,7 +199,7 @@ rule segment_cells_bases:
             cells, fmap, rmap = skimage.segmentation.relabel_sequential(skimage.segmentation.clear_border(cells))
 
             debug(f'found {cells.max()} cells ')
-            tifffile.imwrite(output[1], cells)#, compression='deflate')
+            tifffile.imwrite(output[0], cells)#, compression='deflate')
 
 
 rule segment_nuclei_bases:
@@ -217,6 +219,7 @@ rule segment_nuclei_bases:
         import numpy as np
         import starcall.segmentation
         import tifffile
+        import skimage.segmentation
 
         nuclearchannel = channel_index(params.nuclearchannel, kind='sequencing')
 
@@ -879,7 +882,7 @@ def get_grid_filenames(wildcards):
     grid = '_grid' + str(segmentation_grid_size)
     unmatched = '_unmatched' if config['segmentation'].get('match_masks', False) else ''
     return expand(segmentation_dir + '{well}' + grid
-                + '/tile{x}x{y}y/{segmentation_type}_mask' + unmatched
+                + '/tile{x}x{y}y/{segmentation_type}_mask{downscaled}' + unmatched
                 + grid + '.tif', x=numbers, y=numbers, allow_missing=True)
 
 def get_cells_mapping2(wildcards):
@@ -898,7 +901,7 @@ rule stitch_tile_segmentation:
         composite2 = stitching_dir + '{well}_grid{grid_size}/grid_composite.json',
         table = '{output_dir}{well}_grid{grid_size}/tile{x}x{y}y/{segmentation_type}.csv',
     output:
-        image = temp('{output_dir}{well}_grid{grid_size,\d+}/tile{x,\d+}x{y,\d+}y/{segmentation_type}_mask.tif'),
+        image = temp('{output_dir}{well}_grid{grid_size,\d+}/tile{x,\d+}x{y,\d+}y/{segmentation_type}_mask{downscaled,|_downscaled}.tif'),
     resources:
         mem_mb = lambda wildcards, input: 5000 + input.size_mb * 2
     run:
