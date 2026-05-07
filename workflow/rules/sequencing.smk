@@ -212,6 +212,7 @@ rule cluster_reads:
         import numpy as np
         import csv
         import starcall.reads
+        import pandas
 
         #threshold = 0.5
         #linkage = 'min'
