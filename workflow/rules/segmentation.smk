@@ -289,14 +289,15 @@ rule tabulate_cells:
 
         cells = tifffile.imread(input.cells)
         table = starcall.cells.make_cell_table(cells)
-        table.cells.rescale_masks(8)
+        masks_scale = 8
+        table.cells.rescale_masks(masks_scale)
 
         if 'bases' in wildcards.segmentation_type:
-            table.cells.bboxes *= phenotype_scale
-            table.cells.bboxes //= bases_scale
+            table.cells.bboxes[:] *= phenotype_scale
+            table.cells.bboxes[:] //= bases_scale
             newscale = 8 * phenotype_scale // bases_scale
-            table['mask{}'.format(newscale)] = table['mask8']
-            table = table.drop('mask8', axis=1)
+            table['mask{}'.format(newscale)] = table['mask{}'.format(masks_scale)]
+            table = table.drop('mask{}'.format(masks_scale), axis=1)
 
         table.to_csv(output.table)
 
@@ -477,6 +478,7 @@ if config['segmentation'].get('match_masks', False):
             import starcall.cells
 
             base_table = pandas.read_csv(input.tables[0], index_col=0)
+            masks_scale = base_table.cells.best_masks_scale
             all_tables = []
 
             overlap_threshold = 0.25
@@ -486,6 +488,11 @@ if config['segmentation'].get('match_masks', False):
             for i in range(len(input.tables) - 1):
                 table = pandas.read_csv(input.tables[i+1], index_col=0)
                 all_tables.append(table)
+
+                if table.cells.best_masks_scale != masks_scale:
+                    table = table.copy()
+                    table.cells.rescale_masks(masks_scale)
+
                 intersecting = base_table.cells.intersecting_cells(table)
                 cur_mapping = np.full(len(table.index), -1)
                 ratios = np.zeros(len(table.index))
@@ -596,7 +603,7 @@ rule concat_cell_tables:
 ### Merging then resplitting cell segmentation
 
 
-def stitch_segmentation_section(image_paths, composite, section_box, table):
+def stitch_segmentation_section(image_paths, composite, section_box, table, phenotype=True):
     import constitch
     import numpy as np
     import tifffile
@@ -608,12 +615,12 @@ def stitch_segmentation_section(image_paths, composite, section_box, table):
     if type(table) == str:
         table = pandas.read_csv(table, index_col=0)
 
-    # scaling from base images to phenotype
-    composite.boxes.positions[:,:2] *= phenotype_scale
-    composite.boxes.positions[:,:2] //= bases_scale
-    composite.boxes.sizes[:,:2] *= phenotype_scale
-    composite.boxes.sizes[:,:2] //= bases_scale
-
+    if phenotype:
+        # scaling from base images to phenotype
+        composite.boxes.positions[:,:2] *= phenotype_scale
+        composite.boxes.positions[:,:2] //= bases_scale
+        composite.boxes.sizes[:,:2] *= phenotype_scale
+        composite.boxes.sizes[:,:2] //= bases_scale
 
     dtype = [dtype for dtype in [np.uint16, np.uint32, np.uint64] if np.iinfo(dtype).max > len(table.index) + 1][0]
     touching_indices = [i for i, box in enumerate(composite.boxes) if box.collides(section_box)]
@@ -909,15 +916,18 @@ rule stitch_tile_segmentation:
         import constitch
 
         composite = constitch.load(input.composite2)
-        # scaling from base images to phenotype
-        composite.boxes.positions[:,:2] *= phenotype_scale
-        composite.boxes.positions[:,:2] //= bases_scale
-        composite.boxes.sizes[:,:2] *= phenotype_scale
-        composite.boxes.sizes[:,:2] //= bases_scale
+
+        if wildcards.downscaled == '':
+            # scaling from base images to phenotype
+            composite.boxes.positions[:,:2] *= phenotype_scale
+            composite.boxes.positions[:,:2] //= bases_scale
+            composite.boxes.sizes[:,:2] *= phenotype_scale
+            composite.boxes.sizes[:,:2] //= bases_scale
+
         tile_index = int(wildcards.x) * int(wildcards.grid_size) + int(wildcards.y)
 
         tifffile.imwrite(output.image, stitch_segmentation_section(input.images,
-                input.composite, composite.boxes[tile_index], input.table))
+                input.composite, composite.boxes[tile_index], input.table, phenotype=wildcards.downscaled == ''))
 
 """
 def get_cells_mapping3(wildcards):
