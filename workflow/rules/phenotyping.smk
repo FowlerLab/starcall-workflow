@@ -163,6 +163,8 @@ rule calc_features:
 ##################################################
 
 rule extract_cellprofiler_channel:
+    """ Copies a single channel from the phenotype images, as cellprofiler requires each channel to be as separate image
+    """
     input:
         image = get_phenotyping_pt,
     output:
@@ -194,6 +196,9 @@ def get_channels(wildcards):
 
 
 rule copy_cellprofiler_files:
+    """ Ensures all input for cellprofiler is in the correct format and location. writes the file list
+    that is read in by the cellprofiler pipeline.
+    """
     input:
         #image = stitching_dir + '{path}/cycle' + phenotype_cycle + '.tif',
         #image = get_phenotyping_pt,

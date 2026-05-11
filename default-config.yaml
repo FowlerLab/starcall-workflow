@@ -123,6 +123,10 @@ sequencing:
     # 4-8, but this depends on how prevelant errors are and the size of the barcode library
     max_reads: 4
 
+    # Whether to remove cells that weren't matched to a barcode in the additional barcode table
+    # ignored if there is no barcode table
+    remove_unmatched_cells: False
+
 phenotyping:
     # Whether cell segmentation is run on background corrected images
     # if both this and sequencing.use_corrected are false, background correction

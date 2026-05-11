@@ -133,6 +133,8 @@ rule segment_cells:
 
 
 rule expand_segmentation:
+    """ Expands the segmentation by a specified pixel amount, performed with skimage.segmentation.expand_labels
+    """
     input:
         cells = segmentation_dir + '{path}/{segmentation_type}_mask_unmerged.tif',
     output:
@@ -152,6 +154,13 @@ rule expand_segmentation:
 
 
 rule segment_cells_bases:
+    """ Segments sequencing images to find cell boundaries, used to group reads and calculate cell phenotype features.
+    Takes one channel as input, a nuclear channel. The cytoplasm channel is calculated using starcall.segmentation.estimate_cyto
+
+    Params:
+        nuclearchannel: The sequencing channel to perform segmentation on, should be
+            an integer index or one of the sequencing channels specified in config.yaml
+    """
     input:
         segmentation_dir + '{path_nogrid}{grid}{path_nogrid2}/raw.tif'
         #segmentation_dir + '{path_nogrid}{grid}{path_nogrid2}/cycle' + cycles[-1] + '/raw.tif'
@@ -206,6 +215,14 @@ rule segment_cells_bases:
 
 
 rule segment_nuclei_bases:
+    """ Uses Stardist to segment the nuclei of cells from the sequencing
+    images. Takes one channel as a nuclear channel. Outputs
+    an image with integer masks for each cell.
+
+    Params:
+        nuclearchannel: The sequencing channel to perform segmentation on, should be
+            an integer index or one of the sequencing channels specified in config.yaml
+    """
     input:
         segmentation_dir + '{path_nogrid}{grid}{path_nogrid2}/raw.tif'
     output:
@@ -268,6 +285,13 @@ rule downscale_segmentation:
 
 rule tabulate_cells:
     """ Simple information is recorded about the segmented cells, such as position, bbox.
+    Also stores masks of each cell, downscaled so they take up a reasonable amount of space.
+    These binary masks are packed 8 bits per byte then encoded using base85 to allow them to be stored
+    in a csv file. The encoding and decoding of these masks is handled with the pandas extention 'cells'
+    defined in starcall.cells
+    If the input segmentation is sequencing image scale (contains '_downscaled' in the path), the bboxes
+    and positions of cells is converted to phenotype scale, to ensure all cell tables are consistently
+    phenotype scale.
     """
     input:
         cells = lambda wildcards: (
@@ -307,6 +331,9 @@ rule tabulate_cells:
 
 
 rule plot_cells:
+    """ Plots cells using a cell table. If the cell table has cell masks saved by tabulate_cells
+    the masks are used, otherwise the bounding boxes of each cell is used.
+    """
     input:
         table = segmentation_dir + '{path}/{segmentation_type}{unmerged}.csv',
     output:
@@ -340,6 +367,10 @@ def neighboring_tables(wildcards):
                  + '/{segmentation_type}{unmatched}.csv' for i, j in tiles]
 
 rule drop_duplicate_cells:
+    """ Removes duplicate cells in the overlapping region between neighboring cells. Cells that are closer to the center of
+    another tile in the grid are removed. Afterwards cells that overlap with cells from other tiles are removed as well. Overlap
+    between cells is only checked for tiles with an index less than the current tile.
+    """
     input:
         table = segmentation_dir + '{well}_grid{grid_size}/tile{x}x{y}y/{segmentation_type}{unmatched}_grid{grid_size}.csv',
         edge_tables = neighboring_tables,
@@ -468,6 +499,12 @@ if config['segmentation'].get('match_masks', False):
         return paths
 
     rule match_cell_tables:
+        """ Matches segmentations that should be labeled the same, typically cells and nuclei.
+        Uses one of the segmentations as a base segmentation (normally nuclei as nuclei segmentation is more reliable),
+        then the other segmentations are matched to the base segmentation. For each mask in the base segmentation
+        the mask in the other segmentation with the greatest overlapping area is chosen. Any masks that don't have
+        a mapping are removed
+        """
         input:
             tables = expand(segmentation_dir + '{path}/{segmentation_type}{extra_params}_unmatched.csv', segmentation_type=mask_pair, allow_missing=True),
             grid_index_reference = grid_index_reference,
@@ -570,6 +607,10 @@ def get_segmentation_grid(wildcards):
     return expand(segmentation_dir + '{well}_grid{grid_size}/tile{x}x{y}y/{segmentation_type}.csv', x=numbers, y=numbers, allow_missing=True)
 
 rule concat_cell_tables:
+    """ Combine cell tables from grid tiles together into a single table. Because
+    duplicate cells have been removed by drop_duplicate_cells, the tables can simply
+    be concatenated together.
+    """
     input:
         tables = get_segmentation_grid,
         composite = segmentation_dir + '{well}_grid{grid_size}/grid_composite.json',
@@ -715,6 +756,8 @@ def stitch_segmentation_section(image_paths, composite, section_box, table, phen
 unmatched = '_unmatched' if config['segmentation'].get('match_masks', False) else ''
 
 rule relabel_segmentation:
+    """ Uses a filtered and matched cells table to relabel a segmentation mask to be sequential.
+    """
     input:
         image = segmentation_dir + '{path_nogrid}{grid}{path_nogrid2}/{segmentation_type}_mask' + unmatched + '{grid}.tif',
         table = segmentation_dir + '{path_nogrid}{grid}{path_nogrid2}/{segmentation_type}.csv',
@@ -745,13 +788,29 @@ ruleorder: relabel_segmentation > stitch_tile_segmentation
 segmentation_grid_size = config.get('segmentation_grid_size', 1)
 
 def find_othertable(wildcards):
-    if config['segmentation'].get('match_masks', False) and wildcards.segmentation_type.count('cells') != 0:
-        newtype = wildcards.segmentation_type.replace('cells', 'nuclei')
-        return ['{output_dir}{well}_grid{grid_size,\d+}/tile{x,\d+}x{y,\d+}y/' + newtype + '.csv']
+    match_pair = config['segmentation'].get('match_masks', False)
+    if match_pair:
+        for segtype in match_pair[1:]:
+            if wildcards.segmentation_type.count(segtype) != 0:
+                newtype = wildcards.segmentation_type.replace(segtype, match_pair[0])
+                return ['{output_dir}{well}_grid{grid_size,\d+}/tile{x,\d+}x{y,\d+}y/' + newtype + '.csv']
+    #if config['segmentation'].get('match_masks', False) and wildcards.segmentation_type.count('cells') != 0:
+        #newtype = wildcards.segmentation_type.replace('cells', 'nuclei')
+        #return ['{output_dir}{well}_grid{grid_size,\d+}/tile{x,\d+}x{y,\d+}y/' + newtype + '.csv']
     return []
 
 
 rule split_grid_table:
+    """ Creates a cell table for a grid tile from a full well cell table, including only cells that
+    are closest to the given tile. This way each cell has a single tile it is included in, and there will
+    be no duplicate cells when the tables are rejoined together.
+
+    The only complication to this is when splitting tables that have been matched to each other, eg cell and nuclei
+    tables. In this case it is not guaranteed that the cell and nucleus with the same label will be mapped to the
+    same tile. To resolve this, only one of the matched tables is split, eg the nuclei table. Then the cell table
+    is split using the same indices as the nuclei table. This is accomplished with input.othertable, which is empty
+    unless the table is a type of segmentation that is matched, in which case it will be the matched table.
+    """
     input:
         #table = segmentation_dir + '{well}_grid/{segmentation_type}.csv',
         table = segmentation_dir + '{well}_grid' + str(segmentation_grid_size) + '/{segmentation_type}.csv',
@@ -798,95 +857,6 @@ rule split_grid_table:
         table.to_csv(output.table)
 
 
-rule split_grid_table_old:
-    """ Splits the cell info table into a tile in a grid, for use in later steps such as sequencing
-    or phenotyping. Cells are matched to the tile closest to their centroid, ensuring no cells
-    are included in two tiles. The overlap between tiles, specified in config.yaml, should be
-    large enough that nearly all cells are contained in at least one tile. If enough cells are not
-    contained in any tile (>20%) this step will fail and the overlap should be increased.
-    """
-    input:
-        #table = segmentation_dir + '{well}_grid/{segmentation_type}.csv',
-        table = segmentation_dir + '{well}_grid' + str(segmentation_grid_size) + '/{segmentation_type}.csv',
-        composite = segmentation_dir + '{well}_grid{grid_size}/grid_composite.json',
-        othertable = find_othertable,
-    output:
-        table = '{output_dir}{well}_grid{grid_size,\d+}/tile{x,\d+}x{y,\d+}y/{segmentation_type}_so_old.csv'
-    resources:
-        mem_mb = lambda wildcards, input: 5000 + input.size_mb * 2
-    run:
-        import pandas
-        import numpy as np
-        import constitch
-
-        table = pandas.read_csv(input.table, index_col=0)
-        composite = constitch.load(input.composite)
-        grid_size, x, y = int(wildcards.grid_size), int(wildcards.x), int(wildcards.y)
-
-        composite.boxes.positions[:,:2] *= phenotype_scale
-        composite.boxes.positions[:,:2] //= bases_scale
-        composite.boxes.sizes[:,:2] *= phenotype_scale
-        composite.boxes.sizes[:,:2] //= bases_scale
-        box = composite.boxes[x*grid_size+y]
-
-        split_cells = 0
-
-        if len(input.othertable) == 0:
-            contained = []
-            for i, cell in table.iterrows():
-                cellbox = constitch.BBox(point1=[cell.bbox_x1, cell.bbox_y1], point2=[cell.bbox_x2 // 2 * 2, cell.bbox_y2 // 2 * 2])
-                # rounding down point2 of cellbox to avoid off by one error on the edge of the grid,
-                # cause the grid will always be rounded down
-
-                closest = np.linalg.norm(box.center - cellbox.center)
-                closest_box = box
-                closest_index = x * grid_size + y
-                for j in range(len(composite.boxes)):
-                    dist = np.linalg.norm(composite.boxes[j].center - cellbox.center)
-                    if dist <= closest:
-                        closest, closest_box = dist, composite.boxes[j]
-                        closest_index = j
-
-                #debug ('----- here ----', closest_index, closest_index//grid_size, closest_index%grid_size)
-
-                if not closest_box.contains(cellbox):
-                    split_cells += 1
-                    debug ('split cell:', closest_index, closest_index//grid_size, closest_index%grid_size)
-                    #debug (closest_box.point1, closest_box.point2, cellbox.point1, cellbox.point2)
-                    #debug ('   ', np.linalg.norm(closest_box.center - cellbox.center))
-                    #for curbox in composite.boxes:
-                        #debug (curbox.point1, curbox.point2)
-                        #debug ('   ', cellbox.point1 - curbox.point1, curbox.point2 - cellbox.point2)
-                        #debug ('   ', np.linalg.norm(cellbox.center - curbox.center))
-                #assert closest_box.contains(cellbox)
-
-                contained.append(closest_box is box)
-
-                #is_contained = box.contains(cellbox)
-                #for j in range(x*grid_size+y):
-                    #is_contained = is_contained and not composite.boxes[j].contains(cellbox)
-                #contained.append(is_contained)
-
-            assert split_cells < max(50, 0.2 * len(table.index)), (
-                    "{} out of {} cells in the well were split by the grid. "
-                    "Occasional cells are split if they are larger than overlap, but if "
-                    "this is too many consider increasing the overlap in config file".format(split_cells, len(table.index)))
-
-        else:
-            othertable = pandas.read_csv(input.othertable[0], index_col=0)
-            debug ('othertable', othertable)
-            contained = list(othertable.index)
-            debug ('contained', len(contained))
-
-        table = table.loc[contained,:]
-        #table = table[contained]
-        table['bbox_x1'] -= box.position[0]
-        table['bbox_x2'] -= box.position[0]
-        table['bbox_y1'] -= box.position[1]
-        table['bbox_y2'] -= box.position[1]
-        #table['xpos'] -= box.position[0]
-        #table['ypos'] -= box.position[1]
-        table.to_csv(output.table)
 
 def get_grid_filenames(wildcards):
     grid_size = int(wildcards.grid_size)
@@ -905,6 +875,14 @@ def get_cells_mapping2(wildcards):
     return segmentation_dir + '{well}_grid{grid_size,\d+}/{segmentation_type}_mappings.csv'
 
 rule stitch_tile_segmentation:
+    """ Stitches segmentation masks from one grid of tiles to another grid of tiles. The main difficulty
+    in this is making sure the masks are relabeled properly, ensuring the resulting mask is labeled sequentially.
+    The cell table corresponding to the output segmentation is used as a key, with masks labeled according to
+    the order in which they appear in the table (eg the first row will be labeled as 1, the second as 2 ...)
+
+    Because the cell table contains a column 'orig_index' it is easy to know the label of each cell in the input masks,
+    and they are relabeled before stitching.
+    """
     input:
         images = get_grid_filenames,
         composite = segmentation_dir + '{well}_grid' + str(segmentation_grid_size) + '/grid_composite.json',

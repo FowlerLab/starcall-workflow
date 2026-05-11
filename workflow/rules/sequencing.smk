@@ -193,6 +193,13 @@ rule cluster_reads:
     """ Uses the distance matrix calculated in rule calculate_distance_matrix to cluster similar
     reads. The clustering method used is agglomerative clustering, which starts with every read in
     its own cluster and combines clusters, maintaining a combined distance of the cluster below the threshold.
+
+    params:
+        thresh: The threshold used for agglomerative clustering
+        linkage: The behaviour used to decide whether to combine two clusters of reads. Either
+            the min, max, or mean distance between all reads in the two clusters is taken, and
+            if the result is less than thresh, the clusters are combined. This is similar to
+            the linkage parameter for sklearn.cluster.AgglomerativeClustering
     """
     input:
         bases = sequencing_dir + '{path}/bases{params}.csv',
@@ -333,6 +340,9 @@ ruleorder: segment_cells > segment_cells_bases
 
 
 rule annotate_dots:
+    """ Marks each dot that was detected with a cross. The annotations are included in a new
+    channel added to the image
+    """
     input:
         image = sequencing_dir + '{path}/raw.tif',
         bases = sequencing_dir + '{path}/bases{params}.csv',
@@ -406,11 +416,35 @@ def get_aux_data(wildcards, path=None):
     return files
 
 rule merge_final_tables:
+    """ Combine the read table with any additional tables that have information linked to specific barcodes.
+    This could include variants, gene kos, or other perturbations depending on the experiment.
+
+    Additional tables are searched for in the following paths:
+        sequencing/{path}/{segmentation_type}.auxdata/
+        sequencing/{path}/auxdata/
+        input/{path}/{segmentation_type}.auxdata/
+        input/{path}/auxdata/
+        input/auxdata/
+    All tables found should have a barcode column as the first column, containing barcodes that will be matched
+    to reads. If multiple reads are required for a match, they should be separated with a dash, for example the
+    barcode 'GTAC-AATG' will only be matched to a cell with both 'GTAC' and 'AATG' as reads.
+
+    Read matching is also performed for cells that don't have a perfect match to any barcode, in which case the search
+    is expanded to find the barcode that have the minimum edit distance to one of the cells reads. If there are multiple
+    such barcodes, no match is able to be made.
+
+    Cells that have been matched to a barcode will have the entire row corresponding to that barcode concatenated
+    to the end of the row. Cells that were not matched will not have values for all of these rows, which results in NA
+    for all values. This can be prevented by removing all cells that were not able to be matched, enabled in config.yaml
+    with the option sequencing.remove_unmatched_cells
+    """
     input:
         cell_table = sequencing_dir + '{path}/{segmentation_type}_reads_partial{params}.csv',
         aux_data = get_aux_data,
     output:
         full_table = sequencing_dir + '{path}/{segmentation_type}_reads{params}.csv',
+    params:
+        remove_unmatched = config['sequencing'].get('remove_unmatched_cells', False),
     wildcard_constraints:
         params = params_regex('min', 'max', 'num', 'norm', 'posweight', 'valweight', 'seqweight', 'thresh', 'linkage', 'maxreads'),
     resources:
@@ -483,10 +517,16 @@ rule merge_final_tables:
             multiple_matches = edit_distances[:,0] == edit_distances[:,1]
             debug (multiple_matches.shape)
 
-            new_rows = [pandas.Series(dtype=object) if i == -1 else aux_table.iloc[i,:] for i in indices[:,0]]
+            if params.remove_unmatched:
+                new_rows = [aux_table.iloc[i,:] for i in indices[:,0] if i != -1]
+                new_index = [cell_table.index[i] for i in indices[:,0] if i != -1]
+            else:
+                new_rows = [pandas.Series(dtype=object) if i == -1 else aux_table.iloc[i,:] for i in indices[:,0]]
+                new_index = cell_table.index
+
             #new_rows = [pandas.Series(dtype=object) if (i == -1 and not multiple) else aux_table.iloc[i,:] for i, multiple in zip(indices[:,0], multiple_matches)]
             debug ('making new table', len(new_rows))
-            new_table = pandas.DataFrame(new_rows, index=cell_table.index)
+            new_table = pandas.DataFrame(new_rows, index=new_index)
             debug ('  done')
             new_table['editDistance'] = edit_distances[:,0]
             new_table['edit_distance'] = edit_distances[:,0]

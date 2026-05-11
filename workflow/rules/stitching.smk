@@ -395,7 +395,7 @@ rule stitch_well_pt:
     output:
         image = temp('{output_dir}{well_stitching}/{corrected,raw|corrected}_pt.tif'),
     resources:
-        mem_mb = lambda wildcards, input: 5000 + input.size_mb * 1.5
+        mem_mb = lambda wildcards, input: 5000 + input.size_mb * 2
     run:
         import numpy as np
         import tifffile
