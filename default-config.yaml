@@ -52,6 +52,8 @@ stitching:
     # The method to combine overlapping tiles. Mean takes the mean, nearest crops
     # each tile to be not overlapping
     merger: 'nearest'
+    # Centers each cycle independently
+    # center: True
 
     # This section is all of the parameters for ASHLAR stitching. ASHLAR may provide
     # better stitching than ConStitch, but it should be noted that ASHLAR cannot be used
