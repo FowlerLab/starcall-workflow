@@ -134,9 +134,13 @@ rule segment_cells:
 
 rule expand_segmentation:
     input:
-        cells = segmentation_dir + '{path}/{segmentation_type}_mask_unmerged.tif',
+        #cells = segmentation_dir + '{path}/{segmentation_type}_mask_unmerged.tif',
+        cells = segmentation_dir + '{path_nogrid}{grid}{path_nogrid2}/{segmentation_type}_mask{downscaled}{unmatched}{grid}.tif',
     output:
-        cells = segmentation_dir + '{path}/{segmentation_type}expanded{size,\d+}_mask_unmerged.tif',
+        #cells = segmentation_dir + '{path}/{segmentation_type}expanded{size,\d+}_mask_unmerged.tif',
+        cells = segmentation_dir + '{path_nogrid}{grid}{path_nogrid2}/{segmentation_type}expanded{size,\d+}_mask{downscaled}{unmatched}{grid}.tif',
+    wildcard_constraints:
+        downscaled = '|_downscaled',
     resources:
         mem_mb = lambda wildcards, input: input.size_mb * 2 + 5000,
     run:
@@ -294,14 +298,23 @@ rule tabulate_cells:
         cells = tifffile.imread(input.cells)
         table = starcall.cells.make_cell_table(cells)
         masks_scale = 8
-        table.cells.rescale_masks(masks_scale)
 
         if 'bases' in wildcards.segmentation_type:
-            table.cells.bboxes[:] *= phenotype_scale
-            table.cells.bboxes[:] //= bases_scale
-            newscale = 8 * phenotype_scale // bases_scale
+            newscale = (masks_scale * phenotype_scale / bases_scale)
+            #masks_scale = round(newscale * bases_scale / phenotype_scale)
+            debug (masks_scale, newscale)
+
+            table.cells.rescale_masks(masks_scale)
+            table.cells.bboxes[:,:2] = np.ceil(table.cells.bboxes[:,:2] * phenotype_scale / bases_scale).astype(int)
+            table.cells.bboxes[:,2:] = np.floor(table.cells.bboxes[:,2:] * phenotype_scale / bases_scale).astype(int)
+            #table.cells.bboxes[:] *= phenotype_scale
+            #table.cells.bboxes[:] //= bases_scale
+
             table['mask{}'.format(newscale)] = table['mask{}'.format(masks_scale)]
             table = table.drop('mask{}'.format(masks_scale), axis=1)
+
+        else:
+            table.cells.rescale_masks(masks_scale)
 
         table.to_csv(output.table)
 
@@ -716,10 +729,10 @@ unmatched = '_unmatched' if config['segmentation'].get('match_masks', False) els
 
 rule relabel_segmentation:
     input:
-        image = segmentation_dir + '{path_nogrid}{grid}{path_nogrid2}/{segmentation_type}_mask' + unmatched + '{grid}.tif',
+        image = segmentation_dir + '{path_nogrid}{grid}{path_nogrid2}/{segmentation_type}_mask{downscaled}' + unmatched + '{grid}.tif',
         table = segmentation_dir + '{path_nogrid}{grid}{path_nogrid2}/{segmentation_type}.csv',
     output:
-        image = '{output_dir}{path_nogrid}{grid}{path_nogrid2}/{segmentation_type}_mask.tif',
+        image = '{output_dir}{path_nogrid}{grid}{path_nogrid2}/{segmentation_type}_mask{downscaled,|_downscaled}.tif',
     resources:
         mem_mb = lambda wildcards, input: input.size_mb * 5 + 10000,
     run:

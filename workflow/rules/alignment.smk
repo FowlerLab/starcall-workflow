@@ -175,15 +175,16 @@ rule filter_constraints:
         composite = constitch.load(input.composite)
         overlapping, constraints, erroneous_constraints = constitch.load(input.constraints, composite=composite)
 
-        score_threshold = np.percentile([const.score for const in erroneous_constraints], 95) if len(erroneous_constraints) else 0.5
-        constraints = constraints.filter(min_score=score_threshold)
-
         modeled = constitch.ConstraintSet()
-        if wildcards.cycle1 == wildcards.cycle2:
-            stage_model = constitch.SimpleOffsetModel() if wildcards.cycle1 == wildcards.cycle2 else constitch.GlobalStageModel()
-            stage_model = constraints.fit_model(stage_model, outliers=True)
-            constraints = stage_model.inliers
-            modeled = overlapping.calculate(stage_model)
+        if len(constraints) != 0:
+            score_threshold = np.percentile([const.score for const in erroneous_constraints], 95) if len(erroneous_constraints) else 0.5
+            constraints = constraints.filter(min_score=score_threshold)
+
+            if wildcards.cycle1 == wildcards.cycle2:
+                stage_model = constitch.SimpleOffsetModel() if wildcards.cycle1 == wildcards.cycle2 else constitch.GlobalStageModel()
+                stage_model = constraints.fit_model(stage_model, outliers=True)
+                constraints = stage_model.inliers
+                modeled = overlapping.calculate(stage_model)
 
         composite.plot_scores(output.plot, constraints)
 
