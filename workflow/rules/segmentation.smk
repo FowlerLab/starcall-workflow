@@ -52,7 +52,8 @@ rule segment_nuclei:
         else:
             del data
             nuclei = starcall.segmentation.segment_nuclei(dapi, method=params.method)
-            nuclei, fmap, rmap = skimage.segmentation.relabel_sequential(skimage.segmentation.clear_border(nuclei))
+            #nuclei, fmap, rmap = skimage.segmentation.relabel_sequential(skimage.segmentation.clear_border(nuclei))
+            nuclei = starcall.segmentation.filter_segmentation(nuclei)
             debug ('Found', nuclei.max(), 'nuclei')
             tifffile.imwrite(output[0], nuclei)
 
@@ -123,7 +124,8 @@ rule segment_cells:
                 diameter = params.diameter,
                 gpu = use_gpu,
             )
-            cells, fmap, rmap = skimage.segmentation.relabel_sequential(skimage.segmentation.clear_border(cells))
+            #cells, fmap, rmap = skimage.segmentation.relabel_sequential(skimage.segmentation.clear_border(cells))
+            cells = starcall.segmentation.filter_segmentation(cells)
 
             debug ('Found', cells.max(), 'cells')
 
@@ -196,7 +198,8 @@ rule segment_cells_bases:
                 diameter = config['segmentation']['diameter'] * bases_scale // phenotype_scale,
                 gpu=use_gpu,
             )
-            cells, fmap, rmap = skimage.segmentation.relabel_sequential(skimage.segmentation.clear_border(cells))
+            #cells, fmap, rmap = skimage.segmentation.relabel_sequential(skimage.segmentation.clear_border(cells))
+            cells = starcall.segmentation.filter_segmentation(cells)
 
             debug(f'found {cells.max()} cells ')
             tifffile.imwrite(output[0], cells)#, compression='deflate')
@@ -235,7 +238,8 @@ rule segment_nuclei_bases:
             del full_well
 
             nuclei = starcall.segmentation.segment_nuclei(dapi)
-            nuclei, fmap, rmap = skimage.segmentation.relabel_sequential(skimage.segmentation.clear_border(nuclei))
+            #nuclei, fmap, rmap = skimage.segmentation.relabel_sequential(skimage.segmentation.clear_border(nuclei))
+            nuclei = starcall.segmentation.filter_segmentation(nuclei)
             debug(f'found {nuclei.max()} nuclei ')
 
             tifffile.imwrite(output[0], nuclei)#, compression='deflate')
@@ -672,6 +676,7 @@ def stitch_segmentation_section(image_paths, composite, section_box, table, phen
     if max_label != num_unique - 1:
         debug ('BIG PROBLEM cellprofiler will not like this')
         debug (set(range(max_label + 1)) - set(np.unique(full_image)))
+        assert max_label == num_unique - 1
 
         """
         missing_index = next(iter(set(range(max_label + 1)) - set(np.unique(full_image))))

@@ -406,6 +406,7 @@ rule make_noisy_well:
             np.savetxt(output.positions[i], poses, delimiter=',', fmt='%d')
             tifffile.imwrite(output.images[i], images)
 
+"""
 rule make_noisy_cycle_well:
     input:
         noisy_cycle = input_dir + '{well_nonoise}_noise{size}/cycle' + cycles_pt[0] + '/raw.tif',
@@ -420,4 +421,5 @@ rule make_noisy_cycle_well:
     run:
         for src, dest in zip(input, output):
             os.link(src, dest)
+"""
 
