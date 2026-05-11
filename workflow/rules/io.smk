@@ -31,6 +31,11 @@ def imread(path, indices=None, mask=None):
             return image[mask]
         return image
 
+def imread_ndim4(path, indices=None, mask=None):
+    image = imread(path, indices, mask)
+    image = image.reshape(-1, *image.shape[-3:])
+    return image
+
 def iminfo(path):
     """ Reads the shape and dtype of the tif or nd2 image file without loading
     the image data into memory
@@ -164,7 +169,7 @@ if os.path.exists(rawinput_dir):
                     debug ('size_x, size_y', size_x, size_y)
                     xposes = np.array([plane['position_x'] for plane in meta['pixels']['planes'] if plane['the_c'] == 0]) / size_x
                     yposes = np.array([plane['position_y'] for plane in meta['pixels']['planes'] if plane['the_c'] == 0]) / size_y
-                    assert len(xposes) > 1
+                    #assert len(xposes) > 1
 
                 else:
                     xposes, yposes = [], []
@@ -198,11 +203,14 @@ if os.path.exists(rawinput_dir):
                 #debug (positions.shape)
                 #debug (np.array([plane['position_x'] for plane in meta['pixels']['planes']]) / size_x)
 
-                shift_dist = max(abs(positions[0,0] - positions[1,0]), abs(positions[0,1] - positions[1,1]))
-                shift_dist = np.median(np.linalg.norm(positions[1:] - positions[:-1], axis=1))
-                grid_poses = np.round(positions / shift_dist).astype(int)
+                if positions.shape[0] > 1:
+                    shift_dist = max(abs(positions[0,0] - positions[1,0]), abs(positions[0,1] - positions[1,1]))
+                    shift_dist = np.median(np.linalg.norm(positions[1:] - positions[:-1], axis=1))
+                    grid_poses = np.round(positions / shift_dist).astype(int)
 
-                grid_poses = grid_poses - grid_poses.min(axis=0).reshape(1,-1)
+                    grid_poses = grid_poses - grid_poses.min(axis=0).reshape(1,-1)
+                else:
+                    grid_poses = np.zeros_like(positions)
 
                 #grid_poses = grid_poses - np.ceil(grid_poses.max(axis=0).reshape(1,-1) / 2)
                 #debug (grid_poses.mean(axis=0), positions.mean(axis=0), (grid_poses.max(axis=0) - grid_poses.min(axis=0)).reshape(1,-1) / 2)

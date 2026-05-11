@@ -30,14 +30,23 @@ rule make_initial_composite:
             subcomposite = composite.layer(i)
 
             poses = np.loadtxt(input.rawposes[i], delimiter=',', dtype=int)
+            poses = poses.reshape(-1, poses.shape[-1])
             poses = poses[:,:2]
             #images = tifffile.memmap(input.images[i], mode='r')[:,0]
             shape, dtype = iminfo(input.images[i])
+            if len(shape) == 3:
+                shape = (1, *shape)
             images = np.empty(shape[:1] + shape[2:], dtype)
             debug(poses.shape, images.shape)
 
             subcomposite.add_images(images, poses, scale='tile')
             subcomposite.setimages([None] * len(subcomposite.images))
+
+            # center each cycle
+            if config['stitching'].get('center', False):
+                center = (subcomposite.boxes.points1.min(axis=0)[:2] + subcomposite.boxes.points2.max(axis=0)[:2]) // 2
+                for box in subcomposite.boxes:
+                    box.position[:2] -= center
 
             if cycle in phenotype_cycles:
                 for box in subcomposite.boxes:
@@ -101,14 +110,14 @@ rule calculate_constraints:
         executor = concurrent.futures.ThreadPoolExecutor(max_workers=max(2, threads))
         composite = constitch.load(input.composite, debug=True, progress=True, executor=executor)
         #images = tifffile.memmap(input.images1, mode='r')
-        images = imread(input.images1)
+        images = imread_ndim4(input.images1)
         images = images[:,channel_index(alignment_channel,cycle=cycles_pt[cycle1])].copy()
 
         composite.layer(cycle1).setimages(images)
 
         if cycle1 != cycle2:
             #images = tifffile.memmap(input.images2, mode='r')
-            images = imread(input.images2)
+            images = imread_ndim4(input.images2)
             images = images[:,channel_index(alignment_channel,cycle=cycles_pt[cycle2])].copy()
             composite.layer(cycle2).setimages(images)
 
@@ -166,15 +175,16 @@ rule filter_constraints:
         composite = constitch.load(input.composite)
         overlapping, constraints, erroneous_constraints = constitch.load(input.constraints, composite=composite)
 
-        score_threshold = np.percentile([const.score for const in erroneous_constraints], 95) if len(erroneous_constraints) else 0.5
-        constraints = constraints.filter(min_score=score_threshold)
-
         modeled = constitch.ConstraintSet()
-        if wildcards.cycle1 == wildcards.cycle2:
-            stage_model = constitch.SimpleOffsetModel() if wildcards.cycle1 == wildcards.cycle2 else constitch.GlobalStageModel()
-            stage_model = constraints.fit_model(stage_model, outliers=True)
-            constraints = stage_model.inliers
-            modeled = overlapping.calculate(stage_model)
+        if len(constraints) != 0:
+            score_threshold = np.percentile([const.score for const in erroneous_constraints], 95) if len(erroneous_constraints) else 0.5
+            constraints = constraints.filter(min_score=score_threshold)
+
+            if wildcards.cycle1 == wildcards.cycle2:
+                stage_model = constitch.SimpleOffsetModel() if wildcards.cycle1 == wildcards.cycle2 else constitch.GlobalStageModel()
+                stage_model = constraints.fit_model(stage_model, outliers=True)
+                constraints = stage_model.inliers
+                modeled = overlapping.calculate(stage_model)
 
         composite.plot_scores(output.plot, constraints)
 
