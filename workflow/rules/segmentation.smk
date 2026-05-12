@@ -621,6 +621,10 @@ def get_segmentation_grid(wildcards):
     numbers = ['{:02}'.format(i) for i in range(grid_size)]
     return expand(segmentation_dir + '{well}_grid{grid_size}/tile{x}x{y}y/{segmentation_type}.csv', x=numbers, y=numbers, allow_missing=True)
 
+
+# Note: if snakemake is complaining about cyclic dependency for concat_cell_tables
+# or split_grid_table, its because either drop_duplicates or match_cell_tables
+# is unable to run and so split_grit_table is the only job that creates the cell table
 rule concat_cell_tables:
     """ Combine cell tables from grid tiles together into a single table. Because
     duplicate cells have been removed by drop_duplicate_cells, the tables can simply
