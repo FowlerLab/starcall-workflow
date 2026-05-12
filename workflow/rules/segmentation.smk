@@ -490,10 +490,10 @@ rule drop_duplicate_cells:
 
 
 if config['segmentation'].get('match_masks', False):
-    #mask_pair = config['segmentation']['match_masks']
+    mask_pair = config['segmentation']['match_masks']
     if mask_pair is True:
         mask_pair = ['nuclei', 'cells']
-    print ('mask_pair', mask_pair)
+    #print ('mask_pair', mask_pair)
 
     def grid_index_reference(wildcards):
         if '_grid' not in wildcards.path:
