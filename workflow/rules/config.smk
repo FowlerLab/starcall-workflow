@@ -117,7 +117,11 @@ if 'inputfiles' not in config:
     if 'cycles' not in config:
         config['cycles'] = sorted(detected_cycles)
     if 'phenotype_cycles' not in config:
-        config['phenotype_cycles'] = sorted(detected_pt_cycles)
+        detected_pt_cycles = sorted(detected_pt_cycles)
+        if 'PT' in detected_pt_cycles:
+            detected_pt_cycles.pop(detected_pt_cycles.index('PT'))
+            detected_pt_cycles = ['PT'] + detected_pt_cycles
+        config['phenotype_cycles'] = detected_pt_cycles
 
     #for well, files in inputfiles.items():
         #print (well)
@@ -128,6 +132,7 @@ if 'inputfiles' not in config:
 
     config['inputfiles'] = inputfiles
 
+print ('phenotype_cycles', config['phenotype_cycles'])
 
 """
 if os.path.exists(rawinput_dir):
