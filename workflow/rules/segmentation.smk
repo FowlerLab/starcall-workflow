@@ -6,7 +6,7 @@ wildcard_constraints:
     output_dir = '|'.join([sequencing_dir, segmentation_dir, phenotyping_dir]),
     path_nogrid2 = '((?!_grid)[^.])*',
     grid = '|_grid{}'.format(config.get('segmentation_grid_size', 1)),
-    unmatched = '_unmatched' if config['segmentation'].get('match_masks', False) else '',
+    unmatched = '_unmatched' if config['segmentation'].get('match_masks', False) else '()',
 
 rule segment_nuclei:
     """ Uses Stardist to segment the nuclei of cells in the phenotyping
@@ -490,10 +490,10 @@ rule drop_duplicate_cells:
 
 
 if config['segmentation'].get('match_masks', False):
-    mask_pair = config['segmentation']['match_masks']
+    #mask_pair = config['segmentation']['match_masks']
     if mask_pair is True:
         mask_pair = ['nuclei', 'cells']
-    #print ('mask_pair', mask_pair)
+    print ('mask_pair', mask_pair)
 
     def grid_index_reference(wildcards):
         if '_grid' not in wildcards.path:
@@ -612,6 +612,8 @@ if config['segmentation'].get('match_masks', False):
                 table.to_csv(output.tables[i+1])
 
     ruleorder: match_cell_tables > split_grid_table
+
+ruleorder: drop_duplicate_cells > split_grid_table
 
 
 def get_segmentation_grid(wildcards):
@@ -803,6 +805,7 @@ segmentation_grid_size = config.get('segmentation_grid_size', 1)
 def find_othertable(wildcards):
     match_pair = config['segmentation'].get('match_masks', False)
     if match_pair:
+        match_pair = ['nuclei', 'cells'] if match_pair is True else match_pair
         for segtype in match_pair[1:]:
             if wildcards.segmentation_type.count(segtype) != 0:
                 newtype = wildcards.segmentation_type.replace(segtype, match_pair[0])

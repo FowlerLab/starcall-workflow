@@ -132,7 +132,7 @@ if 'inputfiles' not in config:
 
     config['inputfiles'] = inputfiles
 
-print ('phenotype_cycles', config['phenotype_cycles'])
+#print ('phenotype_cycles', config['phenotype_cycles'])
 
 """
 if os.path.exists(rawinput_dir):
