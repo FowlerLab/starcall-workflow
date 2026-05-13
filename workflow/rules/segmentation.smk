@@ -460,22 +460,6 @@ rule drop_duplicate_cells:
             debug ('to_remove', len(to_remove))
             for i in to_remove:
                 mask[table.index.get_loc(i)] = False
-            """
-            #cur_boxes = constitch.BBoxList.from_table(cur_table)
-            max_cell_index = max(max_cell_index, max(cur_table.index))
-
-            largest_cell = max(table.cells.sizes.max(), cur_table.cells.sizes.max())
-
-            neighbors = sklearn.neighbors.NearestNeighbors(n_neighbors=5).fit(cur_boxes.centers)
-            distances, indices = neighbors.radius_neighbors(boxes.centers, radius=largest_cell)
-            debug ('found neighbors', distances.shape)
-
-            for i in range(len(distances)):
-                if not mask[i]: continue
-
-                total_overlap = sum(boxes[i].intersection(cur_boxes[j]).area)
-                mask[i] = total_overlap < table['area'].iloc[i] * overlap_threshold
-            """
 
         debug ('mask ', mask.sum(), len(table.index))
 
@@ -525,6 +509,9 @@ if config['segmentation'].get('match_masks', False):
             tables = expand(segmentation_dir + '{path}/{segmentation_type}{extra_params}.csv', segmentation_type=mask_pair, allow_missing=True),
         wildcard_constraints:
             extra_params = '(|bases)(|expand\d+)',
+        params:
+            filter_larger = config['segmentation'].get('filter_larger_matches', False),
+            filter_smaller = config['segmentation'].get('filter_smaller_matches', False),
         run:
             import numpy as np
             import pandas
@@ -534,6 +521,9 @@ if config['segmentation'].get('match_masks', False):
             base_table = pandas.read_csv(input.tables[0], index_col=0)
             masks_scale = base_table.cells.best_masks_scale
             all_tables = []
+
+            base_areas = pandas.Series([base_table.cells[i].area() for i in base_table.index], index=base_table.index)
+            #base_areas = np.array([base_table.cells[i].area() for i in base_table.index])
 
             overlap_threshold = 0.25
 
@@ -553,6 +543,22 @@ if config['segmentation'].get('match_masks', False):
 
                 debug (intersecting)
                 intersecting = intersecting.sort_values('area', ascending=False)
+
+                debug (intersecting)
+                #filter out any nuclei bigger than their cell
+                areas = pandas.Series([table.cells[j].area() for j in table.index], index=table.index)
+                #areas = np.array([table.cells[j].area() for j in table.index])
+                cur_base_areas = base_areas.loc[intersecting.index.get_level_values(0)]
+                cur_base_areas.index = intersecting.index
+                cur_table_areas = areas[intersecting.index.get_level_values(1)]
+                cur_table_areas.index = intersecting.index
+                larger_matches = cur_base_areas > cur_table_areas
+
+                if params.filter_larger:
+                    intersecting = intersecting.loc[~larger_matches]
+                if params.filter_smaller:
+                    intersecting = intersecting.loc[larger_matches]
+
                 debug (intersecting)
                 best_mapping = intersecting[~intersecting.index.to_frame().duplicated(0)]
                 best_mapping = best_mapping[best_mapping['area_ratio']>=overlap_threshold]
@@ -564,29 +570,6 @@ if config['segmentation'].get('match_masks', False):
                 full_mapping = set(best_mapping.index) & set(reverse_mapping.index)
                 for j, k in full_mapping:
                     mapping[base_table.index.get_loc(j),i] = k
-
-                """
-                for j, group in intersecting.groupby(level=0):
-                    if len(group.index) == 0: continue
-
-                    debug (group)
-                    #group.to_csv('tmp.csv')
-                    areas = np.array([group.cells[i].area() for i in group.index])
-                    best = np.argmax(areas)
-                    if group['area_ratio'].iloc[best] >= overlap_threshold:
-                        mapping[base_table.index.get_loc(j),i] = group.index[best][1]
-
-                largest_cell = max(table.cells.sizes.max(), base_table.cells.sizes.max())
-
-                neighbors = sklearn.neighbors.NearestNeighbors(n_neighbors=5).fit(table.cells.centers)
-                distances, indices = neighbors.radius_neighbors(base_table.cells.centers, radius=largest_cell)
-
-                for j in range(len(indices)):
-                    overlaps = [base_table.cells[j].intersection(table.cells[k]).area() for k in indices[j]]
-                    best_index = np.argmax(overlaps)
-                    if overlaps[best_index] / base_table.cells[j].area() >= overlap_threshold:
-                        mapping[j,i] = table.index[indices[best_index]]
-                """
 
             mask = np.all(mapping != -1, axis=1)
             base_table = base_table[mask]

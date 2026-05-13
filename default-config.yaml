@@ -87,6 +87,10 @@ segmentation:
     # in phenotyping
     match_masks: True
 
+    # If true matches where the base mask (default nuclei) is larger are filtered out
+    filter_larger_matches: True
+    # filter_smaller_matches: True
+
     # Whether cell segmentation is run on background corrected images
     # if both this and phenotyping.use_corrected are false, background correction
     # will not be run
