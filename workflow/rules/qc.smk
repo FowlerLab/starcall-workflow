@@ -7,13 +7,54 @@ import time
 ## Quality control plots
 ##################################################
 
+wildcard_constraints:
+    wells = '({well_pat})(-({well_pat}))*'.format(well_pat='|'.join(wells + [well.replace('well', '') for well in wells])),
+    grid = '|_grid\d*',
+
+
+def find_all_files(wildcards, path, grid_size=None):
+    well_names = wildcards.wells.split('-')
+    well_names = [('well' + name if name not in wells and ('well' + name) in wells else name) for name in well_names]
+
+    if wildcards.grid[:5] == '_grid':
+        if grid_size is None:
+            if len(wildcards.grid) > 5:
+                grid_size = int(wildcards.grid[5:])
+            elif path[:len(segmentation_dir)] == segmentation_dir:
+                grid_size = segmentation_grid_size
+            elif path[:len(sequencing_dir)] == sequencing_dir:
+                grid_size = sequencing_grid_size
+            elif path[:len(phenotyping_dir)] == phenotyping_dir:
+                grid_size = phenotyping_grid_size
+
+        tiles = ['_grid{}/tile{:02}x{:02}y'.format(grid_size, x, y) for x in range(grid_size) for y in range(grid_size)]
+        return expand(path, well=well_names, grid=tiles, allow_missing=True)
+
+    return expand(path, well=well_names, allow_missing=True)
+
+
+def find_all_well_files(wildcards, path):
+    well_names = wildcards.wells.split('-')
+    well_names = [('well' + name if name not in wells and ('well' + name) in wells else name) for name in well_names]
+    paths = expand(path, well=well_names, allow_missing=True)
+    return paths
+
+
+def get_aux_data_qc(wildcards):
+    wildcards.path = wildcards.wells.split('-')[0] + wildcards.grid
+    return get_aux_data(wildcards)
+
 rule make_qc_read_plots:
     input:
-        full_table = sequencing_dir + '{path}/{segmentation_type}_reads.csv',
-        barcodes = get_aux_data,
+        full_table = lambda wildcards: find_all_well_files(wildcards, sequencing_dir + '{well}{grid}/{segmentation_type}_reads.csv'),
+        barcodes = get_aux_data_qc,
+        #full_table = sequencing_dir + '{path}/{segmentation_type}_reads.csv',
+        #barcodes = get_aux_data,
     output:
-        plot = qc_dir + '{path}/{segmentation_type}_reads.svg',
-        plots = [qc_dir + '{path}/{segmentation_type}_reads_plot' + str(i) + '.svg' for i in range(16)],
+        plot = qc_dir + '{wells}{grid}/{segmentation_type}_reads.svg',
+        plots = [qc_dir + '{wells}{grid}/{segmentation_type}_reads_plot' + str(i) + '.svg' for i in range(16)],
+        #plot = qc_dir + '{path}/{segmentation_type}_reads.svg',
+        #plots = [qc_dir + '{path}/{segmentation_type}_reads_plot' + str(i) + '.svg' for i in range(16)],
     resources:
         mem_mb = lambda wildcards, input: 5000 + input.size_mb * 10
     run:
@@ -27,7 +68,7 @@ rule make_qc_read_plots:
         matplotlib.rcParams.update({'xtick.labelsize': 10, 'ytick.labelsize': 10, 'font.size': 12})
         #12 for ticks, 14 for labels, important to be consistent
 
-        read_table = pandas.read_csv(input.full_table, index_col=0)
+        read_table = pandas.concat([pandas.read_csv(path, index_col=0) for path in input.full_table], ignore_index=True)
         for tmp_read in read_table['read_0']:
             if type(tmp_read) == str: break
         num_cycles = len(tmp_read)
@@ -113,10 +154,10 @@ rule make_qc_read_plots:
             axes[0,1].set_ylabel('Count')
             axes[0,1].set_xlabel('Total read count per cell' if double_barcode else 'Read count per cell') # total read count for double barcode
             axes[0,1].ticklabel_format(axis='y', style='sci', scilimits=(0,0))
-            if 'blainey' in wildcards.path:
-                axes[0,1].set_title('Image set 2.1: Feldman method')
-            else:
-                axes[0,1].set_title('Image set 2.1: STARCall')
+            #if 'blainey' in wildcards.path:
+                #axes[0,1].set_title('Image set 2.1: Feldman method')
+            #else:
+                #axes[0,1].set_title('Image set 2.1: STARCall')
             # todo make heatmap of first and second barcode edit distance in double barcode
             # total read count, combined edit distance
             # edit distance to first matching barcode pair
@@ -739,20 +780,14 @@ rule make_alignment_error_plot:
 
             return all_results
 
-def find_all_well_files(wildcards, path):
-    well_names = wildcards.wells.split('-')
-    well_names = [('well' + name if name not in wells and ('well' + name) in wells else name) for name in well_names]
-    paths = expand(path, well=well_names, allow_missing=True)
-    return paths
 
 rule make_variant_cell_images:
     input:
-        #image = stitching_dir + '{well}/raw_pt.tif',
+        #image = lambda wildcards: find_all_files(wildcards, path=stitching_dir + '{well}{grid}/raw_pt.tif'),
+        #cells_table = lambda wildcards: find_all_files(wildcards, path=segmentation_dir + '{well}{grid}/cells.csv'),
+        #reads_table = lambda wildcards: find_all_files(wildcards, path=sequencing_dir + '{well}{grid}/cells_reads.csv'),
         image = lambda wildcards: find_all_well_files(wildcards, path=stitching_dir + '{well}/raw_pt.tif'),
-        #cells_mask = segmentation_dir + '{well}/cells_mask.tif',
-        #cells_table = segmentation_dir + '{well}_grid/cells.csv',
         cells_table = lambda wildcards: find_all_well_files(wildcards, path=segmentation_dir + '{well}_grid/cells.csv'),
-        #reads_table = sequencing_dir + '{well}_grid/cells_reads.csv',
         reads_table = lambda wildcards: find_all_well_files(wildcards, path=sequencing_dir + '{well}_grid/cells_reads.csv'),
     output:
         outdir = directory(output_dir + '{wells}_{column}_images{num}{radius}/'),
@@ -760,7 +795,7 @@ rule make_variant_cell_images:
         num = parse_param('num', 5),
         radius = parse_param('radius', 100),
     wildcard_constraints:
-        wells = '({well_pat})(-({well_pat}))+'.format(well_pat='|'.join(wells + [well.replace('well', '') for well in wells])),
+        wells = '({well_pat})(-({well_pat}))*'.format(well_pat='|'.join(wells + [well.replace('well', '') for well in wells])),
         num = '|_num\d+',
         radius = '|_radius\d+',
         column = '[^_]+',
@@ -798,7 +833,8 @@ rule make_variant_cell_images:
             sampled_group = group.sample(min(params.num*params.num, len(group.index)), random_state=12345)
             #for i, cellindex in enumerate(list(group.index[:params.num*params.num])):
             for i, cellindex in enumerate(list(sampled_group.index)):
-                x1, y1 = int(table['xpos'][cellindex]) - params.radius // 2, int(table['ypos'][cellindex]) - params.radius // 2
+                x1, y1 = int(table['bbox_x1'][cellindex]), int(table['bbox_y1'][cellindex])
+                x1, y1 = int(x1 + table['bbox_x2'][cellindex]) // 2 - params.radius // 2, int(y1 + table['bbox_y2/'][cellindex]) // 2 - params.radius // 2
                 x2, y2 = x1 + params.radius, y1 + params.radius
                 well = table['well'][cellindex]
                 debug ('  ', well, x1, y1, x2, y2)
@@ -811,16 +847,21 @@ rule make_variant_cell_images:
 
 
 
+#print ('({well_pat})(-({well_pat}))+'.format(well_pat='|'.join(wells + [well.replace('well', '') for well in wells])))
+
 rule make_3d_read_plot:
     input:
-        bases = sequencing_dir + '{path}/bases.csv',
+        bases = lambda wildcards: find_all_files(wildcards, sequencing_dir + '{well}{grid}/bases.csv'),
+        #bases = sequencing_dir + '{path}/bases.csv',
     output:
+        plot = qc_dir + '{wells}{grid}/bases{filter}{line,|_line}_plot.html',
         #plots = expand(qc_dir + '{path}/bases_cycle{cycle}_plot.html', cycle=cycles, allow_missing=True),
-        plot = qc_dir + '{path}/bases{filter}{line,|_line}_plot.html',
+        #plot = qc_dir + '{path}/bases{filter}{line,|_line}_plot.html',
     resources:
         #mem_mb = lambda wildcards, input: 10000 + input.size_mb * 50
         mem_mb = 8000
     wildcard_constraints:
+        wells = '({well_pat})(-({well_pat}))*'.format(well_pat='|'.join(wells + [well.replace('well', '') for well in wells])),
         filter = '|(_cell\d+)',
     run:
         import starcall.reads
@@ -831,7 +872,7 @@ rule make_3d_read_plot:
             table = pandas.read_csv(input.bases, nrows=50000, index_col=0)
             table = table[table['cell']==cellid]
         else:
-            table = pandas.read_csv(input.bases, nrows=50000, index_col=0)
+            table = pandas.concat([pandas.read_csv(path, nrows=50000 // len(input.bases), index_col=0) for path in input.bases], ignore_index=True)
         #make_dot_values_plot.plot_testset_plotly(table.reads.values, table.reads.sequences, output.plots)
         table.reads.plot_values(output.plot, line_plot=wildcards.line == '_line')
 
