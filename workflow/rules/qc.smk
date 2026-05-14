@@ -834,7 +834,7 @@ rule make_variant_cell_images:
             #for i, cellindex in enumerate(list(group.index[:params.num*params.num])):
             for i, cellindex in enumerate(list(sampled_group.index)):
                 x1, y1 = int(table['bbox_x1'][cellindex]), int(table['bbox_y1'][cellindex])
-                x1, y1 = int(x1 + table['bbox_x2'][cellindex]) // 2 - params.radius // 2, int(y1 + table['bbox_y2/'][cellindex]) // 2 - params.radius // 2
+                x1, y1 = int(x1 + table['bbox_x2'][cellindex]) // 2 - params.radius // 2, int(y1 + table['bbox_y2'][cellindex]) // 2 - params.radius // 2
                 x2, y2 = x1 + params.radius, y1 + params.radius
                 well = table['well'][cellindex]
                 debug ('  ', well, x1, y1, x2, y2)
