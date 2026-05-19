@@ -174,12 +174,14 @@ rule calculate_distance_matrix:
 
         distance_matrix = starcall.reads.distance_matrix(
             table, cells=cells,
-            distance_cutoff=50,
+            distance_cutoff=0.5,
             positional_weight=params.positional_weight,
             value_weight=params.value_weight,
             sequence_weight=params.sequence_weight,
             debug=True, progress=True,
         )
+        #debug ((787, 9278) in distance_matrix)
+        #debug ((9116, 35170) in distance_matrix)
 
         with open(output.table, 'w') as ofile:
             writer = csv.DictWriter(ofile, ['i', 'j', 'distance'])
@@ -247,6 +249,29 @@ rule cluster_reads:
             ofile.write(''.join(str(cluster) + '\n' for cluster in cluster_indices))
 
 
+def get_aux_data(wildcards, path=None):
+    path = wildcards.path if path is None else path
+
+    #if path != '': path = path + '.'
+
+    files = []
+    for base_dir in (sequencing_dir, input_dir):
+        pattern = base_dir + '{path}/{segmentation_type}.auxdata/*.csv'.format(path=path, segmentation_type=wildcards.segmentation_type)
+        files.extend(sorted(glob.glob(pattern)))
+        pattern = base_dir + '{path}/auxdata/*.csv'.format(path=path, segmentation_type=wildcards.segmentation_type)
+        files.extend(sorted(glob.glob(pattern)))
+
+    #if re.fullmatch('(tile.+)|(well.+)|(cycle.+)', os.path.basename(path)):
+    if path.count('_grid'):
+        files.extend(get_aux_data(wildcards, path=path.split('_grid')[0]))
+    elif path:
+        files.extend(get_aux_data(wildcards, path=os.path.dirname(path)))
+
+    for i in range(len(files)):
+        files[i] = files[i].replace('//', '/')
+
+    return files
+
 
 rule combine_reads:
     """ Combines reads based on the clusters calculated in the previous rule.
@@ -289,6 +314,33 @@ rule combine_reads:
         combined.reads.normalize()
 
         combined.to_csv(output.table)
+
+rule match_barcodes:
+    """ Matches reads with a barcode library
+    """
+    input:
+        table = sequencing_dir + '{path}/{segmentation_type}_clustered_reads{params_dots}{params_cluster}.csv',
+        library = get_aux_data,
+    output:
+        table = sequencing_dir + '{path}/{segmentation_type}_clustered_reads{params_dots}{params_cluster}_matched_tmp.csv',
+    wildcard_constraints:
+        params = params_regex('min', 'max', 'num', 'norm', 'posweight', 'valweight', 'seqweight', 'thresh', 'linkage'),
+    run:
+        import pandas
+        import starcall.reads
+
+        table = pandas.read_csv(input.table, index_col=0)
+        library = pandas.read_csv(input.library, index_col=0)
+
+        #remove duplicate barcodes
+        library = library.loc[~library.index.duplicated(keep=False),:]
+
+        barcodes = pandas.DataFrame(dict(sequence=library.index))
+
+        
+
+
+
 
 
 rule combine_cell_reads:
@@ -392,28 +444,6 @@ rule annotate_dots:
 
 #ruleorder: tabulate_cells > merge_grid
 
-def get_aux_data(wildcards, path=None):
-    path = wildcards.path if path is None else path
-
-    #if path != '': path = path + '.'
-
-    files = []
-    for base_dir in (sequencing_dir, input_dir):
-        pattern = base_dir + '{path}/{segmentation_type}.auxdata/*.csv'.format(path=path, segmentation_type=wildcards.segmentation_type)
-        files.extend(sorted(glob.glob(pattern)))
-        pattern = base_dir + '{path}/auxdata/*.csv'.format(path=path, segmentation_type=wildcards.segmentation_type)
-        files.extend(sorted(glob.glob(pattern)))
-
-    #if re.fullmatch('(tile.+)|(well.+)|(cycle.+)', os.path.basename(path)):
-    if path.count('_grid'):
-        files.extend(get_aux_data(wildcards, path=path.split('_grid')[0]))
-    elif path:
-        files.extend(get_aux_data(wildcards, path=os.path.dirname(path)))
-
-    for i in range(len(files)):
-        files[i] = files[i].replace('//', '/')
-
-    return files
 
 rule merge_final_tables:
     """ Combine the read table with any additional tables that have information linked to specific barcodes.

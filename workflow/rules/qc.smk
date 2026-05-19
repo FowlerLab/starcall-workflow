@@ -343,13 +343,16 @@ rule make_qc_read_plots:
                 axes[2,2].set_xlabel('Barcode count of cells')
 
 
-                values = np.zeros((5, 5))
+                #values = np.zeros((5, 5))
+                #values = np.zeros((counts.max(), counts.sum(axis=1).max()))
+                #values = np.zeros((max(map(lambda ls: max(ls, default=0), counts)), max(map(sum, counts))))
+                values = np.zeros((15, 15))
 
                 for i in range(len(reads)):
                     index = read_table['matched_read_index_0'].iloc[i]
                     if index != -1:
                         total = int(sum(counts[i]))
-                        values[min(int(counts[i][index]) - 1, 4), min(total - 1, 4)] += 1
+                        values[min(int(counts[i][index]) - 1, values.shape[0]-1), min(total - 1, values.shape[1]-1)] += 1
 
                 total = int(values.sum())
                 max_val = values.max()
@@ -361,7 +364,7 @@ rule make_qc_read_plots:
                     for y in range(values.shape[1]):
                         if np.isnan(values[x,y]): continue
                         color = 'white' if values[x,y] / max_val < 0.66 else 'black'
-                        axes[2,3].text(y, x, '{:.2f}%'.format(values[x,y] / total * 100), ha='center', va='center', color=color)
+                        axes[2,3].text(y, x, '{:.2f}%'.format(values[x,y] / total * 100), ha='center', va='center', color=color, size=4)
 
                 axes[2,3].set_xlabel('Total reads')
                 axes[2,3].set_ylabel('Top barcode reads')
