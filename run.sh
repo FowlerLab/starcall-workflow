@@ -1,6 +1,6 @@
 #!/bin/bash
-
-conda activate ops 2> /dev/null
+source /net/fowler/vol1/shared/miniconda3/etc/profile.d/conda.sh
+conda activate ops3 2> /dev/null
 
 #test -e logs || mkdir logs
 #test -e logs/latest && rm -r logs/latest
