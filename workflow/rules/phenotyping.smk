@@ -185,12 +185,12 @@ def get_channels(wildcards):
     params_channels = config['phenotyping'].get('channels', None)
     if wildcards.cycle != '':
         cycle = int(wildcards.cycle[5:])
-        channel_indices = [(cycle, i) for i in range(len(config['phenotyping_channels']))]
+        channel_indices = [(cycle, i) for i in range(len(config['phenotyping_channels'][cycle]))]
     elif params_channels is not None:
         channel_indices = [channel_index_phenotyping(chan) for chan in params_channels]
     else:
         channel_indices = []
-        for cycle, channels in enumerate(config['phenotyping_channels']):
+        for cycle, channels in enumerate(config['phenotyping_channels'][0]):
             channel_indices.extend((cycle, i) for i in range(len(channels)))
     return [phenotyping_dir + '{path}/cellprofiler{cycle}/channel' + str(cycle) + '.' + str(chan) + '.tif' for cycle,chan in channel_indices]
 

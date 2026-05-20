@@ -182,13 +182,14 @@ rule calculate_distance_matrix:
         )
         #debug ((787, 9278) in distance_matrix)
         #debug ((9116, 35170) in distance_matrix)
+        distance_matrix.to_frame().to_csv(output.table)
 
-        with open(output.table, 'w') as ofile:
-            writer = csv.DictWriter(ofile, ['i', 'j', 'distance'])
-            writer.writeheader()
+        #with open(output.table, 'w') as ofile:
+            #writer = csv.DictWriter(ofile, ['i', 'j', 'distance'])
+            #writer.writeheader()
 
-            for pair, dist in distance_matrix.items():
-                writer.writerow(dict(i=pair[0], j=pair[1], distance=dist))
+            #for pair, dist in distance_matrix.items():
+                #writer.writerow(dict(i=pair[0], j=pair[1], distance=dist))
 
 
 rule cluster_reads:
@@ -229,12 +230,15 @@ rule cluster_reads:
         num_reads = len(table.index)
         del table
 
-        distance_matrix = {}
-        with open(input.distances) as ifile:
-            reader = csv.DictReader(ifile)
-            for row in reader:
-                i, j, distance = int(row['i']), int(row['j']), float(row['distance'])
-                distance_matrix[i,j] = distance
+        #distance_matrix = {}
+        #with open(input.distances) as ifile:
+            #reader = csv.DictReader(ifile)
+            #for row in reader:
+                #i, j, distance = int(row['i']), int(row['j']), float(row['distance'])
+                #distance_matrix[i,j] = distance
+
+        distance_matrix = pandas.read_csv(input.distances).set_index(['i', 'j'])['distance']
+        print (distance_matrix)
 
         cluster_indices = starcall.reads.cluster_reads(
             distance_matrix,
@@ -319,26 +323,56 @@ rule match_barcodes:
     """ Matches reads with a barcode library
     """
     input:
-        table = sequencing_dir + '{path}/{segmentation_type}_clustered_reads{params_dots}{params_cluster}.csv',
+        table = sequencing_dir + '{path}/{segmentation_type}_clustered_reads{params}.csv',
         library = get_aux_data,
     output:
-        table = sequencing_dir + '{path}/{segmentation_type}_clustered_reads{params_dots}{params_cluster}_matched_tmp.csv',
+        table = sequencing_dir + '{path}/{segmentation_type}_clustered_reads{params}_matched.csv',
     wildcard_constraints:
         params = params_regex('min', 'max', 'num', 'norm', 'posweight', 'valweight', 'seqweight', 'thresh', 'linkage'),
     run:
         import pandas
+        import numpy as np
         import starcall.reads
 
         table = pandas.read_csv(input.table, index_col=0)
-        library = pandas.read_csv(input.library, index_col=0)
+        library = pandas.read_csv(input.library[0], index_col=0)
+        debug (table)
+        debug (library)
 
         #remove duplicate barcodes
         library = library.loc[~library.index.duplicated(keep=False),:]
 
-        barcodes = pandas.DataFrame(dict(sequence=library.index))
+        # filter any that are not the right length
+        barcodes = [barcode[:table.reads.num_cycles] for barcode in library.index if len(barcode) >= table.reads.num_cycles]
+        barcodes = pandas.DataFrame(dict(sequence=barcodes))
+        debug (barcodes)
+        debug (np.unique(list(map(len, barcodes['sequence']))))
 
-        
+        num_entries = 4
 
+        distances = starcall.reads.distance_matrix(table, barcodes,
+                distance_cutoff=table.reads.num_cycles, max_entries=num_entries,
+                sequence_weight=1, debug=True, progress=True)
+        distances = distances.to_frame()
+        debug (distances)
+
+        distances = distances.sort_values('distance').reset_index()
+        groups = distances.groupby('i')
+
+        tables = [table]
+        for i in range(num_entries):
+            matches = groups.nth(i)
+            #debug (matches)
+            #matches.to_csv('tmp.csv')
+            #barcodes.to_csv('tmp2.csv')
+            matches['barcode'] = barcodes.loc[matches['j'],'sequence'].reset_index(drop=True)
+            #matches['barcode'] = barcodes['sequence'][matches['j']]
+            debug (matches)
+            tables.append(matches.reset_index(drop=True).loc[:,['barcode','distance']].add_suffix(str(i)))
+
+        table = pandas.concat(tables, axis=1)
+        debug (table)
+        table.to_csv(output.table)
 
 
 
@@ -381,6 +415,96 @@ rule combine_cell_reads:
         #read_table = read_table.set_index('cell')
         #read_table['total_count'] = [read_set.attrs['count'].sum() for read_set in cell_reads]
         cell_reads.to_csv(output.table)
+
+
+rule make_qc_read_table:
+    input:
+        raw_reads = sequencing_dir + '{path}/{segmentation_type}_raw_reads.csv',
+        cells = segmentation_dir + '{path}/{segmentation_type}_mask_downscaled.tif',
+        clusters = sequencing_dir + '{path}/{segmentation_type}_reads_clusters.csv',
+        clustered_reads = sequencing_dir + '{path}/{segmentation_type}_clustered_reads_matched.csv',
+        cell_reads = sequencing_dir + '{path}/{segmentation_type}_reads.csv',
+    output:
+        table = sequencing_dir + '{path}/{segmentation_type}_qc_reads.csv',
+    run:
+        import pandas
+        import numpy as np
+        import starcall.reads
+        import tifffile
+        import skimage.measure
+        import scipy.ndimage
+
+        raw = pandas.read_csv(input.raw_reads, index_col=0)
+        raw['cluster'] = pandas.read_csv(input.clusters)['cluster']
+        raw['sequence'] = raw.reads.sequences
+        clustered = pandas.read_csv(input.clustered_reads, index_col=0)
+        clustered['sequence'] = clustered.reads.sequences
+        cells = pandas.read_csv(input.cell_reads, index_col=0)
+
+        raw = raw.drop(columns=[col for col in raw.columns if col[:6] == 'values'])
+        clustered = clustered.drop(columns=[col for col in clustered.columns if col[:6] == 'values'])
+
+        table = raw.join(clustered.add_prefix('clustered_'), on='cluster')
+
+        #cells = cells.add_prefix('cells_')
+        cells = cells.reset_index(names='cell')
+        cells = cells.set_index(pandas.RangeIndex(1, len(cells.index) + 1))
+        table = table.join(cells.add_prefix('cells_'), on='clustered_cell')
+        #table = table.join(cells.add_prefix('cells_').set_index(list(range(1, len(cells.index) + 1))), on='clustered_cell')
+
+        # calculate distance to edge of segmentation
+        cell_masks = tifffile.imread(input.cells)
+        props = skimage.measure.regionprops(cell_masks)
+        props = {prop.label: prop for prop in props}
+        groups = table.groupby('clustered_cell')
+        results = []
+        #for prop in props:
+        for label, group in groups:
+
+            if label == 0:
+                zeros = np.zeros(len(group.index))
+                result = pandas.DataFrame(dict(edge_distance=zeros, center_distance=zeros), index=group.index)
+                debug (result)
+                results.append(result)
+                continue
+            #debug (prop.label)
+            #if prop.label not in groups.groups:
+                #continue
+
+            #group = groups.get_group(prop.label)
+            prop = props[label]
+            debug (group)
+            poses = np.round(np.stack([group['position_x'], group['position_y']], axis=-1)).astype(int)
+            x1 = min(poses[:,0].min(), prop.bbox[0])
+            y1 = min(poses[:,1].min(), prop.bbox[1])
+            x2 = max(poses[:,0].max() + 1, prop.bbox[2])
+            y2 = max(poses[:,1].max() + 1, prop.bbox[3])
+            poses -= [[x1, y1]]
+
+            section = cell_masks[x1:x2,y1:y2] == prop.label
+            dists = -scipy.ndimage.distance_transform_edt(section)
+            dists_outside = scipy.ndimage.distance_transform_edt(~section)
+            dists[~section] = dists_outside[~section]
+            positive_dists = dists - dists.min()
+
+            #debug (x1, y1, x2, y2)
+            #debug (prop.bbox)
+            #debug (np.sum(section))
+            #ksjdfld
+            #debug (poses)
+            #debug (poses.shape)
+            #debug (dists.shape)
+            edge_dists = dists[poses[:,0],poses[:,1]]
+            center_dists = positive_dists[poses[:,0],poses[:,1]]
+            result = pandas.DataFrame(dict(edge_distance=edge_dists, center_distance=center_dists), index=group.index)
+            debug (result)
+            results.append(result)
+
+        table = table.join(pandas.concat(results))
+
+        table.to_csv(output.table)
+
+
 
 
 #ruleorder: merge_grid > find_dots
@@ -630,24 +754,33 @@ rule merge_final_tables:
 def get_grid_filenames_seq(wildcards):
     grid_size = int(wildcards.grid_size)
     numbers = ['{:02}'.format(i) for i in range(grid_size)]
-    return expand(sequencing_dir + '{well}_grid{grid_size}/tile{x}x{y}y/{segmentation_type}_reads.csv', x=numbers, y=numbers, allow_missing=True)
+    return expand(sequencing_dir + '{well}_grid{grid_size}/tile{x}x{y}y/{segmentation_type}{qc}_reads.csv', x=numbers, y=numbers, allow_missing=True)
 
 rule merge_grid_read_tables:
     input:
         tables = get_grid_filenames_seq,
-        #composite = stitching_dir + '{well}_grid{grid_size}/grid_composite.json',
+        composite = lambda wildcards: [stitching_dir + '{well}_grid{grid_size}/grid_composite.json'] if wildcards.qc != '' else [],
     output:
-        table = sequencing_dir + '{well}_grid{grid_size,\d+}/{segmentation_type}_reads.csv',
+        table = sequencing_dir + '{well}_grid{grid_size,\d+}/{segmentation_type}{qc,|_qc}_reads.csv',
     resources:
         #mem_mb = lambda wildcards, input: input.size_mb * 50 + 5000
         mem_mb = 5000
     run:
+        import constitch
+
+        if len(input.composite) != 0:
+            composite = constitch.load(input.composite[0])
+
         def row_func(row):
             i = row['file_index']
             row['seq_file_path'] = row['file_path']
             row['seq_tile_index'] = i
             row['seq_tile_x'] = i // int(wildcards.grid_size)
             row['seq_tile_y'] = i % int(wildcards.grid_size)
+
+            if 'position_x' in row:
+                row['position_x'] += composite.boxes[i].position[0]
+                row['position_y'] += composite.boxes[i].position[1]
 
         merge_csv_files(input.tables, output.table, extra_columns=['seq_file_path', 'seq_tile_index', 'seq_tile_x', 'seq_tile_y'], row_func=row_func)
 

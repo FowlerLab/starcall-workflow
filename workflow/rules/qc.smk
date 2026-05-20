@@ -509,6 +509,55 @@ rule make_qc_read_plots:
             fig.savefig(path, dpi=300)
 
 
+
+rule more_qc_read_plots:
+    input:
+        #tables = lambda wildcards: find_all_well_files(wildcards, sequencing_dir + '{well}{grid}/{segmentation_type}_qc_reads.csv'),
+        tables = [sequencing_dir + '{path}/{segmentation_type}_qc_reads.csv'],
+    output:
+        plot = qc_dir + '{path}/{segmentation_type}_qc_reads.svg',
+        #plot = qc_dir + '{wells}{grid}/{segmentation_type}_qc_reads.svg',
+    run:
+        import pandas
+        import numpy as np
+        import matplotlib.pyplot as plt
+
+        import matplotlib
+        new_rc_params = {'text.usetex': False,
+            "svg.fonttype": 'none'
+        }
+        matplotlib.rcParams.update(new_rc_params)
+
+        read_table = pandas.concat([pandas.read_csv(path, index_col=0) for path in input.tables], ignore_index=True)
+
+        fig, axes = plt.subplots(nrows=2, ncols=2, figsize=(10,10))
+
+        in_cell = read_table['clustered_cell'] != 0
+        unmatched = (read_table['clustered_distance0'] > 2)
+        perfect = (read_table['clustered_distance0'] == 0) & (read_table['clustered_distance1'] != 0)
+        matched = (read_table['clustered_distance0'] <= 2) & (read_table['clustered_distance0'] < read_table['clustered_distance1'])
+        multiple = (read_table['clustered_distance0'] <= 2) & (read_table['clustered_distance0'] == read_table['clustered_distance1'])
+
+        axes[0,0].hist(read_table['edge_distance'][unmatched], histtype='step', bins=25, label='Unmatched')
+        axes[0,0].hist(read_table['edge_distance'][multiple], histtype='step', bins=25, label='Multiple')
+        axes[0,0].hist(read_table['edge_distance'][matched], histtype='step', bins=25, label='Matched')
+        axes[0,0].hist(read_table['edge_distance'][perfect], histtype='step', bins=25, label='Perfect')
+        axes[0,0].set_title('Distance to edge of segmentation')
+        axes[0,0].legend()
+
+        axes[0,1].hist(read_table['edge_distance'][unmatched], histtype='step', bins=25, label='Unmatched')
+        axes[0,1].hist(read_table['edge_distance'][multiple], histtype='step', bins=25, label='Multiple')
+        axes[0,1].hist(read_table['edge_distance'][matched], histtype='step', bins=25, label='Matched')
+        axes[0,1].hist(read_table['edge_distance'][perfect], histtype='step', bins=25, label='Perfect')
+        axes[0,1].set_title('Distance to center of segmentation')
+        axes[0,1].legend()
+
+        fig.savefig(output.plot)
+
+
+
+
+
 rule score_alignment:
     """ Quantifies alignment error present in a stitched well.
     Useful to compare different stitching methods/parameters. The full well image
