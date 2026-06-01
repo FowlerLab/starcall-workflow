@@ -172,24 +172,26 @@ rule calculate_distance_matrix:
         if params.normalization != 'none':
             table.reads.normalize(method=params.normalization)
 
-        distance_matrix = starcall.reads.distance_matrix(
+    
+        #reverted to the old distance matrix calculations for now 
+        distance_matrix = starcall.reads.distance_matrix_old(
             table, cells=cells,
-            distance_cutoff=0.5,
+            distance_cutoff=50, #AML - changed back to the same parameters were used for all of T3
             positional_weight=params.positional_weight,
             value_weight=params.value_weight,
             sequence_weight=params.sequence_weight,
             debug=True, progress=True,
         )
-        #debug ((787, 9278) in distance_matrix)
-        #debug ((9116, 35170) in distance_matrix)
-        distance_matrix.to_frame().to_csv(output.table)
+        
+        #AML - changed so that the sequencing will finish in the correct format with the old distance matrix calculations
+        #distance_matrix.to_frame().to_csv(output.table)
+        
+        with open(output.table, 'w') as ofile:
+            writer = csv.DictWriter(ofile, ['i', 'j', 'distance'])
+            writer.writeheader()
 
-        #with open(output.table, 'w') as ofile:
-            #writer = csv.DictWriter(ofile, ['i', 'j', 'distance'])
-            #writer.writeheader()
-
-            #for pair, dist in distance_matrix.items():
-                #writer.writerow(dict(i=pair[0], j=pair[1], distance=dist))
+            for pair, dist in distance_matrix.items():
+                writer.writerow(dict(i=pair[0], j=pair[1], distance=dist))
 
 
 rule cluster_reads:
