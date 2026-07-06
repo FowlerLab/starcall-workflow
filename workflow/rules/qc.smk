@@ -928,3 +928,83 @@ rule make_3d_read_plot:
         #make_dot_values_plot.plot_testset_plotly(table.reads.values, table.reads.sequences, output.plots)
         table.reads.plot_values(output.plot, line_plot=wildcards.line == '_line')
 
+
+rule make_variant_cell_images_with_annotation:
+    input:
+        image = lambda wildcards: find_all_well_files(wildcards, path=stitching_dir + '{well}/raw_pt.tif'),
+        cells_table = lambda wildcards: find_all_well_files(wildcards, path=segmentation_dir + '{well}_grid/cells.csv'),
+        reads_table = lambda wildcards: find_all_well_files(wildcards, path=sequencing_dir + '{well}_grid/cells_reads.csv'),
+    output:
+        outdir = directory(output_dir + '{wells}_{column}_annotated_images{num}{radius}/'),
+    params:
+        num = parse_param('num', 5),
+        radius = parse_param('radius', 100),
+    wildcard_constraints:
+        wells = '({well_pat})(-({well_pat}))*'.format(well_pat='|'.join(wells + [well.replace('well', '') for well in wells])),
+        num = '|_num\d+',
+        radius = '|_radius\d+',
+        column = '[^_]+',
+    run:
+        import tifffile
+        import numpy as np
+        import pandas
+        from PIL import Image, ImageDraw, ImageFont
+
+        column = wildcards.column
+
+        full_table = []
+        images = []
+
+        for i, image_path, cells_table_path, reads_table_path in zip(range(len(input.image)), input.image, input.cells_table, input.reads_table):
+            image = tifffile.imread(image_path)
+            debug(image.shape)
+            image = image.reshape(image.shape[0] * image.shape[1], image.shape[2], image.shape[3])
+            images.append(image)
+            cells_table = pandas.read_csv(cells_table_path, index_col=0)
+            reads_table = pandas.read_csv(reads_table_path, index_col=0)
+            table = pandas.concat([cells_table, reads_table], axis=1, join='inner')
+            table['well'] = i
+            full_table.append(table)
+
+        table = pandas.concat(full_table, axis=0, ignore_index=True)
+
+        os.mkdir(output.outdir)
+
+        for variant_name, group in table.groupby(column):
+            if len(variant_name) > 10: continue
+            debug(variant_name, group)
+            n_channels = images[0].shape[0]
+            # Add one extra channel for text annotations
+            concat_image = np.zeros((n_channels + 1, params.num * params.radius, params.num * params.radius), images[0].dtype)
+            debug(concat_image.shape)
+            sampled_group = group.sample(min(params.num*params.num, len(group.index)), random_state=12345)
+            for i, cellindex in enumerate(list(sampled_group.index)):
+                x1, y1 = int(table['bbox_x1'][cellindex]), int(table['bbox_y1'][cellindex])
+                x1, y1 = int(x1 + table['bbox_x2'][cellindex]) // 2 - params.radius // 2, int(y1 + table['bbox_y2'][cellindex]) // 2 - params.radius // 2
+                x2, y2 = x1 + params.radius, y1 + params.radius
+                well = table['well'][cellindex]
+                debug('  ', well, x1, y1, x2, y2)
+                section = images[well][:,x1:x2,y1:y2]
+                x, y = i // params.num * params.radius, i % params.num * params.radius
+
+                # Write imaging channels unchanged
+                concat_image[:n_channels, x:x+section.shape[1], y:y+section.shape[2]] = section
+
+                # Put annotation in the dedicated text channel only
+                label = f"w{well} c{cellindex}"
+                text_channel = np.zeros((section.shape[1], section.shape[2]), images[0].dtype)
+                max_val = np.iinfo(images[0].dtype).max if np.issubdtype(images[0].dtype, np.integer) else 1.0
+                norm = np.zeros_like(text_channel, dtype=np.uint8)
+                pil_img = Image.fromarray(norm)
+                draw = ImageDraw.Draw(pil_img)
+                font = ImageFont.load_default()
+                bbox = draw.textbbox((0, 0), label, font=font)
+                text_h = bbox[3] - bbox[1]
+                y_pos = text_channel.shape[0] - text_h - 2
+                draw.text((1, y_pos), label, fill=255, font=font)
+                text_channel = (np.array(pil_img).astype(np.float32) / 255 * max_val).astype(images[0].dtype)
+                concat_image[n_channels, x:x+section.shape[1], y:y+section.shape[2]] = text_channel
+
+                debug('  ', x1, y1, x2, y2, section.shape)
+
+            tifffile.imwrite(output.outdir + '/{}.tif'.format(variant_name), concat_image)
