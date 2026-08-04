@@ -1,6 +1,6 @@
 #!/bin/bash
 source /net/fowler/vol1/shared/miniconda3/etc/profile.d/conda.sh
-conda activate ops 3> /dev/null
+conda activate  /net/fowler/vol1/shared/miniconda3/envs/ops3 3> /dev/null
 
 
 mem_arg='$(expr {resources.mem_mb} / {threads})'
