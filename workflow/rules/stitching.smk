@@ -26,7 +26,7 @@ rule calc_background:
         background = stitching_dir + 'background{ispt,_pt|}.tif',
         #background = stitching_dir + '{well_stitching}/background.tif',
     resources:
-        mem_mb = lambda wildcards, input: input.size_mb + 5000
+        mem_mb = lambda wildcards, input:  size_mb(input) + 5000
         #mem_mb = 1000000
     run:
         import numpy as np
@@ -115,9 +115,9 @@ rule correct_background:
         #images = input_dir + '{well_stitching}/cycle{cycle}/raw.tif',
         background = lambda wildcards: stitching_dir + 'background{}.tif'.format('_pt' if wildcards.cycle in phenotype_cycles else '')
     output:
-        images = temp(stitching_dir + '{well_stitching}/cycle{cycle}/corrected_tiles.tif'),
+        images = stitching_dir + '{well_stitching}/cycle{cycle}/corrected_tiles.tif',
     resources:
-        mem_mb = lambda wildcards, input: input.size_mb * 1.5 + 10000
+        mem_mb = lambda wildcards, input:  size_mb(input) * 1.5 + 10000
     run:
         import tifffile
         import starcall.correction
@@ -158,9 +158,9 @@ rule stitch_cycle:
         positions = stitching_dir + '{well_stitching}/cycle{cycle}/positions.csv',
         composite = stitching_dir + '{well_stitching}/composite.json',
     output:
-        image = temp('{output_dir}{well_stitching}/cycle{cycle}/{corrected,raw|corrected}.tif'),
+        image = '{output_dir}{well_stitching}/cycle{cycle}/{corrected,raw|corrected}.tif',
     resources:
-        mem_mb = lambda wildcards, input: input.size_mb * 2.4 + 10000
+        mem_mb = lambda wildcards, input:  size_mb(input) * 2.4 + 10000
     run:
         import numpy as np
         import tifffile
@@ -296,7 +296,6 @@ rule stitch_well:
 ##################################################
 ## stitching smaller sections, ie subsets, tiles
 ##################################################
-
 def stitch_well_section(image_paths, composite_paths, mins, maxes, merger='efficient_nearest', phenotype=False):
     import constitch
     import starcall.correction
@@ -313,20 +312,21 @@ def stitch_well_section(image_paths, composite_paths, mins, maxes, merger='effic
 
             images = []
             with nd2.ND2File(path) as ifile:
-                num_channels = ifile.shape[1]
-                dtype = ifile.dtype
+                dtype = np.float32#dtype = ifile.dtype
+                frame_shape = ifile.read_frame(0).transpose([1,2,0]).shape
+                num_channels = frame_shape[2]
                 for j in range(len(composite.boxes)):
                     if composite.boxes[j].as2d().collides(section_box):
                         images.append(ifile.read_frame(j).transpose([1,2,0]).copy())
                     else:
-                        images.append(np.empty((ifile.shape[2], ifile.shape[3], ifile.shape[1]), dtype))
+                        images.append(np.empty(frame_shape, dtype))
             composite.images = images
 
         else:
             import tifffile
             images = tifffile.memmap(path, mode='r').transpose([0,2,3,1])
             num_channels = images.shape[3]
-            dtype = images.dtype
+            dtype = np.float32#images.dtype
             composite.images = images
 
 
@@ -334,10 +334,10 @@ def stitch_well_section(image_paths, composite_paths, mins, maxes, merger='effic
             max_num_channels = num_channels
             if phenotype:
                 max_num_channels = max(len(channels) for channels in config['phenotyping_channels'])
-            full_image = np.zeros((len(image_paths), max_num_channels, maxes[0] - mins[0], maxes[1] - mins[1]), dtype)
-            debug (full_image.shape)
+            full_image = np.empty((len(image_paths), max_num_channels, maxes[0] - mins[0], maxes[1] - mins[1]), dtype) #change zeros to nans? 
+            #print (full_image.shape)
 
-        final_image = composite.stitch(
+        _ = composite.stitch(
             mins = mins,
             maxes = maxes,
             #merger = constitch.EfficientNearestMerger(),
@@ -346,7 +346,6 @@ def stitch_well_section(image_paths, composite_paths, mins, maxes, merger='effic
             prevent_resize = True,
         )
         del images
-
     return full_image
 
 rule stitch_well:
@@ -359,14 +358,15 @@ rule stitch_well:
         composites = expand(stitching_dir + '{well_stitching}/cycle{cycle}/composite{params_alignment}.json', cycle=cycles, allow_missing=True),
         full_composite = stitching_dir + '{well_stitching}/composite{params_alignment}.json',
     output:
-        image = temp('{output_dir}{well_stitching}/{corrected,raw|corrected}{params_alignment}{merger}.tif'),
+        image = '{output_dir}{well_stitching}/{corrected,raw|corrected}{params_alignment}{merger}.tif',
     params:
         merger = parse_param('merger', config['stitching']['merger']),
     wildcard_constraints:
         merger = '|_merger(mean|nearest|max)',
     #threads: 8
     resources:
-        mem_mb = lambda wildcards, input: 5000 + input.size_mb * 1.5
+                mem_mb = lambda wildcards, input, attempt: ((5000 + size_mb(input) * 1.5) * attempt)
+                #mem_mb = lambda wildcards, input: 5000 +  size_mb(input) * 1.5
     run:
         import numpy as np
         import tifffile
@@ -393,9 +393,9 @@ rule stitch_well_pt:
         composites_pt = expand(stitching_dir + '{well_stitching}/cycle{cycle}/composite.json', cycle=phenotype_cycles, allow_missing=True),
         full_composite = stitching_dir + '{well_stitching}/composite.json',
     output:
-        image = temp('{output_dir}{well_stitching}/{corrected,raw|corrected}_pt.tif'),
+        image = '{output_dir}{well_stitching}/{corrected,raw|corrected}_pt.tif',
     resources:
-        mem_mb = lambda wildcards, input: 5000 + input.size_mb * 2
+        mem_mb = lambda wildcards, input: 5000 +  size_mb(input) * 2
     run:
         import numpy as np
         import tifffile
@@ -424,7 +424,7 @@ rule stitch_section:
         composites = expand(stitching_dir + '{well_stitching}/cycle{cycle}/composite{params_alignment}.json', cycle=cycles, allow_missing=True),
         full_composite = stitching_dir + '{well_stitching}/composite{params_alignment}.json',
     output:
-        image = temp('{output_dir}{well_stitching}_section{size,\d+}/{corrected,raw|corrected}{params_alignment}.tif'),
+        image = '{output_dir}{well_stitching}_section{size,\d+}/{corrected,raw|corrected}{params_alignment}.tif',
     run:
         import constitch
         import numpy as np
@@ -449,7 +449,7 @@ rule stitch_section_pt:
         composites = expand(stitching_dir + '{well_stitching}/cycle{cycle}/composite.json', cycle=phenotype_cycles, allow_missing=True),
         full_composite = stitching_dir + '{well_stitching}/composite.json',
     output:
-        image = temp('{output_dir}{well_stitching}_section{size,\d+}/{corrected,raw|corrected}_pt.tif'),
+        image = '{output_dir}{well_stitching}_section{size,\d+}/{corrected,raw|corrected}_pt.tif',
     run:
         import constitch
         import numpy as np
@@ -514,9 +514,9 @@ rule stitch_tile:
         composites = expand(stitching_dir + '{well_stitching}/cycle{cycle}/composite.json', cycle=cycles, allow_missing=True),
         grid_composite = stitching_dir + '{well_stitching}_grid{grid_size}/grid_composite.json',
     output:
-        image = temp('{output_dir}{well_stitching}_grid{grid_size,\d+}/tile{x,\d+}x{y,\d+}y/{corrected,raw|corrected}.tif'),
+        image = '{output_dir}{well_stitching}_grid{grid_size,\d+}/tile{x,\d+}x{y,\d+}y/{corrected,raw|corrected}.tif',
     resources:
-        mem_mb = lambda wildcards, input: 5000 + input.size_mb * 2.2 / (int(wildcards.grid_size)**2)
+        mem_mb = lambda wildcards, input: 5000 +  size_mb(input) * 2.2 / (int(wildcards.grid_size)**2)
     run:
         import numpy as np
         import tifffile
@@ -540,9 +540,9 @@ rule stitch_tile_pt:
         composites_pt = expand(stitching_dir + '{well_stitching}/cycle{cycle}/composite.json', cycle=phenotype_cycles, allow_missing=True),
         grid_composite = stitching_dir + '{well_stitching}_grid{grid_size}/grid_composite.json',
     output:
-        image = temp('{output_dir}{well_stitching}_grid{grid_size,\d+}/tile{x,\d+}x{y,\d+}y/{corrected,raw|corrected}_pt.tif'),
+        image = '{output_dir}{well_stitching}_grid{grid_size,\d+}/tile{x,\d+}x{y,\d+}y/{corrected,raw|corrected}_pt.tif',
     resources:
-        mem_mb = lambda wildcards, input: 5000 + input.size_mb * 2.2 / (int(wildcards.grid_size)**2)
+        mem_mb = lambda wildcards, input: 5000 +  size_mb(input) * 2.2 / (int(wildcards.grid_size)**2)
     run:
         import numpy as np
         import tifffile
@@ -621,9 +621,9 @@ rule prepare_tiles_ashlar:
         images = expand(input_dir + '{well_stitching}/cycle{cycle}/raw.tif', cycle=cycles, allow_missing=True),
         positions = expand(input_dir + '{well_stitching}/cycle{cycle}/positions.csv', cycle=cycles, allow_missing=True),
     output:
-        imagedir = temp(directory(stitching_dir + '{well_stitching}/raw_ashlar_tiles/')),
+        imagedir = directory(stitching_dir + '{well_stitching}/raw_ashlar_tiles/'),
     resources:
-        mem_mb = lambda wildcards, input: 5000 + input.size_mb * 1.5 / len(cycles)
+        mem_mb = lambda wildcards, input: 5000 +  size_mb(input) * 1.5 / len(cycles)
     run:
         import tifffile
         import numpy as np
@@ -749,7 +749,7 @@ rule convert_well_ashlar:
     #wildcard_constraints:
         #params = params_regex('channel', 'subpix', 'sigma', 'input', 'ashlar'),
     resources:
-        mem_mb = lambda wildcards, input: 5000 + input.size_mb * 2
+        mem_mb = lambda wildcards, input: 5000 +  size_mb(input) * 2
     run:
         import tifffile
 
@@ -776,6 +776,5 @@ rule convert_well_ashlar:
             else:
                 assert image.shape[0] < 16
                 os.link(input.image, output.image)
-
 
 

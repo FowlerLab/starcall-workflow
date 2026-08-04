@@ -45,7 +45,7 @@ rule merge_phenotype_genotype:
     output:
         table = output_dir + '{well}{possible_grid}.{phenotype_type}{segmentation_type}_full.csv'
     resources:
-        mem_mb = lambda wildcards, input: input.size_mb * 5 + 10000
+        mem_mb = lambda wildcards, input: size_mb(input) * 5 + 10000
     wildcard_constraints:
         possible_grid = '(_grid)?',
         phenotype_type = '[^/]*',

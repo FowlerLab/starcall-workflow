@@ -56,7 +56,7 @@ rule make_qc_read_plots:
         #plot = qc_dir + '{path}/{segmentation_type}_reads.svg',
         #plots = [qc_dir + '{path}/{segmentation_type}_reads_plot' + str(i) + '.svg' for i in range(16)],
     resources:
-        mem_mb = lambda wildcards, input: 5000 + input.size_mb * 10
+        mem_mb = lambda wildcards, input: 5000 + size_mb(input) * 10
     run:
         import pandas
         import numpy as np

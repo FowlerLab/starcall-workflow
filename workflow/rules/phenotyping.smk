@@ -28,7 +28,7 @@ rule make_cell_images:
         cell_images = phenotyping_dir + '{path}/{segmentation_type}_crops_{window,\d+}.tif',
         mask_images = phenotyping_dir + '{path}/{segmentation_type}_mask_crops_{window,\d+}.tif',
     resources:
-        mem_mb = lambda wildcards, input: input.size_mb * 2.5 + 5000
+        mem_mb = lambda wildcards, input: size_mb(input) * 2.5 + 5000
     run:
         import numpy as np
         import tifffile
@@ -78,7 +78,7 @@ rule extract_embeddings:
     output:
         embeddings = phenotyping_dir + '{path}/embeddings_morphem{cycle,|_cycle\d+}.csv',
     resources:
-        mem_mb = lambda wildcards, input: input.size_mb * 7 + 5000,
+        mem_mb = lambda wildcards, input: size_mb(input) * 7 + 5000,
         cuda = 1,
     run:
         import starcall.embedding
@@ -103,7 +103,7 @@ rule calc_features:
     output:
         features = phenotyping_dir + '{path}/features.csv'
     resources:
-        mem_mb = lambda wildcards, input, attempt: input.size_mb * 2 + 5000
+        mem_mb = lambda wildcards, input, attempt: size_mb(input) * 2 + 5000
     run:
         import tifffile
         import numpy as np
@@ -283,7 +283,7 @@ rule run_cellprofiler:
     params:
         cellprofiler_executable = config['phenotyping'].get('cellprofiler_executable', 'cellprofiler'),
     resources:
-        mem_mb = lambda wildcards, input, attempt: input.size_mb * 15 + 55000 #+ (attempt - 1) * 200000
+        mem_mb = lambda wildcards, input, attempt: size_mb(input) * 15 + 55000 #+ (attempt - 1) * 200000
     threads: 2
     conda:
         'cp4'
@@ -339,7 +339,7 @@ rule run_special_segmentation:
         phenotyping_dir + '{path}/line_mask.tif',
     resources:
         cuda = 1,
-        mem_mb = lambda wildcards, input, attempt: input.size_mb * 2 + 4000,
+        mem_mb = lambda wildcards, input, attempt: size_mb(input) * 2 + 4000,
     run:
         command = '~/miniconda3/envs/ai/bin/python3 segment_lmna.py {} {}'.format(' '.join(input), ' '.join(output))
         code = os.system(command)
@@ -359,7 +359,7 @@ rule merge_tables_phenotype:
     output:
         table = temp(phenotyping_dir + '{path}/{phenotype_tables}.cells_phenotype.csv'),
     resources:
-        mem_mb = lambda wildcards, input: input.size_mb * 2 + 10000
+        mem_mb = lambda wildcards, input: size_mb(input) * 2 + 10000
     run:
         import pandas
 

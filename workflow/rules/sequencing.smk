@@ -1,6 +1,8 @@
 import os
 import glob
 import re
+import pandas as pd
+from collections import OrderedDict
 
 
 rule find_dots:
@@ -43,7 +45,7 @@ rule find_dots:
         max = '|_max\d+(.\d+)?',
         num = '|_num\d+(.\d+)?',
     resources:
-        mem_mb = lambda wildcards, input: input.size_mb * 10 + 15000
+        mem_mb = lambda wildcards, input: size_mb(input) * 10 + 15000
     threads: 4
     run:
         import numpy as np
@@ -97,7 +99,7 @@ rule call_raw_reads:
         params = params_regex('min', 'max', 'num'),
         #params = '_min\d+',
     resources:
-        mem_mb = lambda wildcards, input: 5000 + input.size_mb * 10
+        mem_mb = lambda wildcards, input: 5000 +  size_mb(input) * 10
     run:
         import tifffile
         import numpy as np
@@ -153,7 +155,7 @@ rule calculate_distance_matrix:
         valweight = '|_valweight\d+(.\d+)?',
         seqweight = '|_seqweight\d+(.\d+)?',
     resources:
-        mem_mb = lambda wildcards, input: 15000 + input.size_mb * 10
+        mem_mb = lambda wildcards, input: 15000 +  size_mb(input) * 10
     run:
         import tifffile
         import numpy as np
@@ -219,7 +221,7 @@ rule cluster_reads:
         thresh = '|_thresh\d+(.\d+)?',
         linkage = '|_linkage(min|max|mean)',
     resources:
-        mem_mb = lambda wildcards, input: 5000 + input.size_mb * 20
+        mem_mb = lambda wildcards, input: 5000 +  size_mb(input) * 20
     run:
         import numpy as np
         import csv
@@ -294,7 +296,7 @@ rule combine_reads:
         params_dots = params_regex('min', 'max', 'num'),
         params_cluster = params_regex('norm', 'posweight', 'valweight', 'seqweight', 'thresh', 'linkage'),
     resources:
-        mem_mb = lambda wildcards, input: 5000 + input.size_mb * 25
+        mem_mb = lambda wildcards, input: 5000 +  size_mb(input) * 25
     run:
         import tifffile
         import numpy as np
@@ -390,12 +392,13 @@ rule combine_cell_reads:
     output:
         table = sequencing_dir + '{path}/{segmentation_type}_reads_partial{params}{maxreads}.csv',
     params:
+        keep_all_reads = config['sequencing'].get('keep_all_reads', False),
         max_reads = parse_param('maxreads', config['sequencing']['max_reads']),
     wildcard_constraints:
         params = params_regex('min', 'max', 'num', 'norm', 'posweight', 'valweight', 'seqweight', 'thresh', 'linkage'),
         maxreads = '|_maxreads\d+',
     resources:
-        mem_mb = lambda wildcards, input: 5000 + input.size_mb * 50
+        mem_mb = lambda wildcards, input: 5000 +  size_mb(input) * 50
     run:
         import pandas
         import numpy as np
@@ -408,16 +411,56 @@ rule combine_cell_reads:
         table = table.loc[table['cell']!=0,:]
 
         cell_table = pandas.read_csv(input.cell_table, index_col=0)
-
         cell_reads = table.sort_values(['cell', 'count'], ascending=False).groupby('cell')
-        cell_reads = cell_reads.head(params.max_reads)
+        if params.keep_all_reads:
+            max_reads_to_keep = table.cell.value_counts().iloc[0] if len(table.index) else 0 
+        else:
+            max_reads_to_keep =  params.max_reads
+        debug('keeping up to ', max_reads_to_keep, " per cell")
+        cell_reads = cell_reads.head(max_reads_to_keep)
         cell_reads = cell_reads.reads.to_cell_table(cell_index=range(1, len(cell_table.index) + 1))
+        #fix post-clustering errors (if present) by grouping reads together 
+        #if they are the same and summing their counts
+        if len(cell_reads.index) and 'index_0' in cell_reads.columns:
+            cell_reads = condense_identical_reads(cell_reads, max_reads_to_keep)
         cell_reads = cell_reads.set_index(cell_table.index)
-        #read_table = cell_reads.head(params.max_reads).to_table(columns=['cell', 'read', 'count', 'quality', 'read_index'], sequences=True, qualities=True)
-        #read_table = read_table.set_index('cell')
-        #read_table['total_count'] = [read_set.attrs['count'].sum() for read_set in cell_reads]
         cell_reads.to_csv(output.table)
 
+
+#helper function for combine_cell_reads 
+def condense_identical_reads(df,max_reads_to_keep):
+    #per row, group all reads again (clustering is currently broken)
+    list_cleaned_rows = []
+    for _, row in df.iterrows():
+        real_unique_reads = {}
+        read_ind_curr = 0
+        while  read_ind_curr < max_reads_to_keep and row[f'index_{read_ind_curr}'] != -1 :
+            if row[f'read_{read_ind_curr}'] in real_unique_reads:
+                real_unique_reads[row[f'read_{read_ind_curr}']] += row[f'count_{read_ind_curr}']
+            else:
+                real_unique_reads[row[f'read_{read_ind_curr}']] = row[f'count_{read_ind_curr}']
+            read_ind_curr +=1
+        #now make a priority queue 
+        sorted_dict = OrderedDict(sorted(real_unique_reads.items(), key=lambda item: item[1], reverse = True))
+        #dummy row
+        dummy_row = {}
+        dummy_row['num_reads'] = len(sorted_dict)
+        #dummy_row['orig_num_reads'] = row['num_reads']
+        dummy_row['total_count'] = row['total_count']
+        i = 0
+        for key in sorted_dict:
+            dummy_row[f'read_{i}'] = key
+            dummy_row[f'count_{i}'] = sorted_dict[key]
+            i += 1
+        list_cleaned_rows.append(dummy_row)
+    #turn the rows back into a df 
+    #note that this df does not bother to keep indicies for the clusters - they aren't useful because the 
+    #cluster code is broken right now 
+    new_df = pd.DataFrame(list_cleaned_rows)    
+    for count_col in new_df.columns:
+        if 'count' in count_col:
+            new_df[count_col].fillna(0, inplace=True)
+    return new_df
 
 rule make_qc_read_table:
     input:
@@ -604,7 +647,7 @@ rule merge_final_tables:
     wildcard_constraints:
         params = params_regex('min', 'max', 'num', 'norm', 'posweight', 'valweight', 'seqweight', 'thresh', 'linkage', 'maxreads'),
     resources:
-        mem_mb = lambda wildcards, input: 5000 + input.size_mb * 250
+        mem_mb = lambda wildcards, input: 5000 +  size_mb(input) * 250
     run:
         import pandas
         import numpy as np
@@ -617,6 +660,8 @@ rule merge_final_tables:
         cell_cols = cell_table.columns.copy()
 
         def join_barcode(cell_table, aux_table):
+            if 'read_0' not in cell_table.columns: 
+                return cell_table #returning the empty table if no reads are found for this tile - should not affect the merging at the end
             barcodes = []
             for tmp_read in cell_table['read_0']:
                 if type(tmp_read) == str: break
@@ -803,4 +848,3 @@ rule link_merged_grid_reads:
         "cp -l {input[0]} {output[0]}"
 
 ruleorder: link_merged_grid_reads > merge_final_tables
-

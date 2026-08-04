@@ -378,3 +378,11 @@ def print_info():
 rule print_info:
     run:
         print_info()
+
+#adding this to remove TBD strings during -n builds
+def size_mb(input, default_mb=0):
+    """input.size_mb, or default_mb if a file doesn't exist yet"""
+    try:
+        return input.size_mb
+    except OSError:
+        return default_mb

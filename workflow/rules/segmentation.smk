@@ -27,10 +27,12 @@ rule segment_nuclei:
     params:
         nuclearchannel = parse_param('nuclearchannel', config['segmentation']['channels'][0]),
         method = config['segmentation']['nuclei_method'],
+        min_area = config['segmentation']['nuclei_segmentation_filter_min_area'],
+        min_bbox = config['segmentation']['nuclei_segmentation_filter_min_bbox'],
     wildcard_constraints:
         nuclearchannel = '|_nuclearchannel' + phenotyping_channel_regex,
     resources:
-        mem_mb = lambda wildcards, input: input.size_mb * 64 + 10000,
+        mem_mb = lambda wildcards, input: size_mb(input) * 64 + 10000,
         #cuda = 1,
     threads: 2
     run:
@@ -42,19 +44,23 @@ rule segment_nuclei:
         nuclearchannel = channel_index_phenotyping(params.nuclearchannel)
 
         data = tifffile.memmap(input[0], mode='r')
+        
         if data.shape[3] < 32:
             data = data.transpose(3,0,1,2)
         #data = data.reshape(-1, *data.shape[2:])
 
         dapi = data[nuclearchannel[0],nuclearchannel[1]]
-        if np.all(dapi == 0):
-            tifffile.imwrite(output[0], data[0])
+        #fill dapi nans with 0s before segmentation 
+        dapi = np.nan_to_num(dapi, nan=0.0)
+        if np.all(dapi == 0): #changing the output to be a blank 2d matrix 
+            tifffile.imwrite(output[0], np.zeros(dapi.shape, dtype = np.uint16))
         else:
             del data
             nuclei = starcall.segmentation.segment_nuclei(dapi, method=params.method)
+            debug ('Found', nuclei.max(), 'nuclei (prefilter)')
             #nuclei, fmap, rmap = skimage.segmentation.relabel_sequential(skimage.segmentation.clear_border(nuclei))
-            nuclei = starcall.segmentation.filter_segmentation(nuclei)
-            debug ('Found', nuclei.max(), 'nuclei')
+            nuclei = starcall.segmentation.filter_segmentation(nuclei, min_area = params.min_area, min_bbox = params.min_bbox)
+            debug ('Found', nuclei.max(), 'nuclei (postfilter)')
             tifffile.imwrite(output[0], nuclei)
 
 
@@ -73,13 +79,16 @@ rule segment_cells:
     output:
         segmentation_dir + '{path_nogrid}{grid}{path_nogrid2}/cells{diameter}{nuclearchannel}{cytochannel}_mask{unmatched}{grid}.tif',
     resources:
-        mem_mb = lambda wildcards, input: input.size_mb * 20 + 10000,
+        mem_mb = lambda wildcards, input:  size_mb(input) * 20 + 10000,
         #cuda = 1,
     params:
         diameter = parse_param('diameter', config['segmentation']['diameter']),
         nuclearchannel = parse_param('nuclearchannel', config['segmentation']['channels'][0]),
         cytochannel = parse_param('cytochannel', config['segmentation']['channels'][1]),
         method = config['segmentation']['cells_method'],
+        min_area = config['segmentation']['cell_segmentation_filter_min_area'],
+        min_bbox = config['segmentation']['cell_segmentation_filter_min_bbox'],
+        use_nuclei_channel = config['segmentation']['use_cytoplasm_and_nuclei']
     wildcard_constraints:
         diameter = '|_diameter\d+',
         nuclearchannel = '|_nuclearchannel' + phenotyping_channel_regex,
@@ -112,22 +121,29 @@ rule segment_cells:
 
         dapi = data[nuclearchannel[0],nuclearchannel[1]]
         cyto = data[cytochannel[0],cytochannel[1]]
+        #fill nans with 0s before segmentation 
+        dapi = np.nan_to_num(dapi, nan=0.0)
+        cyto = np.nan_to_num(cyto, nan=0.0)
         if np.all(dapi == 0) or np.all(cyto == 0):
-            tifffile.imwrite(output[0], data[0])
+            tifffile.imwrite(output[0], np.zeros(dapi.shape, dtype = np.uint16))
         else:
             del data
             #del full_well
-
+            debug ('diameter: ', params.diameter)
             cells = starcall.segmentation.segment_cells(
                 cyto, dapi,
                 method = params.method,
                 diameter = params.diameter,
                 gpu = use_gpu,
+                use_nuclei_channel = params.use_nuclei_channel
             )
-            #cells, fmap, rmap = skimage.segmentation.relabel_sequential(skimage.segmentation.clear_border(cells))
-            cells = starcall.segmentation.filter_segmentation(cells)
 
-            debug ('Found', cells.max(), 'cells')
+            debug ('Found', cells.max(), 'cells (prefilter)')
+
+            #cells, fmap, rmap = skimage.segmentation.relabel_sequential(skimage.segmentation.clear_border(cells))
+            cells = starcall.segmentation.filter_segmentation(cells, min_area = params.min_area, min_bbox = params.min_bbox)
+
+            debug ('Found', cells.max(), 'cells (postfilter)')
 
             tifffile.imwrite(output[0], cells)#, compression='deflate')
 
@@ -144,7 +160,8 @@ rule expand_segmentation:
     wildcard_constraints:
         downscaled = '|_downscaled',
     resources:
-        mem_mb = lambda wildcards, input: input.size_mb * 2 + 5000,
+        mem_mb = lambda wildcards, input, attempt: ((5000 + size_mb(input) * 2) * attempt)
+        #mem_mb = lambda wildcards, input:  size_mb(input) * 2 + 5000,
     run:
         import tifffile
         import numpy as np
@@ -178,7 +195,7 @@ rule segment_cells_bases:
         diameter = '|_diameter\d+',
         nuclearchannel = '|_nuclearchannel' + sequencing_channel_regex,
     resources:
-        mem_mb = lambda wildcards, input: input.size_mb * 16 + 10000,
+        mem_mb = lambda wildcards, input:  size_mb(input) * 16 + 10000,
         #cuda = 1,
     threads: 8
     run:
@@ -196,12 +213,14 @@ rule segment_cells_bases:
         data = full_well[cycles.index(cellpose_cycle)].astype(np.float32)
 
         if np.all(data == 0):
-            tifffile.imwrite(output[0], data[0])
-            tifffile.imwrite(output[1], data[0])
+            tifffile.imwrite(output[0], np.zeros(data.shape, dtype = uint16))
         else:
             dapi = data[nuclearchannel]
-            #cyto = data[2]
-            cyto = starcall.segmentation.estimate_cyto(data[sequencing_channels_slice])
+            #fill dapi and cytoplasm estimation channel NaNs with 0s
+            dapi = np.nan_to_num(dapi, nan=0.0)
+            for_starcall_seg = data[sequencing_channels_slice]
+            for_starcall_seg =  np.nan_to_num(for_starcall_seg, nan=0.0)
+            cyto = starcall.segmentation.estimate_cyto(for_starcall_seg)
             del data
             del full_well
 
@@ -236,7 +255,7 @@ rule segment_nuclei_bases:
     wildcard_constraints:
         nuclearchannel = '|_nuclearchannel' + sequencing_channel_regex,
     resources:
-        mem_mb = lambda wildcards, input: input.size_mb * 16 + 10000
+        mem_mb = lambda wildcards, input:  size_mb(input) * 16 + 10000
         #cuda=1
     threads: 8
     run:
@@ -251,10 +270,10 @@ rule segment_nuclei_bases:
         data = full_well[-1]
 
         if np.all(data == 0):
-            tifffile.imwrite(output[0], data[0])
-            tifffile.imwrite(output[1], data[0])
+            tifffile.imwrite(output[0], np.zeros(data.shape, dtype=uint16)) #returns all zeros 
         else:
             dapi = data[nuclearchannel]
+            dapi = np.nan_to_num(dapi, nan=0.0)
             del data
             del full_well
 
@@ -310,7 +329,7 @@ rule tabulate_cells:
     #wildcard_constraints:
         #unmerged = '_unmatched(|_grid\d+)' if config['segmentation'].get('match_masks', False) else '(|_grid\d+)',
     resources:
-        mem_mb = lambda wildcards, input: 5000 + input.size_mb * 1.5
+        mem_mb = lambda wildcards, input: 5000 +  size_mb(input) * 1.5
     run:
         import numpy as np
         import tifffile
@@ -413,61 +432,65 @@ rule drop_duplicate_cells:
         composite.boxes.positions -= composite.boxes[index].position
 
         table = pandas.read_csv(input.table, index_col=0)
-        #table['bbox_x1'] += composite.boxes[index].position[0]
-        #table['bbox_y1'] += composite.boxes[index].position[1]
-        #table['bbox_x2'] += composite.boxes[index].position[0]
-        #table['bbox_y2'] += composite.boxes[index].position[1]
-        #table.cells.bboxes += [[*composite.boxes[index].position, *composite.boxes[index].position]]
-        #table['xpos'] += composite.boxes[index].position[0]
-        #table['ypos'] += composite.boxes[index].position[1]
-        #centroids = np.array([table['xpos'], table['ypos']]).T
+        #if the table is empty, no deduplication is needed 
+        if len(table.index) == 0:
+            table.to_csv(output.table)
+        else:
+            #table['bbox_x1'] += composite.boxes[index].position[0]
+            #table['bbox_y1'] += composite.boxes[index].position[1]
+            #table['bbox_x2'] += composite.boxes[index].position[0]
+            #table['bbox_y2'] += composite.boxes[index].position[1]
+            #table.cells.bboxes += [[*composite.boxes[index].position, *composite.boxes[index].position]]
+            #table['xpos'] += composite.boxes[index].position[0]
+            #table['ypos'] += composite.boxes[index].position[1]
+            #centroids = np.array([table['xpos'], table['ypos']]).T
 
-        #boxes = constitch.BBoxList.from_table(table)
+            #boxes = constitch.BBoxList.from_table(table)
 
-        neighbors = sklearn.neighbors.NearestNeighbors(n_neighbors=1).fit(composite.boxes.centers)
-        distances, indices = neighbors.kneighbors(table.cells.centers)
+            neighbors = sklearn.neighbors.NearestNeighbors(n_neighbors=1).fit(composite.boxes.centers)
+            distances, indices = neighbors.kneighbors(table.cells.centers)
 
-        mask = indices == index
-        debug (np.unique(indices, return_counts=True))
-        debug ('mask ', mask.sum(), len(table.index))
-        debug (composite.boxes[index].center)
-        debug (table.cells.centers.mean(axis=0))
+            mask = indices == index
+            debug (np.unique(indices, return_counts=True))
+            debug ('mask ', mask.sum(), len(table.index))
+            debug (composite.boxes[index].center)
+            debug (table.cells.centers.mean(axis=0))
 
-        max_cell_index = 0
-        debug (table)
+            max_cell_index = 0
+            debug (table)
 
-        for path in input.edge_tables:
-            cur_table = pandas.read_csv(path, index_col=0)
+            for path in input.edge_tables:
+                cur_table = pandas.read_csv(path, index_col=0)
 
-            x, y = path.split('/tile')[1].split('y')[0].split('x')
-            cur_index = int(x) * grid_size + int(y)
+                x, y = path.split('/tile')[1].split('y')[0].split('x')
+                cur_index = int(x) * grid_size + int(y)
 
-            cur_table['bbox_x1'] += composite.boxes[cur_index].position[0]
-            cur_table['bbox_y1'] += composite.boxes[cur_index].position[1]
-            cur_table['bbox_x2'] += composite.boxes[cur_index].position[0]
-            cur_table['bbox_y2'] += composite.boxes[cur_index].position[1]
+                cur_table['bbox_x1'] += composite.boxes[cur_index].position[0]
+                cur_table['bbox_y1'] += composite.boxes[cur_index].position[1]
+                cur_table['bbox_x2'] += composite.boxes[cur_index].position[0]
+                cur_table['bbox_y2'] += composite.boxes[cur_index].position[1]
 
-            debug (cur_table)
-            overlapping_cells = table.cells.intersecting_cells(cur_table)
-            debug (overlapping_cells)
-            debug (list(overlapping_cells.index))
-            #debug (overlapping_cells['area_ratio'])
-            sums = {}
-            for i,j in overlapping_cells.index:
-                sums[i] = sums.get(i, 0) + overlapping_cells.cells[i,j].area()
+                debug (cur_table)
+                overlapping_cells = table.cells.intersecting_cells(cur_table)
+                debug (overlapping_cells)
+                debug (list(overlapping_cells.index))
+                #debug (overlapping_cells['area_ratio'])
+                sums = {}
+                for i,j in overlapping_cells.index:
+                    sums[i] = sums.get(i, 0) + overlapping_cells.cells[i,j].area()
 
-            to_remove = [i for i, total in sums.items() if total > table.cells[i].area() * overlap_threshold]
-            debug ('to_remove', len(to_remove))
-            for i in to_remove:
-                mask[table.index.get_loc(i)] = False
+                to_remove = [i for i, total in sums.items() if total > table.cells[i].area() * overlap_threshold]
+                debug ('to_remove', len(to_remove))
+                for i in to_remove:
+                    mask[table.index.get_loc(i)] = False
 
-        debug ('mask ', mask.sum(), len(table.index))
+            debug ('mask ', mask.sum(), len(table.index))
 
-        table = table[mask]
-        table = table.reset_index(names='orig_index')
-        table = table.set_index(pandas.RangeIndex(max_cell_index + 1, max_cell_index + 1 + len(table.index)))
+            table = table[mask]
+            table = table.reset_index(names='orig_index')
+            table = table.set_index(pandas.RangeIndex(max_cell_index + 1, max_cell_index + 1 + len(table.index)))
 
-        table.to_csv(output.table)
+            table.to_csv(output.table)
 
 
 
@@ -508,7 +531,7 @@ if config['segmentation'].get('match_masks', False):
         output:
             tables = expand(segmentation_dir + '{path}/{segmentation_type}{extra_params}.csv', segmentation_type=mask_pair, allow_missing=True),
         wildcard_constraints:
-            extra_params = '(|bases)(|expand\d+)',
+            extra_params = '(|bases)(|expanded\d+)',
         params:
             filter_larger = config['segmentation'].get('filter_larger_matches', False),
             filter_smaller = config['segmentation'].get('filter_smaller_matches', False),
@@ -580,7 +603,7 @@ if config['segmentation'].get('match_masks', False):
             max_indices = [0] * len(input.tables)
             # if in a grid, have to read previous tile to see max index
             if len(input.grid_index_reference):
-                max_indices = [max(pandas.read_csv(path, index_col=0).index) for path in input.grid_index_reference]
+                max_indices = [max(pandas.read_csv(path, index_col=0).index, default=0) for path in input.grid_index_reference]
 
             if 'orig_index' not in base_table.columns:
                 base_table = base_table.reset_index(names='orig_index')
@@ -766,7 +789,7 @@ rule relabel_segmentation:
     output:
         image = '{output_dir}{path_nogrid}{grid}{path_nogrid2}/{segmentation_type}_mask{downscaled,|_downscaled}.tif',
     resources:
-        mem_mb = lambda wildcards, input: input.size_mb * 5 + 10000,
+        mem_mb = lambda wildcards, input:  size_mb(input) * 5 + 10000,
     run:
         import tifffile
         import pandas
@@ -822,7 +845,7 @@ rule split_grid_table:
     output:
         table = '{output_dir}{well}_grid{grid_size,\d+}/tile{x,\d+}x{y,\d+}y/{segmentation_type}.csv'
     resources:
-        mem_mb = lambda wildcards, input: 5000 + input.size_mb * 2
+        mem_mb = lambda wildcards, input: 5000 +  size_mb(input) * 2
     run:
         import pandas
         import numpy as np
@@ -859,8 +882,6 @@ rule split_grid_table:
 
         table.to_csv(output.table)
 
-
-
 def get_grid_filenames(wildcards):
     grid_size = int(wildcards.grid_size)
     numbers = ['{:02}'.format(i) for i in range(segmentation_grid_size)]
@@ -894,9 +915,9 @@ rule stitch_tile_segmentation:
         composite2 = stitching_dir + '{well}_grid{grid_size}/grid_composite.json',
         table = '{output_dir}{well}_grid{grid_size}/tile{x}x{y}y/{segmentation_type}.csv',
     output:
-        image = temp('{output_dir}{well}_grid{grid_size,\d+}/tile{x,\d+}x{y,\d+}y/{segmentation_type}_mask{downscaled,|_downscaled}.tif'),
+        image = '{output_dir}{well}_grid{grid_size,\d+}/tile{x,\d+}x{y,\d+}y/{segmentation_type}_mask{downscaled,|_downscaled}.tif',
     resources:
-        mem_mb = lambda wildcards, input: 5000 + input.size_mb * 2
+        mem_mb = lambda wildcards, input: 5000 +  size_mb(input) * 2
     run:
         import tifffile
         import constitch
@@ -1033,7 +1054,7 @@ rule make_cell_overlay:
     wildcard_constraints:
         params = params_regex('diameter', 'nuclearchannel', 'cytochannel'),
     resources:
-        mem_mb = lambda wildcards, input: input.size_mb * 15 + 10000
+        mem_mb = lambda wildcards, input: size_mb(input) * 15 + 10000
     run:
         import numpy as np
         import tifffile
@@ -1059,4 +1080,3 @@ rule make_cell_overlay:
         tifffile.imwrite(output[0], image)
         rgbimage = starcall.utils.to_rgb8(image)
         tifffile.imwrite(output[1], rgbimage)
-

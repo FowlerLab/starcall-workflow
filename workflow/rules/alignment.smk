@@ -96,7 +96,7 @@ rule calculate_constraints:
         channel = '|_channel' + any_channel_regex,
         subpix = '|_subpix\d+',
     resources:
-        mem_mb = lambda wildcards, input: input.size_mb + 5000
+        mem_mb = lambda wildcards, input: size_mb(input) + 5000
     threads: 1
     run:
         import constitch
@@ -167,7 +167,7 @@ rule filter_constraints:
     wildcard_constraints:
         params = params_regex('channel', 'subpix')
     resources:
-        mem_mb = lambda wildcards, input: input.size_mb + 5000
+        mem_mb = lambda wildcards, input: size_mb(input) + 5000
     run:
         import constitch
         import numpy as np
@@ -263,7 +263,7 @@ rule solve_constraints:
         params = params_regex('channel', 'subpix', 'onlyfirst'),
         solver = '|_solver(mse|mae|spantree|lp|ilp|pulp|rounded)',
     resources:
-        mem_mb = lambda wildcards, input: input.size_mb * 10000 + 25000
+        mem_mb = lambda wildcards, input: size_mb(input) * 10000 + 25000
     threads: lambda wildcards: 8 if wildcards.solver == '_solverpulp' else 1
     run:
         import constitch

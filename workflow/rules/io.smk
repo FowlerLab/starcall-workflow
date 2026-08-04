@@ -103,7 +103,7 @@ if os.path.exists(rawinput_dir):
         output:
             #expand(input_dir + '{well_base}/cycle{cycle}/tile{tile}.tif', tile=tiles, allow_missing=True)
             #input_dir + '{well_base}/cycle{cycle}/tile{tile}.tif'
-            temp(input_dir + '{well_base}/tile{tile}/cycle{cycle}.tif'),
+            input_dir + '{well_base}/tile{tile}/cycle{cycle}.tif'
         resources:
             mem_mb = 10000
         run:
@@ -125,7 +125,7 @@ if os.path.exists(rawinput_dir):
         input:
             input_dir + '{well}/cycle{cycle}.tif'
         output:
-            temp(input_dir + '{well}/tile{tile}/cycle{cycle}.tif'),
+            input_dir + '{well}/tile{tile}/cycle{cycle}.tif'
         run:
             import tifffile
 
@@ -231,9 +231,9 @@ if os.path.exists(rawinput_dir):
         input:
             get_nd2filename,
         output:
-            temp(input_dir + '{well_base}/cycle{cycle}/raw.tif'),
+            input_dir + '{well_base}/cycle{cycle}/raw.tif'
         resources:
-            mem_mb = lambda wildcards, input: input.size_mb * 2 + 5000,
+            mem_mb = lambda wildcards, input: size_mb(input) * 2 + 5000,
         run:
             import tifffile
             import nd2
@@ -264,7 +264,7 @@ rule make_section:
         images = expand(input_dir + '{well_nosubset}_subset{size,\d+}/cycle{cycle}/raw.tif', cycle=cycles_pt, allow_missing=True),
         positions = expand(input_dir + '{well_nosubset}_subset{size,\d+}/cycle{cycle}/positions.csv', cycle=cycles_pt, allow_missing=True),
     resources:
-        mem_mb = lambda wildcards, input: input.size_mb * 4 / len(cycles_pt) + 5000
+        mem_mb = lambda wildcards, input: size_mb(input) * 4 / len(cycles_pt) + 5000
     run:
         import tifffile
         import numpy as np
@@ -327,7 +327,7 @@ rule make_split_well:
         images = expand(input_dir + '{well_nosplit}_split{size,\d+}/cycle{cycle}/raw.tif', cycle=cycles_pt, allow_missing=True),
         positions = expand(input_dir + '{well_nosplit}_split{size,\d+}/cycle{cycle}/positions.csv', cycle=cycles_pt, allow_missing=True),
     resources:
-        mem_mb = lambda wildcards, input: input.size_mb * 8 / len(cycles_pt) + 5000
+        mem_mb = lambda wildcards, input: size_mb(input) * 8 / len(cycles_pt) + 5000
     run:
         import tifffile
         import numpy as np
@@ -377,7 +377,7 @@ rule make_noisy_well:
         images = expand(input_dir + '{well_nonoise}_noise{size}/cycle{cycle}/raw.tif', cycle=cycles_pt, allow_missing=True),
         positions = expand(input_dir + '{well_nonoise}_noise{size}/cycle{cycle}/positions.csv', cycle=cycles_pt, allow_missing=True),
     resources:
-        mem_mb = lambda wildcards, input: input.size_mb * 16 / len(cycles_pt) + 5000
+        mem_mb = lambda wildcards, input: size_mb(input) * 16 / len(cycles_pt) + 5000
     run:
         import tifffile
         import numpy as np
