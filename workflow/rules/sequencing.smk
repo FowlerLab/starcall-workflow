@@ -5,6 +5,212 @@ import pandas as pd
 from collections import OrderedDict
 
 
+#Scallops style full well dots sampling 
+#uses the post quality attached values 
+
+def get_grid_filenames_post_cell_quality(wildcards):
+    grid_size = int(wildcards.grid_size)
+    numbers = ['{:02}'.format(i) for i in range(grid_size)]
+    #table = sequencing_dir + '{path}/{segmentation_type}_quality{params}.csv',
+    return expand(sequencing_dir + '{well}_grid{grid_size}/tile{x}x{y}y/{segmentation_type}_quality{params}.csv', x=numbers, y=numbers, allow_missing=True)
+
+def get_grid_filenames_corrected_tables(wildcards):
+    grid_size = int(wildcards.grid_size)
+    numbers = ['{:02}'.format(i) for i in range(grid_size)]
+    return expand(sequencing_dir + '{well}_grid{grid_size}/tile{x}x{y}y/{segmentation_type}{approach}_corrected_{method}{params}.csv', x=numbers, y=numbers, allow_missing=True)
+
+
+def get_aux_data_correction_summary(wildcards):
+    wildcards.path = wildcards.well + '_grid' + wildcards.grid_size
+    return get_aux_data(wildcards)
+
+rule scallops_style_sampling:
+    input: 
+        post_cell_quality_tables = get_grid_filenames_post_cell_quality,
+    output: 
+        all_samples = sequencing_dir + '{well}_grid{grid_size}/{segmentation_type}_fullwell{params}_final_samples.csv',
+        #named to fit with other final sampling table wildcard formats
+    params: 
+        num_cycles = config['cycles'],
+        phred_min = config['crosstalk_correction']['min_sampling_phred'],
+    wildcard_constraints:
+        params = params_regex('min', 'max', 'num', 'raw', ('psf', 'box')),
+    resources: 
+        mem_mb = lambda wildcards, input: size_mb(input) * 3 + 5000
+    run:
+        import pandas as pd 
+        import numpy as np
+        from starcall.correction import stack_cycles_of_dots_table
+
+        #filter tables by cells, and concatenate into one very large table
+        #then conduct F 0.5 based sample selection for the well as in SCALLOPS
+
+        full_well_table = []
+        for table in input.post_cell_quality_tables:
+            curr = pd.read_csv(table, index_col = 0)
+            cur = curr[curr.cell != 0]
+            full_well_table.append(curr)
+        full_well_table = pd.concat(full_well_table, axis = 0, ignore_index = True)
+
+        #F0.5 dot selection - same approach as SCALLOPS
+        full_well_table["read_type"] = (full_well_table["mean_phred"] >= params.phred_min).astype(int)
+        q = np.arange(0.02, 1, 0.01)
+        results = []
+        quantiles = full_well_table["sum_std_intensities"].quantile(q).values
+        for i in range(len(quantiles)):
+            threshold = quantiles[i]
+            counts_over = full_well_table.query(f"sum_std_intensities>{threshold}")["read_type"].value_counts()
+            counts_under = full_well_table.query(f"sum_std_intensities<={threshold}")["read_type"].value_counts()
+            tp = counts_over.loc[1] if 1 in counts_over else 0
+            fp = counts_over.loc[0] if 0 in counts_over else 0
+            tn = counts_under.loc[0] if 0 in counts_under else 0
+            fn = counts_under.loc[1] if 1 in counts_under else 0
+            precision = tp / (tp + fp) if (tp + fp) > 0 else 0
+            accuracy = (tp + tn) / (tp + fp + tn + fn)
+            recall = tp / (tp + fn) if (tp + fn) > 0 else 0
+
+            f1 = (2 * precision * recall) / (precision + recall)
+
+            results.append(
+                [threshold, q[i], precision, recall, f1, accuracy, tp, fp, tn, fn]
+            )
+        df = pd.DataFrame(results, columns=["threshold","quantile","precision","recall","f1","accuracy","tp","fp","tn","fn",], )
+        b2 = 0.5 * 0.5
+        df["f0.5"] = ((1 + b2) * (df["precision"] * df["recall"])) / (b2 * df["precision"] + df["recall"])
+
+        #find max F 0.5 threshold 
+        df = df.sort_values(["f0.5", "accuracy", "threshold"], ascending=False)
+        real_thresh = df.iloc[0]["threshold"]
+        print ('thresholding results...', df.iloc[0])
+
+        #save sample
+        crosstalk_bases_array = full_well_table[full_well_table['sum_std_intensities'] >= real_thresh].copy()
+        #reformat for npy calculation 
+        crosstalk_bases_array = stack_cycles_of_dots_table(crosstalk_bases_array,len(params.num_cycles), sequencing_channels_order, cell_filter = True)
+        #save for npy calculations
+        crosstalk_bases_array.to_csv(output.all_samples)
+
+rule fullwell_binned_sampling:
+    input: 
+        post_cell_quality_tables = get_grid_filenames_post_cell_quality,
+    output: 
+        all_samples = sequencing_dir + '{well}_grid{grid_size}/{segmentation_type}_fullwellbinned{params}_final_samples.csv',
+        #named to fit with other final sampling table wildcard formats
+    params: 
+        num_cycles = config['cycles'],
+        phred_min = config['crosstalk_correction']['min_sampling_phred'],
+        total_samples = config['crosstalk_correction']['total_samples'],
+        num_sampling_bins = config['crosstalk_correction']['number_sampling_bins'],
+    wildcard_constraints:
+        params = params_regex('min', 'max', 'num', 'raw', ('psf', 'box')),
+    resources: 
+        mem_mb = lambda wildcards, input: size_mb(input) * 5 + 5000
+    run:
+        import pandas as pd
+        import numpy as np
+        from starcall.correction import stack_cycles_of_dots_table, binned_cycle_sampler
+
+        #filter tables by cells, and concatenate into one very large table
+        #then conduct F 0.5 based sample selection for the well as in SCALLOPS
+
+        full_well_table = []
+        for table in input.post_cell_quality_tables:
+            curr = pd.read_csv(table, index_col = 0)
+            cur = curr[curr.cell != 0]
+            full_well_table.append(curr)
+        full_well_table = pd.concat(full_well_table, axis = 0, ignore_index = True)
+        debug(full_well_table.mean_phred.describe())
+        debug(full_well_table.min_phred.describe())
+        full_well_table = stack_cycles_of_dots_table(full_well_table, len(params.num_cycles), sequencing_channels_order, cell_filter = True)
+        debug(full_well_table.phred.describe())
+        debug('G', full_well_table[full_well_table.base == 'G'].phred.describe())
+        debug('T', full_well_table[full_well_table.base == 'T'].phred.describe())
+        debug('A', full_well_table[full_well_table.base == 'A'].phred.describe())
+        debug('C', full_well_table[full_well_table.base == 'C'].phred.describe())
+        sample_table = binned_cycle_sampler(full_well_table, params.total_samples, sequencing_channels_order, params.phred_min, params.num_sampling_bins)
+        #save for npy calculations
+        sample_table.to_csv(output.all_samples)
+
+
+def get_grid_filenames_raw_pt(wildcards):
+    grid_size = int(wildcards.grid_size)
+    numbers = ['{:02}'.format(i) for i in range(grid_size)]
+    return expand(segmentation_dir + '{well}_grid{grid_size}/tile{x}x{y}y/raw_pt.tif', x=numbers, y=numbers, allow_missing=True)
+
+
+def get_aux_data(wildcards, path=None):
+    path = wildcards.path if path is None else path
+
+    #if path != '': path = path + '.'
+
+    files = []
+    for base_dir in (sequencing_dir, input_dir):
+        pattern = base_dir + '{path}/{segmentation_type}.auxdata/*.csv'.format(path=path, segmentation_type=wildcards.segmentation_type)
+        files.extend(sorted(glob.glob(pattern)))
+        pattern = base_dir + '{path}/auxdata/*.csv'.format(path=path, segmentation_type=wildcards.segmentation_type)
+        files.extend(sorted(glob.glob(pattern)))
+
+    #if re.fullmatch('(tile.+)|(well.+)|(cycle.+)', os.path.basename(path)):
+    if path.count('_grid'):
+        files.extend(get_aux_data(wildcards, path=path.split('_grid')[0]))
+    elif path:
+        files.extend(get_aux_data(wildcards, path=os.path.dirname(path)))
+
+    for i in range(len(files)):
+        files[i] = files[i].replace('//', '/')
+
+    return files
+
+
+
+rule create_sampling_table:
+    """
+    Calculate the sampling table for the entire well
+    """
+    input:
+        raw_pts = get_grid_filenames_raw_pt,
+    output:
+        sequencing_dir + '{well}_grid{grid_size}/tile_sampling_table.csv',
+    params:
+        total_samples = config['crosstalk_correction']['total_samples'],
+    resources:
+        mem_mb = lambda wildcards, input: size_mb(input) + 5000 #just concatenating tables, not much memory needed
+    run: 
+        import pandas as pd 
+        import tifffile
+        import re
+        import numpy as np
+
+        #figure out how much of each tile is occupied by images
+        sizes_df = pd.DataFrame({'tile':[], 'size':[], 'occupied_pixels':[], 'frac_occupied':[]})
+        for raw_pt in input.raw_pts:
+            debug ('on tile...', raw_pt)
+            tile = re.search(r'/(tile\d+x\d+y)/', raw_pt).group(1)
+            image = tifffile.imread(raw_pt)
+            full_size = image.shape[-2] * image.shape[-1]
+            if '00' in tile or '04' in tile: #it is an edge tile, see how much is filled
+                subsection = image[0,0,:,:]
+                num_nans = np.isnan(subsection).sum()
+            else:
+                num_nans = 0 
+            del image
+            debug ('full size: ', full_size, " num nans: ", num_nans)
+            frac_occ = (full_size - num_nans)/full_size
+            new_row = pd.DataFrame([{'tile':tile, 'size':full_size, 'occupied_pixels':full_size - num_nans, 'frac_occupied': frac_occ}])
+            sizes_df = pd.concat([sizes_df, new_row], ignore_index=True)
+
+        total_occ = sizes_df['frac_occupied'].sum()
+        density_samples = params.total_samples/total_occ
+        sizes_df['expected_samples'] = density_samples * sizes_df['frac_occupied']
+        sizes_df['expected_samples'] = sizes_df['expected_samples'].astype(int)
+        remaining_samples = params.total_samples - sizes_df['expected_samples'].sum() 
+        condition = sizes_df['frac_occupied'] >= 1.0
+        first_match_idx = sizes_df[condition].index[0]
+        sizes_df.loc[first_match_idx, 'expected_samples'] += remaining_samples
+        sizes_df.to_csv(output[0])
+    
+
+
 rule find_dots:
     """ Detect amplicon colonies in the sequencing images.
     This is a crutial step in sequencing the barcodes expressed in cells, and has
@@ -32,18 +238,22 @@ rule find_dots:
                 for each cycle and channel.
     """
     input:
-        sequencing_dir + '{path}/raw.tif'
+        sequencing_dir + '{path}/raw.tif',
     output:
-        sequencing_dir + '{path}/bases{min}{max}{num}.csv',
+        sequencing_dir + '{path}/bases{min}{max}{num}{raw}{extract_mode}.csv',
         #sequencing_dir + '{path}/dot_filter.tif',
     params:
         min_sigma = parse_param('min', config['dotdetection']['min_sigma']),
         max_sigma = parse_param('max', config['dotdetection']['max_sigma']),
         num_sigma = parse_param('num', config['dotdetection']['num_sigma']),
+        raw_intensities = parse_param('raw', None),
+        extract_mode = lambda wildcards: {'': None, '_psf': 'psf', '_box': 'box'}[wildcards.extract_mode],
     wildcard_constraints:
         min = '|_min\d+(.\d+)?',
         max = '|_max\d+(.\d+)?',
         num = '|_num\d+(.\d+)?',
+        raw = '|_raw',
+        extract_mode = '|_psf|_box',
     resources:
         mem_mb = lambda wildcards, input: size_mb(input) * 10 + 15000
     threads: 4
@@ -54,19 +264,14 @@ rule find_dots:
         import starcall.correction
         import skimage.morphology
 
-        #min_sigma = 1#2
-        #max_sigma = 2#3
-        #num_sigma = 7
-
         full_well = tifffile.memmap(input[0], mode='r')
         image = full_well[...,sequencing_channels_slice,:,:].astype(np.float32, copy=True)
         del full_well
 
         if np.all(image == 0):
             reads = pandas.DataFrame()
-        else:
-            #dot_filter = starcall.dotdetection.dot_filter_new(image)
-            #tifffile.imwrite(output[1], dot_filter)
+        elif not isinstance(params.raw_intensities, str):
+            debug('keeping z-scored intensities...')
             reads = starcall.dotdetection.detect_dots(
                 image,
                 min_sigma = params.min_sigma,
@@ -75,8 +280,592 @@ rule find_dots:
                 copy = False,
                 channels = sequencing_channels_order,
             )
+        else:
+            debug('keeping raw intensities...')
+            debug('extraction mode: ', params.extract_mode)
+            reads = starcall.dotdetection.detect_dots_keep_background_corrected_intensities(
+                image, params.extract_mode,
+                min_sigma = params.min_sigma,
+                max_sigma = params.max_sigma,
+                num_sigma = params.num_sigma,
+                copy = False,
+                channels = sequencing_channels_order,
+            )
+        reads.to_csv(output[0])
+
+
+def get_cycle_str(i):
+    if i >= 10:
+        return str(i)
+    else:
+        return "0" + str(i)
+
+rule attach_quality_information:
+    """ Attach the PhredQ like score to the reads, along with  """
+     input:
+        sequencing_dir + '{path}/bases{params}.csv',
+    output:
+        sequencing_dir + '{path}/quality_bases{params}.csv',
+    wildcard_constraints:
+        params = params_regex('min', 'max', 'num', 'raw', ('psf', 'box')),
+    resources:
+        mem_mb = lambda wildcards, input: size_mb(input) * 3 + 15000
+    run:
+        import pandas as pd
+        from starcall.qc import get_softmax_df, calculate_peaks, get_dominance_df, get_chastity_df, get_log_margin_df, get_purity_df, get_dominance_signed_df, get_signed_margin_df
+        import numpy as np
+        import starcall.reads #does this change what is called?
+
+        reads = pd.read_csv(input[0], index_col=0)
+        orig_rows = reads.shape[0]
+
+        #filter reads table to remove nan rows (any dots which are too close to the edge are forced to NaN)
+        reads = reads[~reads.isna().any(axis=1)].copy()
+
+        debug ('removed ', orig_rows - reads.shape[0], ' which are NaNs due to proximity to edges')
+
+        
+        value_cols = [c for c in reads.columns if c.startswith('values_cycle')]
+
+        #attach phredq score and intensity change info
+        quality_scores = get_softmax_df(reads) #use z scored values 
+        peaks = calculate_peaks(reads) #use original values
+        #testing other metrics 
+        dominance_scores = get_dominance_df(reads)
+        chastity_scores = get_chastity_df(reads)
+        log_margin_scores = get_log_margin_df(reads)
+        purity_scores = get_purity_df(reads)
+        dominance_signed_scores = get_dominance_signed_df(reads)
+        signed_margin_scores = get_signed_margin_df(reads)
+
+        for i in range(0, quality_scores.shape[-1]):
+            reads['dominance_cycle' + get_cycle_str(i)] = dominance_scores[:, i]
+            reads['chastity_cycle' + get_cycle_str(i)] = chastity_scores[:, i]
+            reads['log_margin_cycle' + get_cycle_str(i)] = log_margin_scores[:, i]
+            reads['purity_cycle' + get_cycle_str(i)] = purity_scores[:, i]
+            reads['dominance_signed_cycle' + get_cycle_str(i)] = dominance_signed_scores[:, i]
+            reads['signed_margin_cycle' + get_cycle_str(i)] = signed_margin_scores[:, i]
+            reads['phred_cycle'+ get_cycle_str(i)] = quality_scores[:,i]
+        reads['mean_dominance'] = np.mean(dominance_scores, axis=1)
+        reads['min_dominance'] = np.min(dominance_scores, axis=1)
+        reads['mean_chastity'] = np.mean(chastity_scores, axis=1)
+        reads['min_chastity'] = np.min(chastity_scores, axis=1)
+        reads['mean_log_margin'] = np.mean(log_margin_scores, axis=1)
+        reads['min_log_margin'] = np.min(log_margin_scores, axis=1)
+        reads['mean_purity'] = np.mean(purity_scores, axis=1)
+        reads['min_purity'] = np.min(purity_scores, axis=1)
+        reads['mean_dominance_signed'] = np.mean(dominance_signed_scores, axis=1)
+        reads['min_dominance_signed'] = np.min(dominance_signed_scores, axis=1)
+        reads['mean_signed_margin'] = np.mean(signed_margin_scores, axis=1)
+        reads['min_signed_margin'] = np.min(signed_margin_scores, axis=1)
+        reads['mean_phred'] = np.mean(quality_scores, axis=1)
+        reads['min_phred'] = np.min(quality_scores, axis=1) #save this for thresholding later for the fullwell sampling approach
+        reads['sum_std_intensities'] = peaks
+        reads['max_seq'] = reads.reads.sequences 
 
         reads.to_csv(output[0])
+
+def get_orig_method_files(wildcards):
+    grid_size = int(wildcards.grid_size)
+    numbers = ['{:02}'.format(i) for i in range(grid_size)]
+    return expand(sequencing_dir + '{well}_grid{grid_size}/tile{x}x{y}y/cells_quality.csv', x=numbers, y=numbers, allow_missing=True)
+
+
+
+
+rule make_orig_method_comparison_table:
+    input:
+        orig_tables = get_orig_method_files,
+        library = get_aux_data_correction_summary,
+    output:
+        summ_table = sequencing_dir + '{well}_grid{grid_size}/{segmentation_type}_summary_orig_approach.csv',
+    resources:
+        mem_mb = lambda wildcards, input: 5000 +  size_mb(input) * 2
+    run:    
+        import pandas as pd 
+        import re
+
+        #setup exact match table
+        barcodes_table = pd.read_csv(input.library[0])
+        #after barcode table corrections, all barcodes for matching should be length 12 
+        #and the first columns should contain the sequences to be matched with
+        barcode_table_cols = list(barcodes_table.columns)
+        dummy_barcodes2 = barcodes_table[barcode_table_cols[:1]].rename(columns = {barcode_table_cols[0]: 'orig_barcode_match'})
+
+        summary_rows = []
+        for table_path in input.orig_tables:
+            tile_match = re.search(r'/(tile\d+x\d+y)/', table_path)
+            tile = tile_match.group(1) if tile_match else table_path
+
+            table = pd.read_csv(table_path, index_col = 0)
+            #filter to only those in cells 
+            table = table[table.cell != 0].copy()
+            #merge exact matches for barcodes
+            table = table.merge(dummy_barcodes2, left_on = 'max_seq', right_on = 'orig_barcode_match', how = 'left')
+
+            orig_matched = ~table['orig_barcode_match'].isna()
+            
+
+            summary_rows.append({
+                'tile': tile,
+                'n_reads': len(table),
+                'matched_before': int(orig_matched.sum()),
+                
+                'mean_phred_before': table['mean_phred'].mean(),
+                'median_phred_before': table['mean_phred'].median(),
+                'mean_min_phred_before': table['min_phred'].mean(),
+                'median_min_phred_before': table['min_phred'].median(),
+               
+            })
+
+        summary_table = pd.DataFrame(summary_rows)
+        summary_table.to_csv(output.summ_table)
+
+
+rule make_orig_method_metric_performance_table:
+    input:
+        orig_tables = get_orig_method_files, #cells quality files have all the metrics attached
+        library = get_aux_data_correction_summary,
+    output:
+        summ_table = sequencing_dir + '{well}_grid{grid_size}/{segmentation_type}_summary_quality_metrics.csv',
+    resources:
+        mem_mb = lambda wildcards, input: 5000 +  size_mb(input) * 2
+    run:    
+        import pandas as pd 
+        import re
+        from sklearn.metrics import roc_auc_score, average_precision_score, roc_curve
+
+        #setup exact match table
+        barcodes_table = pd.read_csv(input.library[0])
+        #after barcode table corrections, all barcodes for matching should be length 12 
+        #and the first columns should contain the sequences to be matched with
+        barcode_table_cols = list(barcodes_table.columns)
+        dummy_barcodes2 = barcodes_table[barcode_table_cols[:1]].rename(columns = {barcode_table_cols[0]: 'orig_barcode_match'})
+
+        metric_cols = ['mean_dominance', 'min_dominance', 
+                'mean_phred', 'min_phred', 'sum_std_intensities',
+                'mean_chastity', 'min_chastity',
+                'mean_log_margin', 'min_log_margin',
+                'mean_purity', 'min_purity',
+                'mean_dominance_signed', 'min_dominance_signed',
+                'mean_signed_margin', 'min_signed_margin']
+
+        summary_rows = []
+        for table_path in input.orig_tables:
+            tile_match = re.search(r'/(tile\d+x\d+y)/', table_path)
+            tile = tile_match.group(1) if tile_match else table_path
+
+            table = pd.read_csv(table_path, index_col = 0)
+            #filter to only those in cells 
+            table = table[table.cell != 0].copy()
+            #merge exact matches for barcodes
+            table = table.merge(dummy_barcodes2, left_on = 'max_seq', right_on = 'orig_barcode_match', how = 'left')
+
+            table['has_match'] = ~table.orig_barcode_match.isna()
+            y_all = table['has_match'].to_numpy()
+            
+            for col in metric_cols:
+                x_all = table[col].to_numpy()
+                valid = ~pd.isna(x_all)
+                x, y = x_all[valid], y_all[valid]
+
+                auc = roc_auc_score(y, x)
+                ap = average_precision_score(y, x)
+
+                summary_rows.append({
+                    'metric': col,
+                    'tile': tile, 
+                    'auroc': auc,                 
+                    'avg_precision': ap,           
+
+                })
+
+        summary_table = pd.DataFrame(summary_rows)
+        summary_table.to_csv(output.summ_table)
+
+
+rule attach_cell_ids:
+    """ Attaches the ID of each cell the dots are in to said dots
+
+    Output: The output is a csv file containing the columns:
+            position_x, position_y: The pixel position of the colony
+            values_cycle00_G, values_cycle00_T, ...:
+                The values extracted from the sequencing images at the colony position,
+                for each cycle and channel.
+            cell: The cell that each read is contained in, 0 if not in a cell.
+    """
+    input:
+        bases = sequencing_dir + '{path}/quality_bases{params}.csv',
+        cells = segmentation_dir + '{path}/{segmentation_type}_mask_downscaled.tif',
+        #cells_table = segmentation_dir + '{path}/{segmentation_type}.csv',
+    output:
+        table = sequencing_dir + '{path}/{segmentation_type}_quality{params}.csv',
+    wildcard_constraints:
+        params = params_regex('min', 'max', 'num', 'raw', ('psf', 'box')),
+    resources:
+        mem_mb = lambda wildcards, input: 5000 +  size_mb(input) * 10
+    run:
+        import tifffile
+        import numpy as np
+        import pandas
+        import csv
+        import matplotlib.pyplot as plt
+        import starcall.reads
+
+        cells = tifffile.imread(input.cells)
+        table = pandas.read_csv(input.bases, index_col=0)
+        
+        xposes, yposes = np.round(table.reads.positions.T).astype(int)
+        table['cell'] = cells[xposes,yposes]
+
+        table.to_csv(output.table)
+
+rule sample_cycles_per_tile:
+    input: 
+        #'{well}_grid{grid_size}/tile{x}x{y}y/{segmentation_type}{qc}_reads.csv'
+        table = sequencing_dir + '{well}_grid{grid_size}/{tile}/{segmentation_type}_quality{params}.csv',
+        sample_sizes =  sequencing_dir + '{well}_grid{grid_size}/tile_sampling_table.csv',
+    output: 
+        sequencing_dir + '{well}_grid{grid_size}/{tile}/{segmentation_type}{approach}{params}_samples.csv',
+    params: 
+        #percent_cutoff = config['crosstalk_correction']['sampling_percentile_cutoff'],
+        phred_min = config['crosstalk_correction']['min_sampling_phred'],
+        num_sampling_bins = config['crosstalk_correction']['number_sampling_bins'],
+        num_cycles = config['cycles'],
+    wildcard_constraints:
+        params = params_regex('min', 'max', 'num', 'raw', ('psf', 'box')),
+        tile = 'tile\d+x\d+y',
+        approach = '_binned|_unbinned',
+    resources:
+         mem_mb = lambda wildcards, input: 5000 +  size_mb(input) * 10
+    run: 
+        from starcall.correction import stack_cycles_of_dots_table, binned_cycle_sampler, quality_filtered_sampler
+        import pandas as pd
+
+        sample_table = pd.read_csv(input.sample_sizes, index_col=0)
+        num_samples = sample_table[(sample_table.tile == wildcards.tile)]['expected_samples'].values[0]
+        debug ('using ', num_samples, " for tile ", wildcards.tile)
+        dots_table = pd.read_csv(input.table, index_col = 0)
+        debug ('using ', len(params.num_cycles), ' cycles ')
+        #stack_cycles_of_dots_table(dot_table, num_cycles, sequencing_channels_order, cell_filter = True)
+        dots_table = stack_cycles_of_dots_table(dots_table, len(params.num_cycles), sequencing_channels_order, cell_filter = True)
+
+        if wildcards.approach == '_binned':
+            sample_table = binned_cycle_sampler(dots_table, num_samples, sequencing_channels_order, params.phred_min, params.num_sampling_bins)
+        elif wildcards.approach == '_unbinned':
+            sample_table = quality_filtered_sampler(dots_table, num_samples, sequencing_channels_order, params.phred_min)
+        else:
+            raise ValueError(f'unknown sampling approach: {wildcards.approach}')
+
+        sample_table['tile'] = wildcards.tile
+        sample_table.to_csv(output[0])
+
+
+def get_grid_filenames_sample_tables(wildcards):
+    grid_size = int(wildcards.grid_size)
+    numbers = ['{:02}'.format(i) for i in range(grid_size)]
+    return expand(sequencing_dir + '{well}_grid{grid_size}/tile{x}x{y}y/{segmentation_type}{approach}{params}_samples.csv', x=numbers, y=numbers, allow_missing=True)
+
+rule final_sample_table:
+    input:
+        all_tables = get_grid_filenames_sample_tables,
+    output:
+        all_samples = sequencing_dir + '{well}_grid{grid_size}/{segmentation_type}{approach}{params}_final_samples.csv',
+    wildcard_constraints:
+        params = params_regex('min', 'max', 'num', 'raw', ('psf', 'box')),
+        approach = '_binned|_unbinned',
+    resources:
+         mem_mb = lambda wildcards, input: 5000 +  size_mb(input) * 2
+    run:
+        import pandas as pd
+        all_tables = []
+        for table_path in input.all_tables:
+            debug ('adding table...', table_path)
+            sample = pd.read_csv(table_path, index_col = 0)
+            debug ('points in table...', sample.shape)
+            all_tables.append(sample)
+        all_tables = pd.concat(all_tables, axis = 0, ignore_index = True)
+        all_tables.to_csv(output.all_samples)
+
+rule calculate_crosstalk_matrix_median_invert:
+    input:
+        all_samples = sequencing_dir + '{well}_grid{grid_size}/{segmentation_type}{approach}{params}_final_samples.csv',
+    output:
+        matrix_npy = sequencing_dir + '{well}_grid{grid_size}/{segmentation_type}{approach}_median_invert{params}.npy',
+    resources: 
+        mem_mb = lambda wildcards, input: size_mb(input) * 3 + 5000,
+    wildcard_constraints:
+        approach = '_binned|_unbinned|_fullwell|_fullwellbinned',
+        params = params_regex('min', 'max', 'num', 'raw', ('psf', 'box')),
+    run:
+        import pandas as pd 
+        import numpy as np
+        import starcall.reads
+        from starcall.correction import calculate_crosstalk_median_ratio
+
+        full_table = pd.read_csv(input.all_samples, index_col = 0)
+
+        #change sample column names so that we can use reads accessor to get the values out
+        #reads accessor expects columns of the format values_cycle{cycle:02}_{channel}
+        col_dict = {f'values_{nuc}': f'values_cycle00_{nuc}' for nuc in ['T', 'A', 'G', 'C']}
+        full_table.rename(columns = col_dict, inplace = True)
+        reads_values = full_table.reads.values
+        reads_values = np.squeeze(reads_values)
+        debug('sample matrix shape...', reads_values.shape)
+        #TODO calculate the crosstalk matrix 
+        correction_matrix = calculate_crosstalk_median_ratio(reads_values)
+        np.save(output[0], correction_matrix)
+
+rule calculate_crosstalk_matrix_gmm:
+    input:
+        all_samples = sequencing_dir + '{well}_grid{grid_size}/{segmentation_type}{approach}{params}_final_samples.csv',
+    output:
+        matrix_npy = sequencing_dir + '{well}_grid{grid_size}/{segmentation_type}{approach}_gmm{params}.npy',
+    resources: 
+        mem_mb = lambda wildcards, input, attempt: (size_mb(input) * 4 + 5000) * attempt,
+        #mem_mb = lambda wildcards, input, attempt: ((5000 + size_mb(input) * 1.5) * attempt)
+    wildcard_constraints:
+        approach = '_binned|_unbinned|_fullwell|_fullwellbinned',
+        params = params_regex('min', 'max', 'num', 'raw', ('psf', 'box')),
+    run:
+        import pandas as pd 
+        import numpy as np
+        import starcall.reads
+        from starcall.correction import fit_crosstalk_em
+
+        full_table = pd.read_csv(input.all_samples, index_col = 0)
+
+        #change sample column names so that we can use reads accessor to get the values out
+        #reads accessor expects columns of the format values_cycle{cycle:02}_{channel}
+        col_dict = {f'values_{nuc}': f'values_cycle00_{nuc}' for nuc in ['T', 'A', 'G', 'C']}
+        full_table.rename(columns = col_dict, inplace = True)
+        reads_values = full_table.reads.values
+        reads_values = np.squeeze(reads_values)
+        debug('sample matrix shape...', reads_values.shape)
+        correction_matrix, em_model = fit_crosstalk_em(reads_values)
+        np.save(output[0], correction_matrix)
+
+rule calculate_crosstalk_matrix_nnls:
+    input:
+        all_samples = sequencing_dir + '{well}_grid{grid_size}/{segmentation_type}{approach}{params}_final_samples.csv',
+    output:
+        matrix_npy = sequencing_dir + '{well}_grid{grid_size}/{segmentation_type}{approach}_nnls{params}.npy',
+    resources: 
+        mem_mb = lambda wildcards, input: size_mb(input) * 3 + 5000,
+    wildcard_constraints:
+        approach = '_binned|_unbinned|_fullwell|_fullwellbinned',
+        params = params_regex('min', 'max', 'num', 'raw', ('psf', 'box')),
+    run:
+        import pandas as pd 
+        import numpy as np
+        import starcall.reads
+        from starcall.correction import fit_crosstalk_nnls
+
+        full_table = pd.read_csv(input.all_samples, index_col = 0)
+
+        #change sample column names so that we can use reads accessor to get the values out
+        #reads accessor expects columns of the format values_cycle{cycle:02}_{channel}
+        col_dict = {f'values_{nuc}': f'values_cycle00_{nuc}' for nuc in ['T', 'A', 'G', 'C']}
+        full_table.rename(columns = col_dict, inplace = True)
+        reads_values = full_table.reads.values
+        reads_values = np.squeeze(reads_values)
+        debug('sample matrix shape...', reads_values.shape)
+        #TODO calculate the crosstalk matrix 
+        correction_matrix = fit_crosstalk_nnls(reads_values)
+        np.save(output[0], correction_matrix)
+
+
+rule apply_crosstalk_matrix:
+    input: 
+        table = sequencing_dir + '{well}_grid{grid_size}/{tile}/{segmentation_type}_quality{params}.csv',
+        corr_matrix =  sequencing_dir + '{well}_grid{grid_size}/{segmentation_type}{approach}_{method}{params}.npy',
+    output: 
+        corrected_table = sequencing_dir + '{well}_grid{grid_size}/{tile}/{segmentation_type}{approach}_corrected_{method}{params}.csv',
+    wildcard_constraints: 
+        approach = '_binned|_unbinned|_fullwell|_fullwellbinned',
+        params = params_regex('min', 'max', 'num', 'raw', ('psf', 'box')),
+        method = 'median_invert|gmm|nnls',
+        tile = 'tile\d+x\d+y',
+    resources: 
+        mem_mb = 5000
+    run:
+        import pandas as pd 
+        import numpy as np 
+        import starcall.correction 
+        from starcall.qc import get_softmax_df
+
+        table = pd.read_csv(input.table, index_col = 0)
+        corr_matrix = np.load(input.corr_matrix)
+        table = starcall.correction.apply_channel_crosstalk_matrix(table, sequencing_channels_order, corr_matrix)
+        
+        value_cols = [c for c in table.columns if c.startswith('values_cycle')]
+        #zscored = table.copy()
+        #zscored[value_cols] = (zscored[value_cols] - zscored[value_cols].mean()) / zscored[value_cols].std()
+
+        #attach phredq score and intensity change info
+        quality_scores = get_softmax_df(table) #use z scored values 
+        for i in range(0, quality_scores.shape[-1]):
+            table['corrected_phred_cycle'+ get_cycle_str(i)] = quality_scores[:,i]
+        table['corrected_mean_phred'] = np.mean(quality_scores, axis=1)
+        table['corrected_min_phred'] = np.min(quality_scores, axis=1) #save this for thresholding later for the fullwell sampling approach
+        table['corrected_max_seq'] = table.reads.sequences 
+
+        table.to_csv(output.corrected_table)
+
+
+def get_grid_filenames_orig_tables_with_seqs(wildcards):
+    grid_size = int(wildcards.grid_size)
+    numbers = ['{:02}'.format(i) for i in range(grid_size)]
+    return expand(sequencing_dir + '{well}_grid{grid_size}/tile{x}x{y}y/bases_with_seqs.csv', x=numbers, y=numbers, allow_missing=True)
+
+
+rule attach_orig_base_sequences:
+    input:
+        orig_bases = sequencing_dir + '{well}_grid{grid_size}/{tile}/bases.csv'
+    output: 
+        bases_with_seq = sequencing_dir + '{well}_grid{grid_size}/{tile}/bases_with_seqs.csv'
+    wildcard_constraints:
+        tile = 'tile\d+x\d+y',
+    run:
+        import pandas as pd 
+        import starcall.reads 
+
+        orig_table = pd.read_csv(input.orig_bases, index_col = 0)
+        orig_table['orig_read'] = orig_table.reads.sequences
+        orig_table.to_csv(output.bases_with_seq)
+
+rule generate_correction_summary_tables:
+    input:
+        corrected_tables = get_grid_filenames_corrected_tables,
+        orig_tables = get_grid_filenames_orig_tables_with_seqs,
+        library = get_aux_data_correction_summary,
+    output:
+        summary_csv = sequencing_dir + '{well}_grid{grid_size}/{segmentation_type}{approach}_correction_summary_{method}{params}.csv',
+    wildcard_constraints:
+        params = params_regex('min', 'max', 'num', 'raw', ('psf', 'box')),
+        method = 'median_invert|gmm|nnls',
+        approach = '_binned|_unbinned|_fullwell|_fullwellbinned',
+    resources:
+        mem_mb = 5000
+    run: 
+        import pandas as pd 
+        import re
+        import starcall.reads 
+
+        #setup exact match table
+        barcodes_table = pd.read_csv(input.library[0])
+        #after barcode table corrections, all barcodes for matching should be length 12 
+        #and the first columns should contain the sequences to be matched with
+        barcode_table_cols = list(barcodes_table.columns)
+        dummy_barcodes = barcodes_table[barcode_table_cols[:1]].rename(columns = {barcode_table_cols[0]: 'corrected_barcode_match'})
+        dummy_barcodes2 = barcodes_table[barcode_table_cols[:1]].rename(columns = {barcode_table_cols[0]: 'orig_barcode_match'})
+        
+        summary_rows = []
+        for table_path, orig_path in zip(input.corrected_tables, input.orig_tables):
+            tile_match = re.search(r'/(tile\d+x\d+y)/', table_path)
+            tile = tile_match.group(1) if tile_match else table_path
+
+            tile_match2 = re.search(r'/(tile\d+x\d+y)/', orig_path)
+            tile2 = tile_match2.group(1) if tile_match else orig_path
+
+            assert tile == tile2
+
+            orig_table = pd.read_csv(orig_path, index_col = 0)
+            table = pd.read_csv(table_path, index_col = 0)
+            
+            table = pd.concat([table, orig_table[['orig_read']]], axis = 1) #add original read matches 
+
+            #filter to only those in cells 
+            table = table[table.cell != 0].copy()
+            #merge exact matches for barcodes
+            table = table.merge(dummy_barcodes2, left_on = 'max_seq', right_on = 'orig_barcode_match', how = 'left')
+            table = table.merge(dummy_barcodes, left_on = 'corrected_max_seq', right_on = 'corrected_barcode_match', how = 'left')
+
+            orig_matched = ~table['orig_barcode_match'].isna()
+            corrected_matched = ~table['corrected_barcode_match'].isna()
+            unchanged_assignments = table['max_seq'] == table['corrected_max_seq']
+            matched_orig = table['max_seq'] == table['orig_read']
+            matched_orig_correction = table['corrected_max_seq'] == table['orig_read']
+
+            summary_rows.append({
+                'tile': tile,
+                'n_reads': len(table),
+                'matched_before': int(orig_matched.sum()),
+                'matched_after': int(corrected_matched.sum()),
+                'gained': int((~orig_matched & corrected_matched).sum()),
+                'lost': int((orig_matched & ~corrected_matched).sum()),
+                'matched_z_score_read_before': int(matched_orig.sum()),
+                'matched_z_score_read_after': int(matched_orig_correction.sum()),
+                'matched_z_score_read_before_barcoded': int((matched_orig & orig_matched).sum()),
+                'matched_z_score_read_after_barcoded': int((matched_orig_correction & corrected_matched).sum()),
+                'both_matched': int((orig_matched & corrected_matched).sum()),
+                'both_matched_unchanged_assignments': int((orig_matched & corrected_matched & unchanged_assignments).sum()),
+                'net_change': int(corrected_matched.sum()) - int(orig_matched.sum()),
+                'mean_phred_before': table['mean_phred'].mean(),
+                'median_phred_before': table['mean_phred'].median(),
+                'mean_min_phred_before': table['min_phred'].mean(),
+                'median_min_phred_before': table['min_phred'].median(),
+                'mean_phred_after': table['corrected_mean_phred'].mean(),
+                'median_phred_after': table['corrected_mean_phred'].median(),
+                'mean_min_phred_after': table['corrected_min_phred'].mean(),
+                'median_min_phred_after': table['corrected_min_phred'].median(),
+            })
+
+        summary_table = pd.DataFrame(summary_rows)
+        summary_table.to_csv(output.summary_csv)
+
+
+def get_well_summary_tables_all_color_correction_approaches(wildcards):
+    sample_approach = ['_binned','_unbinned', '_fullwell', '_fullwellbinned']
+    intensity_approach = ['_raw', '_raw_psf', '_raw_box']
+    crosstalk_correction_approach = ['median_invert', 'gmm', 'nnls']
+    return expand(sequencing_dir + '{well}_grid{grid_size}/{segmentation_type}{sample_approach}_correction_summary_{crosstalk_correction_approach}{intensity_approach}.csv',
+                    sample_approach = sample_approach, 
+                    intensity_approach = intensity_approach, 
+                    crosstalk_correction_approach = crosstalk_correction_approach, allow_missing = True)
+
+rule make_super_summary_table:
+    input:
+        summary_tables = get_well_summary_tables_all_color_correction_approaches,
+    output: 
+        table = sequencing_dir + '{well}_grid{grid_size}/{segmentation_type}_crosstalk_correction_summary_table_all_methods.csv',
+    resources: 
+        mem_mb = lambda wildcards, input: 5000 +  size_mb(input) 
+    run: 
+        import os
+        import pandas as pd 
+        
+        sample_approaches = ['_binned', '_unbinned', '_fullwellbinned', '_fullwell']
+        crosstalk_correction_approaches = ['median_invert', 'gmm', 'nnls']  # no value is a prefix of another
+        marker = '_correction_summary_'
+
+        master_table = []
+        for summ_table in input.summary_tables:
+            #get sample_approach, intensity_approach, crosstalk_correction_approach from summ_table path
+            rest = os.path.basename(summ_table)
+            assert rest.startswith(wildcards.segmentation_type) and rest.endswith('.csv')
+            rest = rest[len(wildcards.segmentation_type):-len('.csv')]
+
+            sample_approach = next(s for s in sample_approaches if rest.startswith(s))
+            rest = rest[len(sample_approach):]
+
+            assert rest.startswith(marker)
+            rest = rest[len(marker):]
+
+            crosstalk_correction_approach = next(c for c in crosstalk_correction_approaches if rest.startswith(c))
+            intensity_approach = rest[len(crosstalk_correction_approach):]
+
+            #add new columns
+            table = pd.read_csv(summ_table, index_col = 0)
+            table['sampling'] = sample_approach
+            table['intensities'] = intensity_approach
+            table['crosstalk_correction'] = crosstalk_correction_approach
+
+            #append to master table
+            master_table.append(table)
+        master_table = pd.concat(master_table, axis = 0, ignore_index = True)
+        master_table.to_csv(output.table)
+        
 
 rule call_raw_reads:
     """ Convert the amplicon colonies and values detected in rule find_dots into reads,
@@ -96,7 +885,7 @@ rule call_raw_reads:
     output:
         table = sequencing_dir + '{path}/{segmentation_type}_raw_reads{params}.csv',
     wildcard_constraints:
-        params = params_regex('min', 'max', 'num'),
+        params = params_regex('min', 'max', 'num', 'raw', 'psf'),
         #params = '_min\d+',
     resources:
         mem_mb = lambda wildcards, input: 5000 +  size_mb(input) * 10
@@ -257,29 +1046,6 @@ rule cluster_reads:
             ofile.write(''.join(str(cluster) + '\n' for cluster in cluster_indices))
 
 
-def get_aux_data(wildcards, path=None):
-    path = wildcards.path if path is None else path
-
-    #if path != '': path = path + '.'
-
-    files = []
-    for base_dir in (sequencing_dir, input_dir):
-        pattern = base_dir + '{path}/{segmentation_type}.auxdata/*.csv'.format(path=path, segmentation_type=wildcards.segmentation_type)
-        files.extend(sorted(glob.glob(pattern)))
-        pattern = base_dir + '{path}/auxdata/*.csv'.format(path=path, segmentation_type=wildcards.segmentation_type)
-        files.extend(sorted(glob.glob(pattern)))
-
-    #if re.fullmatch('(tile.+)|(well.+)|(cycle.+)', os.path.basename(path)):
-    if path.count('_grid'):
-        files.extend(get_aux_data(wildcards, path=path.split('_grid')[0]))
-    elif path:
-        files.extend(get_aux_data(wildcards, path=os.path.dirname(path)))
-
-    for i in range(len(files)):
-        files[i] = files[i].replace('//', '/')
-
-    return files
-
 
 rule combine_reads:
     """ Combines reads based on the clusters calculated in the previous rule.
@@ -377,8 +1143,6 @@ rule match_barcodes:
         table = pandas.concat(tables, axis=1)
         debug (table)
         table.to_csv(output.table)
-
-
 
 
 rule combine_cell_reads:
@@ -811,7 +1575,7 @@ rule merge_grid_read_tables:
         table = sequencing_dir + '{well}_grid{grid_size,\d+}/{segmentation_type}{qc,|_qc}_reads.csv',
     resources:
         #mem_mb = lambda wildcards, input: input.size_mb * 50 + 5000
-        mem_mb = 5000
+        mem_mb = 10000
     run:
         import constitch
 

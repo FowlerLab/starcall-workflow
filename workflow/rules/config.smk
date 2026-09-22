@@ -122,93 +122,7 @@ if 'inputfiles' not in config:
             detected_pt_cycles.pop(detected_pt_cycles.index('PT'))
             detected_pt_cycles = ['PT'] + detected_pt_cycles
         config['phenotype_cycles'] = detected_pt_cycles
-
-    #for well, files in inputfiles.items():
-        #print (well)
-        #print ('\n'.join('\t{}: {}'.format(*pair) for pair in files.items()))
-
-    #print (config['cycles'])
-    #print (config['phenotype_cycles'])
-
     config['inputfiles'] = inputfiles
-
-#print ('phenotype_cycles', config['phenotype_cycles'])
-
-"""
-if os.path.exists(rawinput_dir):
-    dates = sorted(os.listdir(rawinput_dir))
-    dates_pt = dates.copy()
-
-    phenotype_dates = [date for date in dates if date[:len(phenotype_date)] == phenotype_date]
-    if 'phenotype_cycles' not in config:
-        phenotype_cycles = ['PT', 'P1', 'P2', 'P3', 'P4'][:len(phenotype_dates)]
-    else:
-        phenotype_cycles = config['phenotype_cycles']
-        if type(phenotype_cycles) == int:
-            phenotype_cycles = ['PT', 'P1', 'P2', 'P3', 'P4'][:phenotype_cycles]
-
-
-    if 'wells' not in config:
-        #wells = sorted([path.replace('Well', '').partition('_')[0] for path in os.listdir(rawinput_dir + '/' + dates[0])])
-        wells = [os.path.basename(path) for path in glob.glob(rawinput_dir + '/*/*.nd2')]
-        wells = [well.split('.nd2')[0].split('_Chan')[0] for well in wells]
-        wells = sorted(list(set(wells)))
-        #wells = sorted(list(set([os.path.basename(path).partition('_')[0] for path in glob.glob(rawinput_dir + '/*/*.nd2')])))
-        wells = [well[0].replace('W', 'w') + well[1:] for well in wells]
-    else:
-        wells = config['wells']
-        if type(wells) == int:
-            wells = ['well{}'.format(well) for well in range(1, wells + 1)]
-
-    for date in phenotype_dates:
-        if date in dates_pt:
-            dates.remove(date)
-
-    if 'cycles' not in config:
-        cycles = ['{:02}'.format(i) for i in range(len(dates))]
-    else:
-        cycles = config['cycles']
-        if type(cycles) == int:
-            cycles = ['{:02}'.format(i) for i in range(cycles)]
-        if len(cycles) and type(cycles[0]) == int:
-            cycles = ['{:02}'.format(i) for i in cycles]
-
-else:
-    if 'wells' not in config:
-        wells = [dirname for dirname in sorted(os.listdir(input_dir)) if dirname != 'auxdata']
-
-        for i in range(len(wells)):
-            well = wells[i]
-            well = well.split('_section')[0]
-            well = well.split('_cyclenoise')[0].split('_noise')[0]
-            well = well.split('_subset')[0]
-            wells[i] = well
-
-        wells = list(set(wells))
-    else:
-        wells = config['wells']
-        if type(wells) == int:
-            wells = ['well{}'.format(well) for well in range(1, wells + 1)]
-
-    if 'cycles' not in config:
-        first_well = glob.glob(input_dir + wells[0] + '*/')[0]
-        cycles_pt = [dirname[5:] for dirname in sorted(os.listdir(first_well))]
-        cycles = [cycle for cycle in cycles_pt if cycle[0] != 'P']
-        phenotype_cycles = [cycle for cycle in cycles_pt if cycle[0] == 'P']
-
-        dates_pt = []#['date' + cycle for cycle in cycles_pt]
-        dates = []#['date' + cycle for cycle in cycles]
-        phenotype_dates = []
-    else:
-        cycles = config['cycles']
-        phenotype_cycles = config['phenotype_cycles']
-        if type(cycles) == int:
-            cycles = ['{:02}'.format(i) for i in range(cycles)]
-        if type(cycles[0]) == int:
-            cycles = ['{:02}'.format(i) for i in cycles]
-        if type(phenotype_cycles) == int:
-            phenotype_cycles = ['PT', 'P1', 'P2', 'P3', 'P4'][:phenotype_cycles]
-"""
 
 cycles = config['cycles']
 phenotype_cycles = config['phenotype_cycles']
@@ -306,8 +220,13 @@ def param_constraint(name, pattern):
     return '(_' + name + '(' + pattern + '))?'
 
 def params_regex(*params):
-    return '(' + ''.join('(_{}[^_]*)?'.format(name) for name in params) + ')'
-
+    parts = []
+    for name in params:
+        if isinstance(name, (tuple, list)):
+            parts.append('(_(?:{})[^_]*)?'.format('|'.join(name)))
+        else:
+            parts.append('(_{}[^_]*)?'.format(name))
+    return '(' + ''.join(parts) + ')'
 
     if kind is None and cycle is not None:
         kind = 'phenotyping' if cycle in phenotype_cycles else 'sequencing'
@@ -386,3 +305,11 @@ def size_mb(input, default_mb=0):
         return input.size_mb
     except OSError:
         return default_mb
+
+def count_lines(path, default=0):
+    """Number of lines in path, or default if it doesn't exist yet (e.g. during -n builds)"""
+    try:
+        with open(path, 'r') as f:
+            return sum(1 for _ in f)
+    except OSError:
+        return default

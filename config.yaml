@@ -6,22 +6,22 @@
 # Scale of objective used to image phenotyping and genotyping images.
 # The absolute value of each is not important, but the relative ratio
 # is used to scale up and down images. Both should be integers.
-phenotype_scale: 4
+phenotype_scale: 20
 bases_scale: 10
 
 # The channels imaged for sequencing and phenotyping images.
 # Channels for each base should be labeled as such so bases
 # are called properly. 
-sequencing_channels: ['DAPI', 'WGA', 'G', 'T', 'A', 'C']
-phenotyping_channels: ['WGA', 'DAPI']
+sequencing_channels: ['DAPI', 'GFP', 'G', 'T', 'A', 'C']
+phenotyping_channels: ['DAPI', 'GFP', 'Ph+WGA', 'Mito']
 
 # Grid size for different processing steps. Input images are split
 # into an X by X grid, the processing is run, then resulting images are
 # merged back together.
 # This can be disabled by setting the size to 1 or not setting the variable
-segmentation_grid_size: 4
-sequencing_grid_size: 4
-phenotyping_grid_size: 12
+segmentation_grid_size: 5
+sequencing_grid_size: 5
+phenotyping_grid_size: 20
 # Segmentation grid sizes can be further specified, this is really only useful if
 # you are running segmentation on the gpu and need very fine grain control
 #segmentation_cells_grid_size: 6
@@ -32,7 +32,7 @@ stitching:
     # name of one of the channels above. If a string, it should be
     # present in both sequencing and phenotyping channels, to align between them.
     #channel: 0
-    channel: 'WGA'
+    channel: 'GFP'
     # The amount of overlap in pixels between generated tiles. This should be
     # larger than a cell, so that all cells are fully contained in at least one tile
     overlap: 100
@@ -68,7 +68,7 @@ stitching:
 
 segmentation:
     # Diameter passed to cellpose, in pixels of the phenotype images.
-    diameter: 16
+    diameter: 100
 
     # Method to segment nuclei. Can be 'otsu_threshold' or 'stardist'
     nuclei_method: 'stardist'
@@ -76,8 +76,9 @@ segmentation:
     #Filtering parameters for removing small nuclei masks.  The min_area value removes all masks 
     #with area less than the min_area value in pixels.  The min_bbox removes all masks with 
     #bounding box length or width smaller than the value 
-    nuclei_segmentation_filter_min_area: 27
-    nuclei_segmentation_filter_min_bbox: 3
+    #min_area=100, min_bbox=10
+    nuclei_segmentation_filter_min_area: 100
+    nuclei_segmentation_filter_min_bbox: 10
 
     # Method to segment cells. Can be 'cellpose' or 'stardist'
     cells_method: 'cellpose'
@@ -88,20 +89,20 @@ segmentation:
     #Filtering parameters for removing small nuclei masks.  The min_area value removes all masks 
     #with area less than the min_area value in pixels.  The min_bbox removes all masks with 
     #bounding box length or width smaller than the value 
-    cell_segmentation_filter_min_area: 35
-    cell_segmentation_filter_min_bbox: 7
+    cell_segmentation_filter_min_area: 100
+    cell_segmentation_filter_min_bbox: 10
 
     # Channels used to run cellpose, can be indices or strings from the
     # list of phenotype channels above. The first channel should be the nuclear
     # channel and the second the cytoplasm channel
-    channels: ['DAPI', 'WGA']
+    channels: ['DAPI', 'Ph+WGA']
 
     # Whether the cell and nuclei masks should be linked together.
     # Only necessary if you are going to use the nuclei masks, for example
     # in phenotyping
     #match_masks: True 
     #True is the default ['nuclei', 'cells'] matching
-    match_masks: ['nucleiexpanded5', 'cells']
+    match_masks: True
     
     # Whether cell segmentation is run on background corrected images
     # if both this and phenotyping.use_corrected are false, background correction
@@ -136,13 +137,23 @@ read_clustering:
     linkage: 'max'
     threshold: 0.5
 
+crosstalk_correction: 
+    #how many samples to take in total across the well to calculate a cross talk matrix
+    total_samples: 50000
+    #Cutoff for sampling. Only use samples below the percentile cutoff given per tile
+    sampling_percentile_cutoff: 0.99
+    #Minimum phred per cycle needed to be considered for sampling for the crosstalk matrix 
+    min_sampling_phred: 90
+    #Bins to split cycles in per tile to sample from for crosstalk matrix construction
+    number_sampling_bins: 10
+
 sequencing:
     # The max number of reads kept for each cell. A good number for this is usually,
     # 4-8, but this depends on how prevelant errors are and the size of the barcode library
     max_reads: 4
     # Whether the table should keep all reads per cell (these are not used for barcode matching,
     # only the the number max_reads are used for barcode matching, sorted by read count)
-    keep_all_reads: True
+    keep_all_reads: False
 
 phenotyping:
     # Whether cell segmentation is run on background corrected images
@@ -154,6 +165,16 @@ phenotyping:
     # in a different conda environment, this should reflect that.
     cellprofiler_executable: 'cellprofiler'
     #cellprofiler_executable: '~/miniconda3/envs/cp4/bin/cellprofiler'
+
+qc:
+    # Number of tiles randomly sampled per well/cycle when computing SNR QC metrics
+    snr_num_sample_tiles: 20
+    # Percentile used as the "background" intensity level for SNR
+    snr_background_percentile: 50
+    # Percentile used as the "signal" intensity level for SNR
+    snr_signal_percentile: 99.9
+    # Random seed for tile sampling, for reproducibility
+    snr_random_seed: 0
 
 
 # Directory that contains the raw .nd2 microscope files. It should

@@ -37,6 +37,10 @@ include: "rules/segmentation.smk"
 # Rules that take the stitched and aligned sequencing images and extracts the sequences
 include: "rules/sequencing.smk"
 
+# Rules for matching called sequences against the barcode library well-wide (one alignment
+# pass per well instead of per tile), then joining the results back onto each tile's table.
+include: "rules/parallel_aligner.smk"
+
 # Rules that extract cellular features from the phenotyping images. Includes running cellprofiler,
 # manual feature extraction or custom methods
 include: "rules/phenotyping.smk"

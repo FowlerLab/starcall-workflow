@@ -1006,5 +1006,111 @@ rule make_variant_cell_images_with_annotation:
                 concat_image[n_channels, x:x+section.shape[1], y:y+section.shape[2]] = text_channel
 
                 debug('  ', x1, y1, x2, y2, section.shape)
-
             tifffile.imwrite(output.outdir + '/{}.tif'.format(variant_name), concat_image)
+
+
+##################################################
+## Per-cycle, per-channel SNR QC
+##################################################
+
+rule calculate_snr:
+    """ Computes a percentile-based, dot-agnostic SNR metric for the G/T/A/C base-calling
+    channels of a single well/sequencing cycle, sampling a subset of raw tiles rather than
+    reading the full tile stack. Meant as an early sanity check on raw imaging/chemistry
+    quality, not a hard gate - the resulting table/plot are for manual review when picking
+    QC cutoffs.
+    """
+    input:
+        image = lambda wildcards: find_input_file(well=wildcards.well, cycle=wildcards.cycle),
+    output:
+        table = qc_dir + '{well}/snr_cycle{cycle}.csv',
+    params:
+        num_sample_tiles = config['qc']['snr_num_sample_tiles'],
+        background_percentile = config['qc']['snr_background_percentile'],
+        signal_percentile = config['qc']['snr_signal_percentile'],
+        seed = config['qc']['snr_random_seed'],
+    resources:
+        mem_mb = 8000
+    run:
+        import numpy as np
+        import pandas as pd
+        from starcall.qc import calculate_snr
+
+        base_channels = [c for c in config['sequencing_channels'] if c in ('G', 'T', 'A', 'C')]
+
+        shape, dtype = iminfo(input.image)  # (num_tiles, num_channels, H, W), no full load
+        rng = np.random.default_rng(params.seed)
+        sample_size = min(params.num_sample_tiles, shape[0])
+        indices = np.sort(rng.choice(shape[0], size=sample_size, replace=False))
+
+        images = imread(input.image, indices=indices)  # only loads the sampled tiles
+
+        rows = []
+        for channel_name in base_channels:
+            c = config['sequencing_channels'].index(channel_name)
+            background, signal, noise, snr = calculate_snr(
+                images[:, c].astype(np.float64).ravel(),
+                params.background_percentile, params.signal_percentile)
+            rows.append(dict(well=wildcards.well, cycle=wildcards.cycle, channel=channel_name,
+                              channel_index=c, background=background, signal=signal,
+                              noise=noise, snr=snr, num_tiles_sampled=sample_size))
+
+        pd.DataFrame(rows).to_csv(output.table, index=False)
+
+
+rule combine_snr:
+    """ Concatenates per-cycle SNR tables for a well into one table covering all sequencing cycles. """
+    input:
+        tables = lambda wildcards: expand(qc_dir + '{well}/snr_cycle{cycle}.csv', cycle=cycles, allow_missing=True),
+    output:
+        table = qc_dir + '{well}/snr_all_cycles.csv',
+    run:
+        import pandas as pd
+        pd.concat([pd.read_csv(t) for t in input.tables], ignore_index=True).to_csv(output.table, index=False)
+
+def get_cycle_str(i):
+    if i >= 10:
+        return str(i)
+    else:
+        return "0" + str(i)
+
+rule make_snr_qc_plot:
+    """ Renders a base-channel x cycle heatmap of SNR values for a well, for manual QC review. """
+    input:
+        table = qc_dir + '{well}/snr_all_cycles.csv',
+    output:
+        plot = qc_dir + '{well}/snr_qc.svg',
+    run:
+        import pandas as pd
+        import numpy as np
+        import matplotlib.pyplot as plt
+
+        df = pd.read_csv(input.table)
+        df['cycle'] = df['cycle'].apply(lambda x: get_cycle_str(x))
+        debug (df)
+        base_channels = [c for c in config['sequencing_channels'] if c in ('G', 'T', 'A', 'C')]
+        grid = np.full((len(base_channels), len(cycles)), np.nan)
+        for i, ch in enumerate(base_channels):
+            for j, cyc in enumerate(cycles):
+                debug (ch, cyc)
+                match = df[(df.channel == ch) & (df.cycle == cyc)]
+                if len(match):
+                    grid[i, j] = match['snr'].iloc[0]
+
+        fig, ax = plt.subplots(figsize=(max(6, len(cycles) * 0.5), max(4, len(base_channels) * 0.5)))
+        im = ax.imshow(grid, aspect='auto', cmap='viridis')
+        ax.set_xticks(range(len(cycles)))
+        ax.set_xticklabels(cycles, rotation=90)
+        ax.set_yticks(range(len(base_channels)))
+        ax.set_yticklabels(base_channels)
+        for i in range(len(base_channels)):
+            for j in range(len(cycles)):
+                if not np.isnan(grid[i, j]):
+                    ax.text(j, i, f'{grid[i, j]:.1f}', ha='center', va='center', color='white', size=7)
+        ax.set_xlabel('cycle')
+        ax.set_ylabel('base channel')
+        fig.colorbar(im, ax=ax, label='SNR')
+        fig.tight_layout()
+        fig.savefig(output.plot)
+
+####

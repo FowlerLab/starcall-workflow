@@ -144,6 +144,16 @@ phenotyping:
     cellprofiler_executable: 'cellprofiler'
     #cellprofiler_executable: '~/miniconda3/envs/cp4/bin/cellprofiler'
 
+qc:
+    # Number of tiles randomly sampled per well/cycle when computing SNR QC metrics
+    snr_num_sample_tiles: 20
+    # Percentile used as the "background" intensity level for SNR
+    snr_background_percentile: 50
+    # Percentile used as the "signal" intensity level for SNR
+    snr_signal_percentile: 99.9
+    # Random seed for tile sampling, for reproducibility
+    snr_random_seed: 0
+
 
 # Directory that contains the raw .nd2 microscope files. It should
 # contain one subdirectory for each cycle, each with one nd2 file for each well.

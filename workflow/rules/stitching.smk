@@ -516,7 +516,8 @@ rule stitch_tile:
     output:
         image = '{output_dir}{well_stitching}_grid{grid_size,\d+}/tile{x,\d+}x{y,\d+}y/{corrected,raw|corrected}.tif',
     resources:
-        mem_mb = lambda wildcards, input: 5000 +  size_mb(input) * 2.2 / (int(wildcards.grid_size)**2)
+        mem_mb = lambda wildcards, input, attempt: 5000 + attempt * (size_mb(input) * 2.2 / (int(wildcards.grid_size)**2))
+        #mem_mb = lambda wildcards, input: 5000 +  size_mb(input) * 2.2 / (int(wildcards.grid_size)**2)
     run:
         import numpy as np
         import tifffile
@@ -542,7 +543,8 @@ rule stitch_tile_pt:
     output:
         image = '{output_dir}{well_stitching}_grid{grid_size,\d+}/tile{x,\d+}x{y,\d+}y/{corrected,raw|corrected}_pt.tif',
     resources:
-        mem_mb = lambda wildcards, input: 5000 +  size_mb(input) * 2.2 / (int(wildcards.grid_size)**2)
+        mem_mb = lambda wildcards, input, attempt: 5000 + attempt * (size_mb(input) * 2.2 / (int(wildcards.grid_size)**2))
+        #mem_mb = lambda wildcards, input: 5000 +  size_mb(input) * 2.2 / (int(wildcards.grid_size)**2)
     run:
         import numpy as np
         import tifffile
