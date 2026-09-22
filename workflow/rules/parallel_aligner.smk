@@ -696,7 +696,7 @@ rule calculate_per_tile_stats:
 def get_tile_summary_tables_all_color_correction_approaches(wildcards):
     sample_approach = ['_binned','_unbinned', '_fullwell', '_fullwellbinned']
     intensity_approach = ['_raw', '_raw_psf', '_raw_box']
-    crosstalk_correction_approach = ['median_invert', 'gmm', 'nnls']
+    crosstalk_correction_approach = ['median_invert', 'nnls'] #removed gmm since it's the worst approach
     return expand(sequencing_dir + '{well}_grid{grid_size}/{segmentation_type}{sample_approach}_per_cell_summaries_{crosstalk_correction_approach}{intensity_approach}.csv',
                     sample_approach = sample_approach, 
                     intensity_approach = intensity_approach, 
@@ -714,7 +714,8 @@ rule make_per_tile_summary_table:
         import pandas as pd 
         
         sample_approaches = ['_binned', '_unbinned', '_fullwellbinned', '_fullwell']
-        crosstalk_correction_approaches = ['median_invert', 'gmm', 'nnls']  # no value is a prefix of another
+        crosstalk_correction_approaches = ['median_invert', 'nnls']  # no value is a prefix of another
+        #removed gmm since it's the worst approach
         marker = '_per_cell_summaries_'
 
         master_table = []
