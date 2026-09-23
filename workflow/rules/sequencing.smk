@@ -312,7 +312,7 @@ rule attach_quality_information:
         mem_mb = lambda wildcards, input: size_mb(input) * 3 + 15000
     run:
         import pandas as pd
-        from starcall.qc import get_softmax_df, calculate_peaks, get_dominance_df, get_chastity_df, get_log_margin_df, get_purity_df, get_dominance_signed_df, get_signed_margin_df
+        from starcall.qc import get_softmax_df, calculate_peaks, get_chastity_df, get_log_margin_df, get_purity_df, get_dominance_signed_df, get_fac_delta_of_top_pos
         import numpy as np
         import starcall.reads #does this change what is called?
 
@@ -331,23 +331,18 @@ rule attach_quality_information:
         quality_scores = get_softmax_df(reads) #use z scored values 
         peaks = calculate_peaks(reads) #use original values
         #testing other metrics 
-        dominance_scores = get_dominance_df(reads)
         chastity_scores = get_chastity_df(reads)
         log_margin_scores = get_log_margin_df(reads)
         purity_scores = get_purity_df(reads)
         dominance_signed_scores = get_dominance_signed_df(reads)
-        signed_margin_scores = get_signed_margin_df(reads)
-
+        frac_delta_of_top = get_fac_delta_of_top_pos(reads)
         for i in range(0, quality_scores.shape[-1]):
-            reads['dominance_cycle' + get_cycle_str(i)] = dominance_scores[:, i]
             reads['chastity_cycle' + get_cycle_str(i)] = chastity_scores[:, i]
             reads['log_margin_cycle' + get_cycle_str(i)] = log_margin_scores[:, i]
             reads['purity_cycle' + get_cycle_str(i)] = purity_scores[:, i]
             reads['dominance_signed_cycle' + get_cycle_str(i)] = dominance_signed_scores[:, i]
-            reads['signed_margin_cycle' + get_cycle_str(i)] = signed_margin_scores[:, i]
             reads['phred_cycle'+ get_cycle_str(i)] = quality_scores[:,i]
-        reads['mean_dominance'] = np.mean(dominance_scores, axis=1)
-        reads['min_dominance'] = np.min(dominance_scores, axis=1)
+            reads['frac_delta_of_top_cycle'+ get_cycle_str(i)] = frac_delta_of_top[:,i]
         reads['mean_chastity'] = np.mean(chastity_scores, axis=1)
         reads['min_chastity'] = np.min(chastity_scores, axis=1)
         reads['mean_log_margin'] = np.mean(log_margin_scores, axis=1)
@@ -356,8 +351,8 @@ rule attach_quality_information:
         reads['min_purity'] = np.min(purity_scores, axis=1)
         reads['mean_dominance_signed'] = np.mean(dominance_signed_scores, axis=1)
         reads['min_dominance_signed'] = np.min(dominance_signed_scores, axis=1)
-        reads['mean_signed_margin'] = np.mean(signed_margin_scores, axis=1)
-        reads['min_signed_margin'] = np.min(signed_margin_scores, axis=1)
+        reads['min_frac_delta_of_top'] = np.min(frac_delta_of_top, axis=1)
+        reads['mean_frac_delta_of_top'] = np.mean(frac_delta_of_top, axis=1)
         reads['mean_phred'] = np.mean(quality_scores, axis=1)
         reads['min_phred'] = np.min(quality_scores, axis=1) #save this for thresholding later for the fullwell sampling approach
         reads['sum_std_intensities'] = peaks
@@ -369,8 +364,6 @@ def get_orig_method_files(wildcards):
     grid_size = int(wildcards.grid_size)
     numbers = ['{:02}'.format(i) for i in range(grid_size)]
     return expand(sequencing_dir + '{well}_grid{grid_size}/tile{x}x{y}y/cells_quality.csv', x=numbers, y=numbers, allow_missing=True)
-
-
 
 
 rule make_orig_method_comparison_table:
@@ -442,13 +435,13 @@ rule make_orig_method_metric_performance_table:
         barcode_table_cols = list(barcodes_table.columns)
         dummy_barcodes2 = barcodes_table[barcode_table_cols[:1]].rename(columns = {barcode_table_cols[0]: 'orig_barcode_match'})
 
-        metric_cols = ['mean_dominance', 'min_dominance', 
+        metric_cols = [
                 'mean_phred', 'min_phred', 'sum_std_intensities',
                 'mean_chastity', 'min_chastity',
                 'mean_log_margin', 'min_log_margin',
                 'mean_purity', 'min_purity',
                 'mean_dominance_signed', 'min_dominance_signed',
-                'mean_signed_margin', 'min_signed_margin']
+                'min_frac_delta_of_top', 'mean_frac_delta_of_top']
 
         summary_rows = []
         for table_path in input.orig_tables:
