@@ -8,6 +8,21 @@ wildcard_constraints:
     grid = '|_grid{}'.format(config.get('segmentation_grid_size', 1)),
     unmatched = '_unmatched' if config['segmentation'].get('match_masks', False) else '()',
 
+def limit_threads(threads, method):
+    """ Limits the segmentation model to the job's threads. By default torch and tensorflow start threads on every
+    core of the node, and with many segmentation jobs on one node they compete for cores. Call after importing
+    starcall.segmentation, as importing tensorflow first loads an older libstdc++ that matplotlib can't use.
+    """
+    for name in ['OMP_NUM_THREADS', 'MKL_NUM_THREADS', 'OPENBLAS_NUM_THREADS']:
+        os.environ[name] = str(threads)
+    if method == 'cellpose':
+        import torch
+        torch.set_num_threads(threads)
+    elif method == 'stardist':
+        import tensorflow
+        tensorflow.config.threading.set_intra_op_parallelism_threads(threads)
+        tensorflow.config.threading.set_inter_op_parallelism_threads(min(2, threads))
+
 rule segment_nuclei:
     """ Uses Stardist to segment the nuclei of cells in the phenotyping
     images. Takes one phenotyping channel as a nuclear channel. Outputs
@@ -24,6 +39,8 @@ rule segment_nuclei:
     output:
         # grid is included twice as segmentation on grid tiles needs to be merged, so the output is marked with '_grid'
         segmentation_dir + '{path_nogrid}{grid}{path_nogrid2}/nuclei{nuclearchannel}_mask{unmatched}{grid}.tif',
+        # area and bbox dimensions of every mask before filtering, with filter results
+        segmentation_dir + '{path_nogrid}{grid}{path_nogrid2}/nuclei{nuclearchannel}_mask_sizes{unmatched}{grid}.tsv',
     params:
         nuclearchannel = parse_param('nuclearchannel', config['segmentation']['channels'][0]),
         method = config['segmentation']['nuclei_method'],
@@ -32,14 +49,18 @@ rule segment_nuclei:
     wildcard_constraints:
         nuclearchannel = '|_nuclearchannel' + phenotyping_channel_regex,
     resources:
-        mem_mb = lambda wildcards, input: size_mb(input) * 64 + 10000,
+        # stardist peaks around 26x the input size (169 GB for a 6.4 GB raw_pt.tif), more on each retry
+        mem_mb = lambda wildcards, input, attempt: (size_mb(input) * 32 + 10000) * attempt,
         #cuda = 1,
-    threads: 2
+    threads: 4
     run:
         import numpy as np
         import tifffile
+        import pandas
         import starcall.segmentation
         import skimage.segmentation
+
+        limit_threads(threads, params.method)
 
         nuclearchannel = channel_index_phenotyping(params.nuclearchannel)
 
@@ -54,14 +75,16 @@ rule segment_nuclei:
         dapi = np.nan_to_num(dapi, nan=0.0)
         if np.all(dapi == 0): #changing the output to be a blank 2d matrix 
             tifffile.imwrite(output[0], np.zeros(dapi.shape, dtype = np.uint16))
+            pandas.DataFrame(columns=starcall.segmentation.FILTER_TABLE_COLUMNS).to_csv(output[1], sep='\t', index=False)
         else:
             del data
             nuclei = starcall.segmentation.segment_nuclei(dapi, method=params.method)
             debug ('Found', nuclei.max(), 'nuclei (prefilter)')
             #nuclei, fmap, rmap = skimage.segmentation.relabel_sequential(skimage.segmentation.clear_border(nuclei))
-            nuclei = starcall.segmentation.filter_segmentation(nuclei, min_area = params.min_area, min_bbox = params.min_bbox)
+            nuclei, sizes = starcall.segmentation.filter_segmentation(nuclei, min_area = params.min_area, min_bbox = params.min_bbox, return_table = True)
             debug ('Found', nuclei.max(), 'nuclei (postfilter)')
             tifffile.imwrite(output[0], nuclei)
+            sizes.to_csv(output[1], sep='\t', index=False)
 
 
 rule segment_cells:
@@ -78,8 +101,11 @@ rule segment_cells:
                 segmentation_dir + '{path_nogrid}{grid}{path_nogrid2}/raw_pt.tif'),
     output:
         segmentation_dir + '{path_nogrid}{grid}{path_nogrid2}/cells{diameter}{nuclearchannel}{cytochannel}_mask{unmatched}{grid}.tif',
+        # area and bbox dimensions of every mask before filtering, with filter results
+        segmentation_dir + '{path_nogrid}{grid}{path_nogrid2}/cells{diameter}{nuclearchannel}{cytochannel}_mask_sizes{unmatched}{grid}.tsv',
     resources:
-        mem_mb = lambda wildcards, input:  size_mb(input) * 20 + 10000,
+        # cellpose peaks around 8.4x the input size (54 GB for a 6.4 GB raw_pt.tif), more on each retry
+        mem_mb = lambda wildcards, input, attempt: (size_mb(input) * 12 + 10000) * attempt,
         #cuda = 1,
     params:
         diameter = parse_param('diameter', config['segmentation']['diameter']),
@@ -93,13 +119,16 @@ rule segment_cells:
         diameter = '|_diameter\d+',
         nuclearchannel = '|_nuclearchannel' + phenotyping_channel_regex,
         cytochannel = '|_cytochannel' + phenotyping_channel_regex,
-    threads: 2
+    threads: 4
     run:
         import numpy as np
         import starcall.segmentation
         import tifffile
+        import pandas
         import logging
         import skimage.segmentation
+
+        limit_threads(threads, params.method)
 
         nuclearchannel = channel_index_phenotyping(params.nuclearchannel)
         cytochannel = channel_index_phenotyping(params.cytochannel)
@@ -126,6 +155,7 @@ rule segment_cells:
         cyto = np.nan_to_num(cyto, nan=0.0)
         if np.all(dapi == 0) or np.all(cyto == 0):
             tifffile.imwrite(output[0], np.zeros(dapi.shape, dtype = np.uint16))
+            pandas.DataFrame(columns=starcall.segmentation.FILTER_TABLE_COLUMNS).to_csv(output[1], sep='\t', index=False)
         else:
             del data
             #del full_well
@@ -141,11 +171,12 @@ rule segment_cells:
             debug ('Found', cells.max(), 'cells (prefilter)')
 
             #cells, fmap, rmap = skimage.segmentation.relabel_sequential(skimage.segmentation.clear_border(cells))
-            cells = starcall.segmentation.filter_segmentation(cells, min_area = params.min_area, min_bbox = params.min_bbox)
+            cells, sizes = starcall.segmentation.filter_segmentation(cells, min_area = params.min_area, min_bbox = params.min_bbox, return_table = True)
 
             debug ('Found', cells.max(), 'cells (postfilter)')
 
             tifffile.imwrite(output[0], cells)#, compression='deflate')
+            sizes.to_csv(output[1], sep='\t', index=False)
 
 
 rule expand_segmentation:
@@ -278,7 +309,6 @@ rule segment_nuclei_bases:
             del full_well
 
             nuclei = starcall.segmentation.segment_nuclei(dapi)
-            #nuclei, fmap, rmap = skimage.segmentation.relabel_sequential(skimage.segmentation.clear_border(nuclei))
             nuclei = starcall.segmentation.filter_segmentation(nuclei)
             debug(f'found {nuclei.max()} nuclei ')
 
@@ -306,6 +336,14 @@ rule downscale_segmentation:
 
 
 
+# Cell tables also carry finer masks for the viewer (column 'mask<viewer_masks_scale>', in phenotype
+# pixels). Deduplication and matching drop that column, so overlaps are still computed from the
+# masks_scale masks in tabulate_cells.
+viewer_masks_scale = config['segmentation'].get('viewer_masks_scale', 2)
+
+def drop_viewer_masks(table):
+    return table.drop(columns=['mask{}'.format(viewer_masks_scale)], errors='ignore')
+
 rule tabulate_cells:
     """ Simple information is recorded about the segmented cells, such as position, bbox.
     Also stores masks of each cell, downscaled so they take up a reasonable amount of space.
@@ -329,7 +367,8 @@ rule tabulate_cells:
     #wildcard_constraints:
         #unmerged = '_unmatched(|_grid\d+)' if config['segmentation'].get('match_masks', False) else '(|_grid\d+)',
     resources:
-        mem_mb = lambda wildcards, input: 5000 +  size_mb(input) * 1.5
+        #mem_mb = lambda wildcards, input: 5000 +  size_mb(input) * 1.5
+        mem_mb = lambda wildcards, input, attempt: ((5000 + size_mb(input) * 10) * attempt)
     run:
         import numpy as np
         import tifffile
@@ -341,23 +380,32 @@ rule tabulate_cells:
         cells = tifffile.imread(input.cells)
         table = starcall.cells.make_cell_table(cells)
         masks_scale = 8
+        bases = 'bases' in wildcards.segmentation_type
 
-        if 'bases' in wildcards.segmentation_type:
+        table.cells.rescale_masks(masks_scale)
+
+        # viewer masks are computed here, before the renaming below makes a table without the segmentation
+        viewer_scale = viewer_masks_scale * bases_scale / phenotype_scale if bases else viewer_masks_scale
+        if viewer_scale == int(viewer_scale):
+            viewer_scale = int(viewer_scale)
+        has_viewer_masks = table.cells.rescale_masks(viewer_scale) is not None
+        if not has_viewer_masks:
+            debug ('cell masks too large to store at scale', viewer_scale, 'for the viewer')
+
+        if bases:
             newscale = (masks_scale * phenotype_scale / bases_scale)
             #masks_scale = round(newscale * bases_scale / phenotype_scale)
             debug (masks_scale, newscale)
 
-            table.cells.rescale_masks(masks_scale)
             table.cells.bboxes[:,:2] = np.ceil(table.cells.bboxes[:,:2] * phenotype_scale / bases_scale).astype(int)
             table.cells.bboxes[:,2:] = np.floor(table.cells.bboxes[:,2:] * phenotype_scale / bases_scale).astype(int)
-            #table.cells.bboxes[:] *= phenotype_scale
-            #table.cells.bboxes[:] //= bases_scale
 
             table['mask{}'.format(newscale)] = table['mask{}'.format(masks_scale)]
             table = table.drop('mask{}'.format(masks_scale), axis=1)
 
-        else:
-            table.cells.rescale_masks(masks_scale)
+        viewer_column = 'mask' if viewer_scale == 1 else 'mask{}'.format(viewer_scale)
+        if has_viewer_masks and viewer_column != 'mask{}'.format(viewer_masks_scale):
+            table = table.rename(columns={viewer_column: 'mask{}'.format(viewer_masks_scale)})
 
         table.to_csv(output.table)
 
@@ -389,26 +437,29 @@ rule plot_cells:
         fig.savefig(output.plot)
 
 
-def neighboring_tables(wildcards):
-    x, y = int(wildcards.x), int(wildcards.y)
-    grid_size = int(wildcards.grid_size)
-    tiles = [(i, j) for i in range(x-1, x+1) for j in range(y-1, y+2)
+def neighboring_tiles(x, y, grid_size):
+    """ The tiles before (x, y) in the grid that can overlap it, in the order deduplication checks them """
+    return [(i, j) for i in range(x-1, x+1) for j in range(y-1, y+2)
             if (i * grid_size + j) < (x * grid_size + y) and i >= 0 and 0 <= j < grid_size]
+
+def neighboring_tables(wildcards):
+    x, y, grid_size = int(wildcards.x), int(wildcards.y), int(wildcards.grid_size)
     return [segmentation_dir + '{well}_grid{grid_size}/'
                  + 'tile{:02}x{:02}y'.format(i, j)
-                 + '/{segmentation_type}{unmatched}.csv' for i, j in tiles]
+                 + '/{segmentation_type}{unmatched}_grid{grid_size}.csv' for i, j in neighboring_tiles(x, y, grid_size)]
 
-rule drop_duplicate_cells:
-    """ Removes duplicate cells in the overlapping region between neighboring cells. Cells that are closer to the center of
-    another tile in the grid are removed. Afterwards cells that overlap with cells from other tiles are removed as well. Overlap
-    between cells is only checked for tiles with an index less than the current tile.
+rule find_cell_overlaps:
+    """ First half of deduplication between grid tiles, see drop_duplicate_cells. For every cell of a tile, records
+    whether it is closest to the center of this tile and its area, and finds its overlaps with the cells of each
+    earlier neighboring tile. This doesn't depend on which cells the neighbors keep, so all tiles run in parallel.
     """
     input:
         table = segmentation_dir + '{well}_grid{grid_size}/tile{x}x{y}y/{segmentation_type}{unmatched}_grid{grid_size}.csv',
         edge_tables = neighboring_tables,
         composite = stitching_dir + '{well}_grid{grid_size}/grid_composite.json',
     output:
-        table = segmentation_dir + '{well}_grid{grid_size}/tile{x}x{y}y/{segmentation_type}{unmatched}.csv',
+        cells = segmentation_dir + '{well}_grid{grid_size}/tile{x}x{y}y/{segmentation_type}{unmatched}_dedup_cells_grid{grid_size}.tsv',
+        overlaps = segmentation_dir + '{well}_grid{grid_size}/tile{x}x{y}y/{segmentation_type}{unmatched}_dedup_overlaps_grid{grid_size}.tsv',
     run:
         import numpy as np
         import constitch
@@ -416,7 +467,6 @@ rule drop_duplicate_cells:
         import sklearn.neighbors
         import starcall.cells
 
-        overlap_threshold = 0.5
         x, y, grid_size = int(wildcards.x), int(wildcards.y), int(wildcards.grid_size)
         index = x * grid_size + y
 
@@ -431,62 +481,102 @@ rule drop_duplicate_cells:
         # move boxes to be relative to this table
         composite.boxes.positions -= composite.boxes[index].position
 
-        table = pandas.read_csv(input.table, index_col=0)
-        #if the table is empty, no deduplication is needed 
-        if len(table.index) == 0:
-            table.to_csv(output.table)
-        else:
-            #table['bbox_x1'] += composite.boxes[index].position[0]
-            #table['bbox_y1'] += composite.boxes[index].position[1]
-            #table['bbox_x2'] += composite.boxes[index].position[0]
-            #table['bbox_y2'] += composite.boxes[index].position[1]
-            #table.cells.bboxes += [[*composite.boxes[index].position, *composite.boxes[index].position]]
-            #table['xpos'] += composite.boxes[index].position[0]
-            #table['ypos'] += composite.boxes[index].position[1]
-            #centroids = np.array([table['xpos'], table['ypos']]).T
+        table = drop_viewer_masks(pandas.read_csv(input.table, index_col=0))
+        cells = pandas.DataFrame(dict(cell=[], center=[], area=[]))
+        overlaps = pandas.DataFrame(dict(neighbor=[], cell=[], other_cell=[], area=[]))
 
-            #boxes = constitch.BBoxList.from_table(table)
-
+        if len(table.index) != 0:
             neighbors = sklearn.neighbors.NearestNeighbors(n_neighbors=1).fit(composite.boxes.centers)
             distances, indices = neighbors.kneighbors(table.cells.centers)
+            cells = pandas.DataFrame(dict(cell=table.index, center=indices[:,0] == index,
+                    area=[cell.area() for cell in table.cells]))
 
-            mask = indices == index
-            debug (np.unique(indices, return_counts=True))
-            debug ('mask ', mask.sum(), len(table.index))
-            debug (composite.boxes[index].center)
-            debug (table.cells.centers.mean(axis=0))
-
-            max_cell_index = 0
-            debug (table)
-
-            for path in input.edge_tables:
-                cur_table = pandas.read_csv(path, index_col=0)
-
-                x, y = path.split('/tile')[1].split('y')[0].split('x')
-                cur_index = int(x) * grid_size + int(y)
+            all_overlaps = [overlaps]
+            for (i, j), path in zip(neighboring_tiles(x, y, grid_size), input.edge_tables):
+                cur_table = drop_viewer_masks(pandas.read_csv(path, index_col=0))
+                cur_index = i * grid_size + j
 
                 cur_table['bbox_x1'] += composite.boxes[cur_index].position[0]
                 cur_table['bbox_y1'] += composite.boxes[cur_index].position[1]
                 cur_table['bbox_x2'] += composite.boxes[cur_index].position[0]
                 cur_table['bbox_y2'] += composite.boxes[cur_index].position[1]
 
-                debug (cur_table)
+                # all of the neighbor's cells, a superset of the ones it keeps; drop_duplicate_cells filters the
+                # pairs. Overlapping pairs and their areas don't depend on the other cells in the tables
                 overlapping_cells = table.cells.intersecting_cells(cur_table)
-                debug (overlapping_cells)
-                debug (list(overlapping_cells.index))
-                #debug (overlapping_cells['area_ratio'])
+                # with no overlaps the table doesn't have the (cell, other cell) multiindex
+                if len(overlapping_cells.index) == 0:
+                    continue
+                all_overlaps.append(pandas.DataFrame(dict(
+                    neighbor = np.full(len(overlapping_cells.index), cur_index),
+                    cell = overlapping_cells.index.get_level_values(0),
+                    other_cell = overlapping_cells.index.get_level_values(1),
+                    area = overlapping_cells['area'].to_numpy(),
+                )))
+            overlaps = pandas.concat(all_overlaps, ignore_index=True)
+
+        cells.to_csv(output.cells, sep='\t', index=False)
+        overlaps.to_csv(output.overlaps, sep='\t', index=False)
+
+def earlier_dedup_files(wildcards):
+    x, y, grid_size = int(wildcards.x), int(wildcards.y), int(wildcards.grid_size)
+    tiles = ['tile{:02}x{:02}y'.format(k // grid_size, k % grid_size) for k in range(x * grid_size + y + 1)]
+    return dict(
+        cells = [segmentation_dir + '{well}_grid{grid_size}/' + tile + '/{segmentation_type}{unmatched}_dedup_cells_grid{grid_size}.tsv' for tile in tiles],
+        overlaps = [segmentation_dir + '{well}_grid{grid_size}/' + tile + '/{segmentation_type}{unmatched}_dedup_overlaps_grid{grid_size}.tsv' for tile in tiles],
+    )
+
+rule drop_duplicate_cells:
+    """ Removes duplicate cells in the overlapping region between neighboring cells. Cells that are closer to the center of
+    another tile in the grid are removed. Afterwards cells that overlap with cells from other tiles are removed as well. Overlap
+    between cells is only checked for tiles with an index less than the current tile.
+
+    Which cells a tile keeps depends on which cells its earlier neighbors kept, so this replays that cascade from the
+    overlaps found by find_cell_overlaps for this and every earlier tile. That is only arithmetic on small tables, so it
+    runs locally instead of each tile waiting for a cluster job of the tile before it.
+    """
+    input:
+        unpack(earlier_dedup_files),
+        table = segmentation_dir + '{well}_grid{grid_size}/tile{x}x{y}y/{segmentation_type}{unmatched}_grid{grid_size}.csv',
+    output:
+        table = segmentation_dir + '{well}_grid{grid_size}/tile{x}x{y}y/{segmentation_type}{unmatched}.csv',
+    localrule: True
+    run:
+        import numpy as np
+        import pandas
+
+        overlap_threshold = 0.5
+        max_cell_index = 0
+
+        # kept[k] is the set of cell labels tile k keeps
+        kept = []
+        for cells_path, overlaps_path in zip(input.cells, input.overlaps):
+            cells = pandas.read_csv(cells_path, sep='\t')
+            overlaps = pandas.read_csv(overlaps_path, sep='\t')
+            keep = dict(zip(cells['cell'], cells['center']))
+            areas = dict(zip(cells['cell'], cells['area']))
+
+            # as before, the overlap with each neighbor is checked separately
+            for neighbor in pandas.unique(overlaps['neighbor']):
+                cur = overlaps[(overlaps['neighbor'] == neighbor) & overlaps['other_cell'].isin(kept[int(neighbor)])]
                 sums = {}
-                for i,j in overlapping_cells.index:
-                    sums[i] = sums.get(i, 0) + overlapping_cells.cells[i,j].area()
+                for i, area in zip(cur['cell'], cur['area']):
+                    sums[i] = sums.get(i, 0) + area
+                for i, total in sums.items():
+                    if total > areas[i] * overlap_threshold:
+                        keep[i] = False
 
-                to_remove = [i for i, total in sums.items() if total > table.cells[i].area() * overlap_threshold]
-                debug ('to_remove', len(to_remove))
-                for i in to_remove:
-                    mask[table.index.get_loc(i)] = False
+            kept.append({cell for cell, cur_keep in keep.items() if cur_keep})
 
-            debug ('mask ', mask.sum(), len(table.index))
+        full_table = pandas.read_csv(input.table, index_col=0)
+        #if the table is empty, no deduplication is needed
+        if len(full_table.index) == 0:
+            full_table.to_csv(output.table)
+        else:
+            mask = np.array([cell in kept[-1] for cell in full_table.index])
+            debug ('mask ', mask.sum(), len(full_table.index))
 
-            table = table[mask]
+            table = full_table[mask]
             table = table.reset_index(names='orig_index')
             table = table.set_index(pandas.RangeIndex(max_cell_index + 1, max_cell_index + 1 + len(table.index)))
 
@@ -502,34 +592,19 @@ if config['segmentation'].get('match_masks', False):
         mask_pair = ['nuclei', 'cells']
     #print ('mask_pair', mask_pair)
 
-    def grid_index_reference(wildcards):
-        if '_grid' not in wildcards.path:
-            return []
-
-        groups = re.match('^(.*)_grid(\d+)/tile(\d+)x(\d+)y(.*)', wildcards.path).groups()
-        path1, path2 = groups[0], groups[-1]
-        grid_size, x, y = map(int, groups[1:-1])
-        index = x * grid_size + y
-        if index == 0:
-            return []
-        x, y = (index - 1) // grid_size, (index - 1) % grid_size
-        newpath = '{}_grid{}/tile{:02}x{:02}y{}'.format(path1, grid_size, x, y, path2)
-
-        paths = expand(segmentation_dir + newpath + '/{segmentation_type}{extra_params}.csv', segmentation_type=mask_pair, allow_missing=True)
-        return paths
-
     rule match_cell_tables:
         """ Matches segmentations that should be labeled the same, typically cells and nuclei.
         Uses one of the segmentations as a base segmentation (normally nuclei as nuclei segmentation is more reliable),
         then the other segmentations are matched to the base segmentation. For each mask in the base segmentation
         the mask in the other segmentation with the greatest overlapping area is chosen. Any masks that don't have
         a mapping are removed
+
+        The tables are numbered from 1, number_cell_tables then makes the cell ids unique across grid tiles.
         """
         input:
             tables = expand(segmentation_dir + '{path}/{segmentation_type}{extra_params}_unmatched.csv', segmentation_type=mask_pair, allow_missing=True),
-            grid_index_reference = grid_index_reference,
         output:
-            tables = expand(segmentation_dir + '{path}/{segmentation_type}{extra_params}.csv', segmentation_type=mask_pair, allow_missing=True),
+            tables = expand(segmentation_dir + '{path}/{segmentation_type}{extra_params}_matched.csv', segmentation_type=mask_pair, allow_missing=True),
         wildcard_constraints:
             extra_params = '(|bases)(|expanded\d+)',
         params:
@@ -541,7 +616,8 @@ if config['segmentation'].get('match_masks', False):
             import constitch
             import starcall.cells
 
-            base_table = pandas.read_csv(input.tables[0], index_col=0)
+            full_base_table = pandas.read_csv(input.tables[0], index_col=0)
+            base_table = drop_viewer_masks(full_base_table)
             masks_scale = base_table.cells.best_masks_scale
             all_tables = []
 
@@ -553,8 +629,9 @@ if config['segmentation'].get('match_masks', False):
             mapping = np.full((len(base_table.index), len(input.tables) - 1), -1)
 
             for i in range(len(input.tables) - 1):
-                table = pandas.read_csv(input.tables[i+1], index_col=0)
-                all_tables.append(table)
+                full_table = pandas.read_csv(input.tables[i+1], index_col=0)
+                all_tables.append(full_table)
+                table = drop_viewer_masks(full_table)
 
                 if table.cells.best_masks_scale != masks_scale:
                     table = table.copy()
@@ -595,29 +672,63 @@ if config['segmentation'].get('match_masks', False):
                     mapping[base_table.index.get_loc(j),i] = k
 
             mask = np.all(mapping != -1, axis=1)
-            base_table = base_table[mask]
+            base_table = full_base_table[mask]
             mapping = mapping[mask]
 
-            # relabeling to be sequential
-
-            max_indices = [0] * len(input.tables)
-            # if in a grid, have to read previous tile to see max index
-            if len(input.grid_index_reference):
-                max_indices = [max(pandas.read_csv(path, index_col=0).index, default=0) for path in input.grid_index_reference]
+            # relabeling to be sequential, number_cell_tables adds the offset for grid tiles
 
             if 'orig_index' not in base_table.columns:
                 base_table = base_table.reset_index(names='orig_index')
-            base_table = base_table.set_index(pandas.RangeIndex(max_indices[0] + 1, max_indices[0] + 1 + len(base_table.index)))
+            base_table = base_table.set_index(pandas.RangeIndex(1, 1 + len(base_table.index)))
             base_table.to_csv(output.tables[0])
 
             for i, table in enumerate(all_tables):
                 table = table.loc[mapping[:,i],:]
                 if 'orig_index' not in table.columns:
                     table = table.reset_index(names='orig_index')
-                table = table.set_index(pandas.RangeIndex(max_indices[0] + 1, max_indices[i+1] + 1 + len(table.index)))
+                table = table.set_index(pandas.RangeIndex(1, 1 + len(table.index)))
                 table.to_csv(output.tables[i+1])
 
-    ruleorder: match_cell_tables > split_grid_table
+    def earlier_matched_tables(wildcards):
+        """ The matched base tables of every earlier tile in the grid, which set the first cell id of this tile """
+        if '_grid' not in wildcards.path:
+            return []
+
+        groups = re.match('^(.*)_grid(\d+)/tile(\d+)x(\d+)y(.*)', wildcards.path).groups()
+        path1, path2 = groups[0], groups[-1]
+        grid_size, x, y = map(int, groups[1:-1])
+        index = x * grid_size + y
+        paths = ['{}_grid{}/tile{:02}x{:02}y{}'.format(path1, grid_size, k // grid_size, k % grid_size, path2) for k in range(index)]
+        return [segmentation_dir + path + '/' + mask_pair[0] + '{extra_params}_matched.csv' for path in paths]
+
+    rule number_cell_tables:
+        """ Numbers the matched tables of a grid tile so cell ids are unique across the well: each tile continues from
+        the largest id of the tile before it. Only the row counts of the earlier tiles are needed, so this runs locally
+        and every tile can be numbered as soon as the tiles are matched.
+        """
+        input:
+            tables = expand(segmentation_dir + '{path}/{segmentation_type}{extra_params}_matched.csv', segmentation_type=mask_pair, allow_missing=True),
+            earlier_tables = earlier_matched_tables,
+        output:
+            tables = expand(segmentation_dir + '{path}/{segmentation_type}{extra_params}.csv', segmentation_type=mask_pair, allow_missing=True),
+        wildcard_constraints:
+            extra_params = '(|bases)(|expanded\d+)',
+        localrule: True
+        run:
+            import pandas
+
+            # the first id of tile k is the largest id of tile k-1, which is 0 if tile k-1 has no cells
+            offset = 0
+            for path in input.earlier_tables:
+                count = len(pandas.read_csv(path, usecols=[0]).index)
+                offset = offset + count if count > 0 else 0
+
+            for in_path, out_path in zip(input.tables, output.tables):
+                table = pandas.read_csv(in_path, index_col=0)
+                table = table.set_index(pandas.RangeIndex(offset + 1, offset + 1 + len(table.index)))
+                table.to_csv(out_path)
+
+    ruleorder: number_cell_tables > match_cell_tables > split_grid_table
 
 ruleorder: drop_duplicate_cells > split_grid_table
 

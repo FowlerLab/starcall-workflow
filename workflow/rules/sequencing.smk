@@ -5,137 +5,9 @@ import pandas as pd
 from collections import OrderedDict
 
 
-#Scallops style full well dots sampling 
-#uses the post quality attached values 
-
-def get_grid_filenames_post_cell_quality(wildcards):
-    grid_size = int(wildcards.grid_size)
-    numbers = ['{:02}'.format(i) for i in range(grid_size)]
-    #table = sequencing_dir + '{path}/{segmentation_type}_quality{params}.csv',
-    return expand(sequencing_dir + '{well}_grid{grid_size}/tile{x}x{y}y/{segmentation_type}_quality{params}.csv', x=numbers, y=numbers, allow_missing=True)
-
-def get_grid_filenames_corrected_tables(wildcards):
-    grid_size = int(wildcards.grid_size)
-    numbers = ['{:02}'.format(i) for i in range(grid_size)]
-    return expand(sequencing_dir + '{well}_grid{grid_size}/tile{x}x{y}y/{segmentation_type}{approach}_corrected_{method}{params}.csv', x=numbers, y=numbers, allow_missing=True)
-
-
 def get_aux_data_correction_summary(wildcards):
     wildcards.path = wildcards.well + '_grid' + wildcards.grid_size
     return get_aux_data(wildcards)
-
-rule scallops_style_sampling:
-    input: 
-        post_cell_quality_tables = get_grid_filenames_post_cell_quality,
-    output: 
-        all_samples = sequencing_dir + '{well}_grid{grid_size}/{segmentation_type}_fullwell{params}_final_samples.csv',
-        #named to fit with other final sampling table wildcard formats
-    params: 
-        num_cycles = config['cycles'],
-        phred_min = config['crosstalk_correction']['min_sampling_phred'],
-    wildcard_constraints:
-        params = params_regex('min', 'max', 'num', 'raw', ('psf', 'box')),
-    resources: 
-        mem_mb = lambda wildcards, input: size_mb(input) * 3 + 5000
-    run:
-        import pandas as pd 
-        import numpy as np
-        from starcall.correction import stack_cycles_of_dots_table
-
-        #filter tables by cells, and concatenate into one very large table
-        #then conduct F 0.5 based sample selection for the well as in SCALLOPS
-
-        full_well_table = []
-        for table in input.post_cell_quality_tables:
-            curr = pd.read_csv(table, index_col = 0)
-            cur = curr[curr.cell != 0]
-            full_well_table.append(curr)
-        full_well_table = pd.concat(full_well_table, axis = 0, ignore_index = True)
-
-        #F0.5 dot selection - same approach as SCALLOPS
-        full_well_table["read_type"] = (full_well_table["mean_phred"] >= params.phred_min).astype(int)
-        q = np.arange(0.02, 1, 0.01)
-        results = []
-        quantiles = full_well_table["sum_std_intensities"].quantile(q).values
-        for i in range(len(quantiles)):
-            threshold = quantiles[i]
-            counts_over = full_well_table.query(f"sum_std_intensities>{threshold}")["read_type"].value_counts()
-            counts_under = full_well_table.query(f"sum_std_intensities<={threshold}")["read_type"].value_counts()
-            tp = counts_over.loc[1] if 1 in counts_over else 0
-            fp = counts_over.loc[0] if 0 in counts_over else 0
-            tn = counts_under.loc[0] if 0 in counts_under else 0
-            fn = counts_under.loc[1] if 1 in counts_under else 0
-            precision = tp / (tp + fp) if (tp + fp) > 0 else 0
-            accuracy = (tp + tn) / (tp + fp + tn + fn)
-            recall = tp / (tp + fn) if (tp + fn) > 0 else 0
-
-            f1 = (2 * precision * recall) / (precision + recall)
-
-            results.append(
-                [threshold, q[i], precision, recall, f1, accuracy, tp, fp, tn, fn]
-            )
-        df = pd.DataFrame(results, columns=["threshold","quantile","precision","recall","f1","accuracy","tp","fp","tn","fn",], )
-        b2 = 0.5 * 0.5
-        df["f0.5"] = ((1 + b2) * (df["precision"] * df["recall"])) / (b2 * df["precision"] + df["recall"])
-
-        #find max F 0.5 threshold 
-        df = df.sort_values(["f0.5", "accuracy", "threshold"], ascending=False)
-        real_thresh = df.iloc[0]["threshold"]
-        print ('thresholding results...', df.iloc[0])
-
-        #save sample
-        crosstalk_bases_array = full_well_table[full_well_table['sum_std_intensities'] >= real_thresh].copy()
-        #reformat for npy calculation 
-        crosstalk_bases_array = stack_cycles_of_dots_table(crosstalk_bases_array,len(params.num_cycles), sequencing_channels_order, cell_filter = True)
-        #save for npy calculations
-        crosstalk_bases_array.to_csv(output.all_samples)
-
-rule fullwell_binned_sampling:
-    input: 
-        post_cell_quality_tables = get_grid_filenames_post_cell_quality,
-    output: 
-        all_samples = sequencing_dir + '{well}_grid{grid_size}/{segmentation_type}_fullwellbinned{params}_final_samples.csv',
-        #named to fit with other final sampling table wildcard formats
-    params: 
-        num_cycles = config['cycles'],
-        phred_min = config['crosstalk_correction']['min_sampling_phred'],
-        total_samples = config['crosstalk_correction']['total_samples'],
-        num_sampling_bins = config['crosstalk_correction']['number_sampling_bins'],
-    wildcard_constraints:
-        params = params_regex('min', 'max', 'num', 'raw', ('psf', 'box')),
-    resources: 
-        mem_mb = lambda wildcards, input: size_mb(input) * 5 + 5000
-    run:
-        import pandas as pd
-        import numpy as np
-        from starcall.correction import stack_cycles_of_dots_table, binned_cycle_sampler
-
-        #filter tables by cells, and concatenate into one very large table
-        #then conduct F 0.5 based sample selection for the well as in SCALLOPS
-
-        full_well_table = []
-        for table in input.post_cell_quality_tables:
-            curr = pd.read_csv(table, index_col = 0)
-            cur = curr[curr.cell != 0]
-            full_well_table.append(curr)
-        full_well_table = pd.concat(full_well_table, axis = 0, ignore_index = True)
-        debug(full_well_table.mean_phred.describe())
-        debug(full_well_table.min_phred.describe())
-        full_well_table = stack_cycles_of_dots_table(full_well_table, len(params.num_cycles), sequencing_channels_order, cell_filter = True)
-        debug(full_well_table.phred.describe())
-        debug('G', full_well_table[full_well_table.base == 'G'].phred.describe())
-        debug('T', full_well_table[full_well_table.base == 'T'].phred.describe())
-        debug('A', full_well_table[full_well_table.base == 'A'].phred.describe())
-        debug('C', full_well_table[full_well_table.base == 'C'].phred.describe())
-        sample_table = binned_cycle_sampler(full_well_table, params.total_samples, sequencing_channels_order, params.phred_min, params.num_sampling_bins)
-        #save for npy calculations
-        sample_table.to_csv(output.all_samples)
-
-
-def get_grid_filenames_raw_pt(wildcards):
-    grid_size = int(wildcards.grid_size)
-    numbers = ['{:02}'.format(i) for i in range(grid_size)]
-    return expand(segmentation_dir + '{well}_grid{grid_size}/tile{x}x{y}y/raw_pt.tif', x=numbers, y=numbers, allow_missing=True)
 
 
 def get_aux_data(wildcards, path=None):
@@ -163,52 +35,11 @@ def get_aux_data(wildcards, path=None):
 
 
 
-rule create_sampling_table:
-    """
-    Calculate the sampling table for the entire well
-    """
-    input:
-        raw_pts = get_grid_filenames_raw_pt,
-    output:
-        sequencing_dir + '{well}_grid{grid_size}/tile_sampling_table.csv',
-    params:
-        total_samples = config['crosstalk_correction']['total_samples'],
-    resources:
-        mem_mb = lambda wildcards, input: size_mb(input) + 5000 #just concatenating tables, not much memory needed
-    run: 
-        import pandas as pd 
-        import tifffile
-        import re
-        import numpy as np
-
-        #figure out how much of each tile is occupied by images
-        sizes_df = pd.DataFrame({'tile':[], 'size':[], 'occupied_pixels':[], 'frac_occupied':[]})
-        for raw_pt in input.raw_pts:
-            debug ('on tile...', raw_pt)
-            tile = re.search(r'/(tile\d+x\d+y)/', raw_pt).group(1)
-            image = tifffile.imread(raw_pt)
-            full_size = image.shape[-2] * image.shape[-1]
-            if '00' in tile or '04' in tile: #it is an edge tile, see how much is filled
-                subsection = image[0,0,:,:]
-                num_nans = np.isnan(subsection).sum()
-            else:
-                num_nans = 0 
-            del image
-            debug ('full size: ', full_size, " num nans: ", num_nans)
-            frac_occ = (full_size - num_nans)/full_size
-            new_row = pd.DataFrame([{'tile':tile, 'size':full_size, 'occupied_pixels':full_size - num_nans, 'frac_occupied': frac_occ}])
-            sizes_df = pd.concat([sizes_df, new_row], ignore_index=True)
-
-        total_occ = sizes_df['frac_occupied'].sum()
-        density_samples = params.total_samples/total_occ
-        sizes_df['expected_samples'] = density_samples * sizes_df['frac_occupied']
-        sizes_df['expected_samples'] = sizes_df['expected_samples'].astype(int)
-        remaining_samples = params.total_samples - sizes_df['expected_samples'].sum() 
-        condition = sizes_df['frac_occupied'] >= 1.0
-        first_match_idx = sizes_df[condition].index[0]
-        sizes_df.loc[first_match_idx, 'expected_samples'] += remaining_samples
-        sizes_df.to_csv(output[0])
-    
+def find_dots_mem_mb(wildcards, input, threads):
+    if config['dotdetection'].get('backend', 'original') == 'original':
+        return size_mb(input) * 10 + 15000
+    # one float32 copy of the sequencing channels, plus per thread bands and tiles
+    return size_mb(input) * 4 + 10000 + 500 * threads
 
 
 rule find_dots:
@@ -230,6 +61,10 @@ rule find_dots:
     Params:
         min, max, mean: The range of gaussian sigmas to search for colonies. 1-3 should capture most colonies.
 
+    Config:
+        dotdetection.backend: original, cpu or gpu, which version of detect_dots to run (see above)
+        dotdetection.threads: threads to use, only the cpu and gpu versions use more than one
+
     Output:
         The output is a csv file containing the columns:
             position_x, position_y: The pixel position of the colony
@@ -240,23 +75,31 @@ rule find_dots:
     input:
         sequencing_dir + '{path}/raw.tif',
     output:
-        sequencing_dir + '{path}/bases{min}{max}{num}{raw}{extract_mode}.csv',
+        sequencing_dir + '{path}/bases{min}{max}{num}.csv',
         #sequencing_dir + '{path}/dot_filter.tif',
+        **({
+            'diagnostics_summary': sequencing_dir + '{path}/dotdiagnostics{min}{max}{num}.summary.csv',
+            'diagnostics_images': sequencing_dir + '{path}/dotdiagnostics{min}{max}{num}.images.npz',
+        } if config['dotdetection'].get('diagnostics', False) else {}),
     params:
         min_sigma = parse_param('min', config['dotdetection']['min_sigma']),
         max_sigma = parse_param('max', config['dotdetection']['max_sigma']),
         num_sigma = parse_param('num', config['dotdetection']['num_sigma']),
-        raw_intensities = parse_param('raw', None),
-        extract_mode = lambda wildcards: {'': None, '_psf': 'psf', '_box': 'box'}[wildcards.extract_mode],
+        backend = config['dotdetection'].get('backend', 'original'),
+        #settings for the sample to build for the quality report site
+        diagnostics_stride = config['dotdetection'].get('pixel_sample_stride', 8),
+        diagnostics_crop_size = config['dotdetection'].get('crop_sample_size', 256),
+        diagnostics_dots = config['dotdetection'].get('max_dots_for_sample', 50000),
+
     wildcard_constraints:
         min = '|_min\d+(.\d+)?',
         max = '|_max\d+(.\d+)?',
         num = '|_num\d+(.\d+)?',
-        raw = '|_raw',
-        extract_mode = '|_psf|_box',
+        
     resources:
-        mem_mb = lambda wildcards, input: size_mb(input) * 10 + 15000
-    threads: 4
+        mem_mb = find_dots_mem_mb,
+        cuda = 1 if config['dotdetection'].get('backend', 'original') == 'gpu' else 0,
+    threads: config['dotdetection'].get('threads', 4 if config['dotdetection'].get('backend', 'original') == 'original' else 16)
     run:
         import numpy as np
         import tifffile
@@ -265,32 +108,44 @@ rule find_dots:
         import skimage.morphology
 
         full_well = tifffile.memmap(input[0], mode='r')
-        image = full_well[...,sequencing_channels_slice,:,:].astype(np.float32, copy=True)
-        del full_well
+        if params.backend == 'original':
+            image = full_well[...,sequencing_channels_slice,:,:].astype(np.float32, copy=True)
+            del full_well
+            detect_dots, kwargs = starcall.dotdetection.detect_dots, {}
+        elif params.backend in ('cpu', 'gpu'):
+            # these read bands from the memmap as needed, the input is never modified
+            image = full_well[...,sequencing_channels_slice,:,:]
+            detect_dots = getattr(starcall.dotdetection, 'detect_dots_' + params.backend)
+            kwargs = dict(threads = threads)
+            if 'diagnostics_summary' in output.keys():
+                kwargs['diagnostics'] = output.diagnostics_summary[:-len('.summary.csv')]
+                kwargs['diagnostics_stride'] = params.diagnostics_stride
+                kwargs['diagnostics_crop_size'] =  params.diagnostics_crop_size
+                kwargs['diagnostics_max_sample_dots'] = params.diagnostics_dots
+        else:
+            raise ValueError("dotdetection.backend should be original, cpu or gpu, not '{}'".format(params.backend))
 
-        if np.all(image == 0):
+        if not np.any(image):
             reads = pandas.DataFrame()
-        elif not isinstance(params.raw_intensities, str):
+            if 'diagnostics_summary' in output.keys():
+                # empty placeholders, skipped when plotting
+                import starcall.dotdetection_qc
+                pandas.DataFrame(columns=starcall.dotdetection_qc.SUMMARY_COLUMNS).to_csv(output.diagnostics_summary, index=False)
+                np.savez_compressed(output.diagnostics_images)
+        else:
             debug('keeping z-scored intensities...')
-            reads = starcall.dotdetection.detect_dots(
+            debug('running dot detection with backend {} and {} threads'.format(params.backend, threads))
+            reads = detect_dots(
                 image,
                 min_sigma = params.min_sigma,
                 max_sigma = params.max_sigma,
                 num_sigma = params.num_sigma,
                 copy = False,
                 channels = sequencing_channels_order,
+                debug = debug,
+                **kwargs,
             )
-        else:
-            debug('keeping raw intensities...')
-            debug('extraction mode: ', params.extract_mode)
-            reads = starcall.dotdetection.detect_dots_keep_background_corrected_intensities(
-                image, params.extract_mode,
-                min_sigma = params.min_sigma,
-                max_sigma = params.max_sigma,
-                num_sigma = params.num_sigma,
-                copy = False,
-                channels = sequencing_channels_order,
-            )
+
         reads.to_csv(output[0])
 
 
@@ -307,7 +162,7 @@ rule attach_quality_information:
     output:
         sequencing_dir + '{path}/quality_bases{params}.csv',
     wildcard_constraints:
-        params = params_regex('min', 'max', 'num', 'raw', ('psf', 'box')),
+        params = params_regex('min', 'max', 'num'),
     resources:
         mem_mb = lambda wildcards, input: size_mb(input) * 3 + 15000
     run:
@@ -332,40 +187,57 @@ rule attach_quality_information:
         peaks = calculate_peaks(reads) #use original values
         #testing other metrics 
         chastity_scores = get_chastity_df(reads)
-        log_margin_scores = get_log_margin_df(reads)
-        purity_scores = get_purity_df(reads)
-        dominance_signed_scores = get_dominance_signed_df(reads)
-        frac_delta_of_top = get_fac_delta_of_top_pos(reads)
         for i in range(0, quality_scores.shape[-1]):
             reads['chastity_cycle' + get_cycle_str(i)] = chastity_scores[:, i]
-            reads['log_margin_cycle' + get_cycle_str(i)] = log_margin_scores[:, i]
-            reads['purity_cycle' + get_cycle_str(i)] = purity_scores[:, i]
-            reads['dominance_signed_cycle' + get_cycle_str(i)] = dominance_signed_scores[:, i]
-            reads['phred_cycle'+ get_cycle_str(i)] = quality_scores[:,i]
-            reads['frac_delta_of_top_cycle'+ get_cycle_str(i)] = frac_delta_of_top[:,i]
         reads['mean_chastity'] = np.mean(chastity_scores, axis=1)
         reads['min_chastity'] = np.min(chastity_scores, axis=1)
-        reads['mean_log_margin'] = np.mean(log_margin_scores, axis=1)
-        reads['min_log_margin'] = np.min(log_margin_scores, axis=1)
-        reads['mean_purity'] = np.mean(purity_scores, axis=1)
-        reads['min_purity'] = np.min(purity_scores, axis=1)
-        reads['mean_dominance_signed'] = np.mean(dominance_signed_scores, axis=1)
-        reads['min_dominance_signed'] = np.min(dominance_signed_scores, axis=1)
-        reads['min_frac_delta_of_top'] = np.min(frac_delta_of_top, axis=1)
-        reads['mean_frac_delta_of_top'] = np.mean(frac_delta_of_top, axis=1)
-        reads['mean_phred'] = np.mean(quality_scores, axis=1)
-        reads['min_phred'] = np.min(quality_scores, axis=1) #save this for thresholding later for the fullwell sampling approach
-        reads['sum_std_intensities'] = peaks
         reads['max_seq'] = reads.reads.sequences 
 
         reads.to_csv(output[0])
+
+
+rule attach_cell_ids:
+    """ Attaches the ID of each cell the dots are in to said dots
+
+    Output: The output is a csv file containing the columns:
+            position_x, position_y: The pixel position of the colony
+            values_cycle00_G, values_cycle00_T, ...:
+                The values extracted from the sequencing images at the colony position,
+                for each cycle and channel.
+            cell: The cell that each read is contained in, 0 if not in a cell.
+    """
+    input:
+        bases = sequencing_dir + '{path}/quality_bases{params}.csv',
+        cells = segmentation_dir + '{path}/{segmentation_type}_mask_downscaled.tif',
+        #cells_table = segmentation_dir + '{path}/{segmentation_type}.csv',
+    output:
+        table = sequencing_dir + '{path}/{segmentation_type}_quality{params}.csv',
+    wildcard_constraints:
+        params = params_regex('min', 'max', 'num'),
+    resources:
+        mem_mb = lambda wildcards, input: 5000 +  size_mb(input) * 10
+    run:
+        import tifffile
+        import numpy as np
+        import pandas
+        import csv
+        import matplotlib.pyplot as plt
+        import starcall.reads
+
+        cells = tifffile.imread(input.cells)
+        table = pandas.read_csv(input.bases, index_col=0)
+        xposes, yposes = np.round(table.reads.positions.T).astype(int)
+        table['cell'] = cells[xposes,yposes]
+        table.to_csv(output.table)
+
+
 
 def get_orig_method_files(wildcards):
     grid_size = int(wildcards.grid_size)
     numbers = ['{:02}'.format(i) for i in range(grid_size)]
     return expand(sequencing_dir + '{well}_grid{grid_size}/tile{x}x{y}y/cells_quality.csv', x=numbers, y=numbers, allow_missing=True)
 
-
+#TODO -  move this to QC and make this into a table of qcs per subtile
 rule make_orig_method_comparison_table:
     input:
         orig_tables = get_orig_method_files,
@@ -402,10 +274,9 @@ rule make_orig_method_comparison_table:
             summary_rows.append({
                 'tile': tile,
                 'n_reads': len(table),
-                'matched_before': int(orig_matched.sum()),
-                
-                'mean_phred_before': table['mean_phred'].mean(),
-                'median_phred_before': table['mean_phred'].median(),
+                'matched_reads': int(orig_matched.sum()),
+                'mean_phred_before': table['mean_chastity'].mean(),
+                'median_phred_before': table['min_chastity'].median(),
                 'mean_min_phred_before': table['min_phred'].mean(),
                 'median_min_phred_before': table['min_phred'].median(),
                
@@ -479,843 +350,6 @@ rule make_orig_method_metric_performance_table:
         summary_table.to_csv(output.summ_table)
 
 
-rule attach_cell_ids:
-    """ Attaches the ID of each cell the dots are in to said dots
-
-    Output: The output is a csv file containing the columns:
-            position_x, position_y: The pixel position of the colony
-            values_cycle00_G, values_cycle00_T, ...:
-                The values extracted from the sequencing images at the colony position,
-                for each cycle and channel.
-            cell: The cell that each read is contained in, 0 if not in a cell.
-    """
-    input:
-        bases = sequencing_dir + '{path}/quality_bases{params}.csv',
-        cells = segmentation_dir + '{path}/{segmentation_type}_mask_downscaled.tif',
-        #cells_table = segmentation_dir + '{path}/{segmentation_type}.csv',
-    output:
-        table = sequencing_dir + '{path}/{segmentation_type}_quality{params}.csv',
-    wildcard_constraints:
-        params = params_regex('min', 'max', 'num', 'raw', ('psf', 'box')),
-    resources:
-        mem_mb = lambda wildcards, input: 5000 +  size_mb(input) * 10
-    run:
-        import tifffile
-        import numpy as np
-        import pandas
-        import csv
-        import matplotlib.pyplot as plt
-        import starcall.reads
-
-        cells = tifffile.imread(input.cells)
-        table = pandas.read_csv(input.bases, index_col=0)
-        
-        xposes, yposes = np.round(table.reads.positions.T).astype(int)
-        table['cell'] = cells[xposes,yposes]
-
-        table.to_csv(output.table)
-
-rule sample_cycles_per_tile:
-    input: 
-        #'{well}_grid{grid_size}/tile{x}x{y}y/{segmentation_type}{qc}_reads.csv'
-        table = sequencing_dir + '{well}_grid{grid_size}/{tile}/{segmentation_type}_quality{params}.csv',
-        sample_sizes =  sequencing_dir + '{well}_grid{grid_size}/tile_sampling_table.csv',
-    output: 
-        sequencing_dir + '{well}_grid{grid_size}/{tile}/{segmentation_type}{approach}{params}_samples.csv',
-    params: 
-        #percent_cutoff = config['crosstalk_correction']['sampling_percentile_cutoff'],
-        phred_min = config['crosstalk_correction']['min_sampling_phred'],
-        num_sampling_bins = config['crosstalk_correction']['number_sampling_bins'],
-        num_cycles = config['cycles'],
-    wildcard_constraints:
-        params = params_regex('min', 'max', 'num', 'raw', ('psf', 'box')),
-        tile = 'tile\d+x\d+y',
-        approach = '_binned|_unbinned',
-    resources:
-         mem_mb = lambda wildcards, input: 5000 +  size_mb(input) * 10
-    run: 
-        from starcall.correction import stack_cycles_of_dots_table, binned_cycle_sampler, quality_filtered_sampler
-        import pandas as pd
-
-        sample_table = pd.read_csv(input.sample_sizes, index_col=0)
-        num_samples = sample_table[(sample_table.tile == wildcards.tile)]['expected_samples'].values[0]
-        debug ('using ', num_samples, " for tile ", wildcards.tile)
-        dots_table = pd.read_csv(input.table, index_col = 0)
-        debug ('using ', len(params.num_cycles), ' cycles ')
-        #stack_cycles_of_dots_table(dot_table, num_cycles, sequencing_channels_order, cell_filter = True)
-        dots_table = stack_cycles_of_dots_table(dots_table, len(params.num_cycles), sequencing_channels_order, cell_filter = True)
-
-        if wildcards.approach == '_binned':
-            sample_table = binned_cycle_sampler(dots_table, num_samples, sequencing_channels_order, params.phred_min, params.num_sampling_bins)
-        elif wildcards.approach == '_unbinned':
-            sample_table = quality_filtered_sampler(dots_table, num_samples, sequencing_channels_order, params.phred_min)
-        else:
-            raise ValueError(f'unknown sampling approach: {wildcards.approach}')
-
-        sample_table['tile'] = wildcards.tile
-        sample_table.to_csv(output[0])
-
-
-def get_grid_filenames_sample_tables(wildcards):
-    grid_size = int(wildcards.grid_size)
-    numbers = ['{:02}'.format(i) for i in range(grid_size)]
-    return expand(sequencing_dir + '{well}_grid{grid_size}/tile{x}x{y}y/{segmentation_type}{approach}{params}_samples.csv', x=numbers, y=numbers, allow_missing=True)
-
-rule final_sample_table:
-    input:
-        all_tables = get_grid_filenames_sample_tables,
-    output:
-        all_samples = sequencing_dir + '{well}_grid{grid_size}/{segmentation_type}{approach}{params}_final_samples.csv',
-    wildcard_constraints:
-        params = params_regex('min', 'max', 'num', 'raw', ('psf', 'box')),
-        approach = '_binned|_unbinned',
-    resources:
-         mem_mb = lambda wildcards, input: 5000 +  size_mb(input) * 2
-    run:
-        import pandas as pd
-        all_tables = []
-        for table_path in input.all_tables:
-            debug ('adding table...', table_path)
-            sample = pd.read_csv(table_path, index_col = 0)
-            debug ('points in table...', sample.shape)
-            all_tables.append(sample)
-        all_tables = pd.concat(all_tables, axis = 0, ignore_index = True)
-        all_tables.to_csv(output.all_samples)
-
-rule calculate_crosstalk_matrix_median_invert:
-    input:
-        all_samples = sequencing_dir + '{well}_grid{grid_size}/{segmentation_type}{approach}{params}_final_samples.csv',
-    output:
-        matrix_npy = sequencing_dir + '{well}_grid{grid_size}/{segmentation_type}{approach}_median_invert{params}.npy',
-    resources: 
-        mem_mb = lambda wildcards, input: size_mb(input) * 3 + 5000,
-    wildcard_constraints:
-        approach = '_binned|_unbinned|_fullwell|_fullwellbinned',
-        params = params_regex('min', 'max', 'num', 'raw', ('psf', 'box')),
-    run:
-        import pandas as pd 
-        import numpy as np
-        import starcall.reads
-        from starcall.correction import calculate_crosstalk_median_ratio
-
-        full_table = pd.read_csv(input.all_samples, index_col = 0)
-
-        #change sample column names so that we can use reads accessor to get the values out
-        #reads accessor expects columns of the format values_cycle{cycle:02}_{channel}
-        col_dict = {f'values_{nuc}': f'values_cycle00_{nuc}' for nuc in ['T', 'A', 'G', 'C']}
-        full_table.rename(columns = col_dict, inplace = True)
-        reads_values = full_table.reads.values
-        reads_values = np.squeeze(reads_values)
-        debug('sample matrix shape...', reads_values.shape)
-        #TODO calculate the crosstalk matrix 
-        correction_matrix = calculate_crosstalk_median_ratio(reads_values)
-        np.save(output[0], correction_matrix)
-
-rule calculate_crosstalk_matrix_gmm:
-    input:
-        all_samples = sequencing_dir + '{well}_grid{grid_size}/{segmentation_type}{approach}{params}_final_samples.csv',
-    output:
-        matrix_npy = sequencing_dir + '{well}_grid{grid_size}/{segmentation_type}{approach}_gmm{params}.npy',
-    resources: 
-        mem_mb = lambda wildcards, input, attempt: (size_mb(input) * 4 + 5000) * attempt,
-        #mem_mb = lambda wildcards, input, attempt: ((5000 + size_mb(input) * 1.5) * attempt)
-    wildcard_constraints:
-        approach = '_binned|_unbinned|_fullwell|_fullwellbinned',
-        params = params_regex('min', 'max', 'num', 'raw', ('psf', 'box')),
-    run:
-        import pandas as pd 
-        import numpy as np
-        import starcall.reads
-        from starcall.correction import fit_crosstalk_em
-
-        full_table = pd.read_csv(input.all_samples, index_col = 0)
-
-        #change sample column names so that we can use reads accessor to get the values out
-        #reads accessor expects columns of the format values_cycle{cycle:02}_{channel}
-        col_dict = {f'values_{nuc}': f'values_cycle00_{nuc}' for nuc in ['T', 'A', 'G', 'C']}
-        full_table.rename(columns = col_dict, inplace = True)
-        reads_values = full_table.reads.values
-        reads_values = np.squeeze(reads_values)
-        debug('sample matrix shape...', reads_values.shape)
-        correction_matrix, em_model = fit_crosstalk_em(reads_values)
-        np.save(output[0], correction_matrix)
-
-rule calculate_crosstalk_matrix_nnls:
-    input:
-        all_samples = sequencing_dir + '{well}_grid{grid_size}/{segmentation_type}{approach}{params}_final_samples.csv',
-    output:
-        matrix_npy = sequencing_dir + '{well}_grid{grid_size}/{segmentation_type}{approach}_nnls{params}.npy',
-    resources: 
-        mem_mb = lambda wildcards, input: size_mb(input) * 3 + 5000,
-    wildcard_constraints:
-        approach = '_binned|_unbinned|_fullwell|_fullwellbinned',
-        params = params_regex('min', 'max', 'num', 'raw', ('psf', 'box')),
-    run:
-        import pandas as pd 
-        import numpy as np
-        import starcall.reads
-        from starcall.correction import fit_crosstalk_nnls
-
-        full_table = pd.read_csv(input.all_samples, index_col = 0)
-
-        #change sample column names so that we can use reads accessor to get the values out
-        #reads accessor expects columns of the format values_cycle{cycle:02}_{channel}
-        col_dict = {f'values_{nuc}': f'values_cycle00_{nuc}' for nuc in ['T', 'A', 'G', 'C']}
-        full_table.rename(columns = col_dict, inplace = True)
-        reads_values = full_table.reads.values
-        reads_values = np.squeeze(reads_values)
-        debug('sample matrix shape...', reads_values.shape)
-        #TODO calculate the crosstalk matrix 
-        correction_matrix = fit_crosstalk_nnls(reads_values)
-        np.save(output[0], correction_matrix)
-
-
-rule apply_crosstalk_matrix:
-    input: 
-        table = sequencing_dir + '{well}_grid{grid_size}/{tile}/{segmentation_type}_quality{params}.csv',
-        corr_matrix =  sequencing_dir + '{well}_grid{grid_size}/{segmentation_type}{approach}_{method}{params}.npy',
-    output: 
-        corrected_table = sequencing_dir + '{well}_grid{grid_size}/{tile}/{segmentation_type}{approach}_corrected_{method}{params}.csv',
-    wildcard_constraints: 
-        approach = '_binned|_unbinned|_fullwell|_fullwellbinned',
-        params = params_regex('min', 'max', 'num', 'raw', ('psf', 'box')),
-        method = 'median_invert|gmm|nnls',
-        tile = 'tile\d+x\d+y',
-    resources: 
-        mem_mb = 5000
-    run:
-        import pandas as pd 
-        import numpy as np 
-        import starcall.correction 
-        from starcall.qc import get_softmax_df
-
-        table = pd.read_csv(input.table, index_col = 0)
-        corr_matrix = np.load(input.corr_matrix)
-        table = starcall.correction.apply_channel_crosstalk_matrix(table, sequencing_channels_order, corr_matrix)
-        
-        value_cols = [c for c in table.columns if c.startswith('values_cycle')]
-        #zscored = table.copy()
-        #zscored[value_cols] = (zscored[value_cols] - zscored[value_cols].mean()) / zscored[value_cols].std()
-
-        #attach phredq score and intensity change info
-        quality_scores = get_softmax_df(table) #use z scored values 
-        for i in range(0, quality_scores.shape[-1]):
-            table['corrected_phred_cycle'+ get_cycle_str(i)] = quality_scores[:,i]
-        table['corrected_mean_phred'] = np.mean(quality_scores, axis=1)
-        table['corrected_min_phred'] = np.min(quality_scores, axis=1) #save this for thresholding later for the fullwell sampling approach
-        table['corrected_max_seq'] = table.reads.sequences 
-
-        table.to_csv(output.corrected_table)
-
-
-def get_grid_filenames_orig_tables_with_seqs(wildcards):
-    grid_size = int(wildcards.grid_size)
-    numbers = ['{:02}'.format(i) for i in range(grid_size)]
-    return expand(sequencing_dir + '{well}_grid{grid_size}/tile{x}x{y}y/bases_with_seqs.csv', x=numbers, y=numbers, allow_missing=True)
-
-
-rule attach_orig_base_sequences:
-    input:
-        orig_bases = sequencing_dir + '{well}_grid{grid_size}/{tile}/bases.csv'
-    output: 
-        bases_with_seq = sequencing_dir + '{well}_grid{grid_size}/{tile}/bases_with_seqs.csv'
-    wildcard_constraints:
-        tile = 'tile\d+x\d+y',
-    run:
-        import pandas as pd 
-        import starcall.reads 
-
-        orig_table = pd.read_csv(input.orig_bases, index_col = 0)
-        orig_table['orig_read'] = orig_table.reads.sequences
-        orig_table.to_csv(output.bases_with_seq)
-
-rule generate_correction_summary_tables:
-    input:
-        corrected_tables = get_grid_filenames_corrected_tables,
-        orig_tables = get_grid_filenames_orig_tables_with_seqs,
-        library = get_aux_data_correction_summary,
-    output:
-        summary_csv = sequencing_dir + '{well}_grid{grid_size}/{segmentation_type}{approach}_correction_summary_{method}{params}.csv',
-    wildcard_constraints:
-        params = params_regex('min', 'max', 'num', 'raw', ('psf', 'box')),
-        method = 'median_invert|gmm|nnls',
-        approach = '_binned|_unbinned|_fullwell|_fullwellbinned',
-    resources:
-        mem_mb = 5000
-    run: 
-        import pandas as pd 
-        import re
-        import starcall.reads 
-
-        #setup exact match table
-        barcodes_table = pd.read_csv(input.library[0])
-        #after barcode table corrections, all barcodes for matching should be length 12 
-        #and the first columns should contain the sequences to be matched with
-        barcode_table_cols = list(barcodes_table.columns)
-        dummy_barcodes = barcodes_table[barcode_table_cols[:1]].rename(columns = {barcode_table_cols[0]: 'corrected_barcode_match'})
-        dummy_barcodes2 = barcodes_table[barcode_table_cols[:1]].rename(columns = {barcode_table_cols[0]: 'orig_barcode_match'})
-        
-        summary_rows = []
-        for table_path, orig_path in zip(input.corrected_tables, input.orig_tables):
-            tile_match = re.search(r'/(tile\d+x\d+y)/', table_path)
-            tile = tile_match.group(1) if tile_match else table_path
-
-            tile_match2 = re.search(r'/(tile\d+x\d+y)/', orig_path)
-            tile2 = tile_match2.group(1) if tile_match else orig_path
-
-            assert tile == tile2
-
-            orig_table = pd.read_csv(orig_path, index_col = 0)
-            table = pd.read_csv(table_path, index_col = 0)
-            
-            table = pd.concat([table, orig_table[['orig_read']]], axis = 1) #add original read matches 
-
-            #filter to only those in cells 
-            table = table[table.cell != 0].copy()
-            #merge exact matches for barcodes
-            table = table.merge(dummy_barcodes2, left_on = 'max_seq', right_on = 'orig_barcode_match', how = 'left')
-            table = table.merge(dummy_barcodes, left_on = 'corrected_max_seq', right_on = 'corrected_barcode_match', how = 'left')
-
-            orig_matched = ~table['orig_barcode_match'].isna()
-            corrected_matched = ~table['corrected_barcode_match'].isna()
-            unchanged_assignments = table['max_seq'] == table['corrected_max_seq']
-            matched_orig = table['max_seq'] == table['orig_read']
-            matched_orig_correction = table['corrected_max_seq'] == table['orig_read']
-
-            summary_rows.append({
-                'tile': tile,
-                'n_reads': len(table),
-                'matched_before': int(orig_matched.sum()),
-                'matched_after': int(corrected_matched.sum()),
-                'gained': int((~orig_matched & corrected_matched).sum()),
-                'lost': int((orig_matched & ~corrected_matched).sum()),
-                'matched_z_score_read_before': int(matched_orig.sum()),
-                'matched_z_score_read_after': int(matched_orig_correction.sum()),
-                'matched_z_score_read_before_barcoded': int((matched_orig & orig_matched).sum()),
-                'matched_z_score_read_after_barcoded': int((matched_orig_correction & corrected_matched).sum()),
-                'both_matched': int((orig_matched & corrected_matched).sum()),
-                'both_matched_unchanged_assignments': int((orig_matched & corrected_matched & unchanged_assignments).sum()),
-                'net_change': int(corrected_matched.sum()) - int(orig_matched.sum()),
-                'mean_phred_before': table['mean_phred'].mean(),
-                'median_phred_before': table['mean_phred'].median(),
-                'mean_min_phred_before': table['min_phred'].mean(),
-                'median_min_phred_before': table['min_phred'].median(),
-                'mean_phred_after': table['corrected_mean_phred'].mean(),
-                'median_phred_after': table['corrected_mean_phred'].median(),
-                'mean_min_phred_after': table['corrected_min_phred'].mean(),
-                'median_min_phred_after': table['corrected_min_phred'].median(),
-            })
-
-        summary_table = pd.DataFrame(summary_rows)
-        summary_table.to_csv(output.summary_csv)
-
-
-def get_well_summary_tables_all_color_correction_approaches(wildcards):
-    sample_approach = ['_binned','_unbinned', '_fullwell', '_fullwellbinned']
-    intensity_approach = ['_raw', '_raw_psf', '_raw_box']
-    crosstalk_correction_approach = ['median_invert',  'nnls'] #removed gmm since it's the worst approach
-    return expand(sequencing_dir + '{well}_grid{grid_size}/{segmentation_type}{sample_approach}_correction_summary_{crosstalk_correction_approach}{intensity_approach}.csv',
-                    sample_approach = sample_approach, 
-                    intensity_approach = intensity_approach, 
-                    crosstalk_correction_approach = crosstalk_correction_approach, allow_missing = True)
-
-rule make_super_summary_table:
-    input:
-        summary_tables = get_well_summary_tables_all_color_correction_approaches,
-    output: 
-        table = sequencing_dir + '{well}_grid{grid_size}/{segmentation_type}_crosstalk_correction_summary_table_all_methods.csv',
-    resources: 
-        mem_mb = lambda wildcards, input: 5000 +  size_mb(input) 
-    run: 
-        import os
-        import pandas as pd 
-        
-        sample_approaches = ['_binned', '_unbinned', '_fullwellbinned', '_fullwell']
-        crosstalk_correction_approaches = ['median_invert',  'nnls']  # removed gmm since it's the worst approach
-        marker = '_correction_summary_'
-
-        master_table = []
-        for summ_table in input.summary_tables:
-            #get sample_approach, intensity_approach, crosstalk_correction_approach from summ_table path
-            rest = os.path.basename(summ_table)
-            assert rest.startswith(wildcards.segmentation_type) and rest.endswith('.csv')
-            rest = rest[len(wildcards.segmentation_type):-len('.csv')]
-
-            sample_approach = next(s for s in sample_approaches if rest.startswith(s))
-            rest = rest[len(sample_approach):]
-
-            assert rest.startswith(marker)
-            rest = rest[len(marker):]
-
-            crosstalk_correction_approach = next(c for c in crosstalk_correction_approaches if rest.startswith(c))
-            intensity_approach = rest[len(crosstalk_correction_approach):]
-
-            #add new columns
-            table = pd.read_csv(summ_table, index_col = 0)
-            table['sampling'] = sample_approach
-            table['intensities'] = intensity_approach
-            table['crosstalk_correction'] = crosstalk_correction_approach
-
-            #append to master table
-            master_table.append(table)
-        master_table = pd.concat(master_table, axis = 0, ignore_index = True)
-        master_table.to_csv(output.table)
-        
-
-rule call_raw_reads:
-    """ Convert the amplicon colonies and values detected in rule find_dots into reads,
-    and assign each to a cell.
-
-    Output: The output is a csv file containing the columns:
-            position_x, position_y: The pixel position of the colony
-            values_cycle00_G, values_cycle00_T, ...:
-                The values extracted from the sequencing images at the colony position,
-                for each cycle and channel.
-            cell: The cell that each read is contained in, 0 if not in a cell.
-    """
-    input:
-        bases = sequencing_dir + '{path}/bases{params}.csv',
-        cells = segmentation_dir + '{path}/{segmentation_type}_mask_downscaled.tif',
-        #cells_table = segmentation_dir + '{path}/{segmentation_type}.csv',
-    output:
-        table = sequencing_dir + '{path}/{segmentation_type}_raw_reads{params}.csv',
-    wildcard_constraints:
-        params = params_regex('min', 'max', 'num', 'raw', 'psf'),
-        #params = '_min\d+',
-    resources:
-        mem_mb = lambda wildcards, input: 5000 +  size_mb(input) * 10
-    run:
-        import tifffile
-        import numpy as np
-        import pandas
-        import csv
-        import matplotlib.pyplot as plt
-        import starcall.reads
-
-        cells = tifffile.imread(input.cells)
-        table = pandas.read_csv(input.bases, index_col=0)
-        #cells_table = pandas.read_csv(input.cells_table, index_col=0)
-
-        xposes, yposes = np.round(table.reads.positions.T).astype(int)
-        table['cell'] = cells[xposes,yposes]
-        #cell_indices = cells[xposes,yposes]
-        #cells_mapping = np.zeros(len(cells_table.index) + 1, dtype=int)
-        #cells_mapping[1:] = cells_table.index.to_numpy()
-        #table['cell'] = cells_mapping[cell_indices]
-
-        table.to_csv(output.table)
-
-
-rule calculate_distance_matrix:
-    """ Calculates a distance matrix between nearby reads, used to combine reads of
-    the same sequence. The distance between reads is calculated as a summation of three factors:
-        The positional distance, the euclidean distance between the two reads, except
-            distance in the same cell is not counted. So two reads in the same cell have
-            positional distance of zero.
-        The cosine distance between the sequencing values for each read,
-        The edit distance between the two sequences.
-    Each has a corresponding weight, specified by the parameters posweight, valweight, seqweight, 
-    specified in config.yaml or in the output filename. The default weights of 99999, 0, 1 means
-    that only reads in the same cell are combined, and only differences in sequence are recorded.
-    Combined with the default threshold for clustering of 0.5, only reads with the same sequence in
-    the same cell will be combined.
-
-    Output: A csv file storing the distance matrix in sparse format.
-    """
-    input:
-        bases = sequencing_dir + '{path}/bases{params}.csv',
-        cells = segmentation_dir + '{path}/{segmentation_type}_mask_downscaled.tif',
-    output:
-        table = sequencing_dir + '{path}/{segmentation_type}_reads_distance_matrix{params}{norm}{posweight}{valweight}{seqweight}.csv',
-    params:
-        normalization = parse_param('norm', config['read_clustering']['normalization']),
-        positional_weight = parse_param('posweight', config['read_clustering']['positional_weight']),
-        value_weight = parse_param('valweight', config['read_clustering']['value_weight']),
-        sequence_weight = parse_param('seqweight', config['read_clustering']['sequence_weight']),
-    wildcard_constraints:
-        params = params_regex('min', 'max', 'num'),
-        norm = '|_norm(none|full|large|sub)',
-        posweight = '|_posweight\d+(.\d+)?',
-        valweight = '|_valweight\d+(.\d+)?',
-        seqweight = '|_seqweight\d+(.\d+)?',
-    resources:
-        mem_mb = lambda wildcards, input: 15000 +  size_mb(input) * 10
-    run:
-        import tifffile
-        import numpy as np
-        import pandas
-        import starcall.reads
-        import csv
-
-        #normalization = 'none'
-        #positional_weight = 100
-        #value_weight = 0
-        #sequence_weight = 1
-
-        table = pandas.read_csv(input.bases, index_col=0)
-        cells = tifffile.imread(input.cells)
-
-        if params.normalization != 'none':
-            table.reads.normalize(method=params.normalization)
-
-    
-        #reverted to the old distance matrix calculations for now 
-        distance_matrix = starcall.reads.distance_matrix_old(
-            table, cells=cells,
-            distance_cutoff=50, #AML - changed back to the same parameters were used for all of T3
-            positional_weight=params.positional_weight,
-            value_weight=params.value_weight,
-            sequence_weight=params.sequence_weight,
-            debug=True, progress=True,
-        )
-        
-        #AML - changed so that the sequencing will finish in the correct format with the old distance matrix calculations
-        #distance_matrix.to_frame().to_csv(output.table)
-        
-        with open(output.table, 'w') as ofile:
-            writer = csv.DictWriter(ofile, ['i', 'j', 'distance'])
-            writer.writeheader()
-
-            for pair, dist in distance_matrix.items():
-                writer.writerow(dict(i=pair[0], j=pair[1], distance=dist))
-
-
-rule cluster_reads:
-    """ Uses the distance matrix calculated in rule calculate_distance_matrix to cluster similar
-    reads. The clustering method used is agglomerative clustering, which starts with every read in
-    its own cluster and combines clusters, maintaining a combined distance of the cluster below the threshold.
-
-    params:
-        thresh: The threshold used for agglomerative clustering
-        linkage: The behaviour used to decide whether to combine two clusters of reads. Either
-            the min, max, or mean distance between all reads in the two clusters is taken, and
-            if the result is less than thresh, the clusters are combined. This is similar to
-            the linkage parameter for sklearn.cluster.AgglomerativeClustering
-    """
-    input:
-        bases = sequencing_dir + '{path}/bases{params}.csv',
-        distances = sequencing_dir + '{path}/{segmentation_type}_reads_distance_matrix{params}.csv'
-    output:
-        clusters = sequencing_dir + '{path}/{segmentation_type}_reads_clusters{params}{thresh}{linkage}.csv',
-    params:
-        threshold = parse_param('thresh', config['read_clustering']['threshold']),
-        linkage = parse_param('linkage', config['read_clustering']['linkage']),
-    wildcard_constraints:
-        params = params_regex('min', 'max', 'num', 'norm', 'posweight', 'valweight', 'seqweight'),
-        thresh = '|_thresh\d+(.\d+)?',
-        linkage = '|_linkage(min|max|mean)',
-    resources:
-        mem_mb = lambda wildcards, input: 5000 +  size_mb(input) * 20
-    run:
-        import numpy as np
-        import csv
-        import starcall.reads
-        import pandas
-
-        #threshold = 0.5
-        #linkage = 'min'
-        table = pandas.read_csv(input.bases, index_col=0)
-        num_reads = len(table.index)
-        del table
-
-        #distance_matrix = {}
-        #with open(input.distances) as ifile:
-            #reader = csv.DictReader(ifile)
-            #for row in reader:
-                #i, j, distance = int(row['i']), int(row['j']), float(row['distance'])
-                #distance_matrix[i,j] = distance
-
-        distance_matrix = pandas.read_csv(input.distances).set_index(['i', 'j'])['distance']
-        print (distance_matrix)
-
-        cluster_indices = starcall.reads.cluster_reads(
-            distance_matrix,
-            threshold=params.threshold,
-            linkage=params.linkage,
-            num_reads=num_reads,
-            debug=True, progress=True,
-        )
-
-        with open(output.clusters, 'w') as ofile:
-            ofile.write('cluster\n')
-            ofile.write(''.join(str(cluster) + '\n' for cluster in cluster_indices))
-
-
-
-rule combine_reads:
-    """ Combines reads based on the clusters calculated in the previous rule.
-    The new read position of a cluster of reads is the mean of all positions. The
-    sequencing values are summed together, and a new column 'count' is added to record
-    the number of individual reads in each read cluster
-    """
-    input:
-        raw_reads = sequencing_dir + '{path}/{segmentation_type}_raw_reads{params_dots}.csv',
-        clusters = sequencing_dir + '{path}/{segmentation_type}_reads_clusters{params_cluster}.csv',
-    output:
-        table = sequencing_dir + '{path}/{segmentation_type}_clustered_reads{params_dots}{params_cluster}.csv',
-    wildcard_constraints:
-        params_dots = params_regex('min', 'max', 'num'),
-        params_cluster = params_regex('norm', 'posweight', 'valweight', 'seqweight', 'thresh', 'linkage'),
-    resources:
-        mem_mb = lambda wildcards, input: 5000 +  size_mb(input) * 25
-    run:
-        import tifffile
-        import numpy as np
-        import pandas
-        import csv
-        import matplotlib.pyplot as plt
-        import starcall.reads
-
-        table = pandas.read_csv(input.raw_reads, index_col=0)
-        clusters = np.loadtxt(input.clusters, skiprows=1, dtype=int, delimiter=',').reshape(-1)
-
-        #if len(clusters) < len(table.index):
-            #index = len(clusters)
-            #max_cluster = clusters.max()
-            #clusters = clusters.resize(len(table.index))
-            #clusters[index:] = np.arange(max_cluster + 1, max_cluster + 1 + len(clusters) - index)
-
-        table['cluster'] = clusters
-        table['count'] = np.ones(len(clusters))
-
-        combined = table.groupby('cluster')
-        combined = combined.agg(**table.reads.aggfuncs(position='mean', values='sum', count='sum', cell=pandas.Series.mode))
-        combined.reads.normalize()
-
-        combined.to_csv(output.table)
-
-rule match_barcodes:
-    """ Matches reads with a barcode library
-    """
-    input:
-        table = sequencing_dir + '{path}/{segmentation_type}_clustered_reads{params}.csv',
-        library = get_aux_data,
-    output:
-        table = sequencing_dir + '{path}/{segmentation_type}_clustered_reads{params}_matched.csv',
-    wildcard_constraints:
-        params = params_regex('min', 'max', 'num', 'norm', 'posweight', 'valweight', 'seqweight', 'thresh', 'linkage'),
-    run:
-        import pandas
-        import numpy as np
-        import starcall.reads
-
-        table = pandas.read_csv(input.table, index_col=0)
-        library = pandas.read_csv(input.library[0], index_col=0)
-        debug (table)
-        debug (library)
-
-        #remove duplicate barcodes
-        library = library.loc[~library.index.duplicated(keep=False),:]
-
-        # filter any that are not the right length
-        barcodes = [barcode[:table.reads.num_cycles] for barcode in library.index if len(barcode) >= table.reads.num_cycles]
-        barcodes = pandas.DataFrame(dict(sequence=barcodes))
-        debug (barcodes)
-        debug (np.unique(list(map(len, barcodes['sequence']))))
-
-        num_entries = 4
-
-        distances = starcall.reads.distance_matrix(table, barcodes,
-                distance_cutoff=table.reads.num_cycles, max_entries=num_entries,
-                sequence_weight=1, debug=True, progress=True)
-        distances = distances.to_frame()
-        debug (distances)
-
-        distances = distances.sort_values('distance').reset_index()
-        groups = distances.groupby('i')
-
-        tables = [table]
-        for i in range(num_entries):
-            matches = groups.nth(i)
-            #debug (matches)
-            #matches.to_csv('tmp.csv')
-            #barcodes.to_csv('tmp2.csv')
-            matches['barcode'] = barcodes.loc[matches['j'],'sequence'].reset_index(drop=True)
-            #matches['barcode'] = barcodes['sequence'][matches['j']]
-            debug (matches)
-            tables.append(matches.reset_index(drop=True).loc[:,['barcode','distance']].add_suffix(str(i)))
-
-        table = pandas.concat(tables, axis=1)
-        debug (table)
-        table.to_csv(output.table)
-
-
-rule combine_cell_reads:
-    """ Reads in each cell are combined to select consensus reads for each cell.
-    All reads in each cell are sorted by the read count, and the top n are kept, n
-    being the parameter max_reads.
-    """
-    input:
-        table = sequencing_dir + '{path}/{segmentation_type}_clustered_reads{params}.csv',
-        cell_table = segmentation_dir + '{path}/{segmentation_type}.csv',
-    output:
-        table = sequencing_dir + '{path}/{segmentation_type}_reads_partial{params}{maxreads}.csv',
-    params:
-        keep_all_reads = config['sequencing'].get('keep_all_reads', False),
-        max_reads = parse_param('maxreads', config['sequencing']['max_reads']),
-    wildcard_constraints:
-        params = params_regex('min', 'max', 'num', 'norm', 'posweight', 'valweight', 'seqweight', 'thresh', 'linkage'),
-        maxreads = '|_maxreads\d+',
-    resources:
-        mem_mb = lambda wildcards, input: 5000 +  size_mb(input) * 50
-    run:
-        import pandas
-        import numpy as np
-        import starcall.utils
-        import starcall.reads
-
-        #max_reads = 2
-
-        table = pandas.read_csv(input.table, index_col=0)
-        table = table.loc[table['cell']!=0,:]
-
-        cell_table = pandas.read_csv(input.cell_table, index_col=0)
-        cell_reads = table.sort_values(['cell', 'count'], ascending=False).groupby('cell')
-        if params.keep_all_reads:
-            max_reads_to_keep = table.cell.value_counts().iloc[0] if len(table.index) else 0 
-        else:
-            max_reads_to_keep =  params.max_reads
-        debug('keeping up to ', max_reads_to_keep, " per cell")
-        cell_reads = cell_reads.head(max_reads_to_keep)
-        cell_reads = cell_reads.reads.to_cell_table(cell_index=range(1, len(cell_table.index) + 1))
-        #fix post-clustering errors (if present) by grouping reads together 
-        #if they are the same and summing their counts
-        if len(cell_reads.index) and 'index_0' in cell_reads.columns:
-            cell_reads = condense_identical_reads(cell_reads, max_reads_to_keep)
-        cell_reads = cell_reads.set_index(cell_table.index)
-        cell_reads.to_csv(output.table)
-
-
-#helper function for combine_cell_reads 
-def condense_identical_reads(df,max_reads_to_keep):
-    #per row, group all reads again (clustering is currently broken)
-    list_cleaned_rows = []
-    for _, row in df.iterrows():
-        real_unique_reads = {}
-        read_ind_curr = 0
-        while  read_ind_curr < max_reads_to_keep and row[f'index_{read_ind_curr}'] != -1 :
-            if row[f'read_{read_ind_curr}'] in real_unique_reads:
-                real_unique_reads[row[f'read_{read_ind_curr}']] += row[f'count_{read_ind_curr}']
-            else:
-                real_unique_reads[row[f'read_{read_ind_curr}']] = row[f'count_{read_ind_curr}']
-            read_ind_curr +=1
-        #now make a priority queue 
-        sorted_dict = OrderedDict(sorted(real_unique_reads.items(), key=lambda item: item[1], reverse = True))
-        #dummy row
-        dummy_row = {}
-        dummy_row['num_reads'] = len(sorted_dict)
-        #dummy_row['orig_num_reads'] = row['num_reads']
-        dummy_row['total_count'] = row['total_count']
-        i = 0
-        for key in sorted_dict:
-            dummy_row[f'read_{i}'] = key
-            dummy_row[f'count_{i}'] = sorted_dict[key]
-            i += 1
-        list_cleaned_rows.append(dummy_row)
-    #turn the rows back into a df 
-    #note that this df does not bother to keep indicies for the clusters - they aren't useful because the 
-    #cluster code is broken right now 
-    new_df = pd.DataFrame(list_cleaned_rows)    
-    for count_col in new_df.columns:
-        if 'count' in count_col:
-            new_df[count_col].fillna(0, inplace=True)
-    return new_df
-
-rule make_qc_read_table:
-    input:
-        raw_reads = sequencing_dir + '{path}/{segmentation_type}_raw_reads.csv',
-        cells = segmentation_dir + '{path}/{segmentation_type}_mask_downscaled.tif',
-        clusters = sequencing_dir + '{path}/{segmentation_type}_reads_clusters.csv',
-        clustered_reads = sequencing_dir + '{path}/{segmentation_type}_clustered_reads_matched.csv',
-        cell_reads = sequencing_dir + '{path}/{segmentation_type}_reads.csv',
-    output:
-        table = sequencing_dir + '{path}/{segmentation_type}_qc_reads.csv',
-    run:
-        import pandas
-        import numpy as np
-        import starcall.reads
-        import tifffile
-        import skimage.measure
-        import scipy.ndimage
-
-        raw = pandas.read_csv(input.raw_reads, index_col=0)
-        raw['cluster'] = pandas.read_csv(input.clusters)['cluster']
-        raw['sequence'] = raw.reads.sequences
-        clustered = pandas.read_csv(input.clustered_reads, index_col=0)
-        clustered['sequence'] = clustered.reads.sequences
-        cells = pandas.read_csv(input.cell_reads, index_col=0)
-
-        raw = raw.drop(columns=[col for col in raw.columns if col[:6] == 'values'])
-        clustered = clustered.drop(columns=[col for col in clustered.columns if col[:6] == 'values'])
-
-        table = raw.join(clustered.add_prefix('clustered_'), on='cluster')
-
-        #cells = cells.add_prefix('cells_')
-        cells = cells.reset_index(names='cell')
-        cells = cells.set_index(pandas.RangeIndex(1, len(cells.index) + 1))
-        table = table.join(cells.add_prefix('cells_'), on='clustered_cell')
-        #table = table.join(cells.add_prefix('cells_').set_index(list(range(1, len(cells.index) + 1))), on='clustered_cell')
-
-        # calculate distance to edge of segmentation
-        cell_masks = tifffile.imread(input.cells)
-        props = skimage.measure.regionprops(cell_masks)
-        props = {prop.label: prop for prop in props}
-        groups = table.groupby('clustered_cell')
-        results = []
-        #for prop in props:
-        for label, group in groups:
-
-            if label == 0:
-                zeros = np.zeros(len(group.index))
-                result = pandas.DataFrame(dict(edge_distance=zeros, center_distance=zeros), index=group.index)
-                debug (result)
-                results.append(result)
-                continue
-            #debug (prop.label)
-            #if prop.label not in groups.groups:
-                #continue
-
-            #group = groups.get_group(prop.label)
-            prop = props[label]
-            debug (group)
-            poses = np.round(np.stack([group['position_x'], group['position_y']], axis=-1)).astype(int)
-            x1 = min(poses[:,0].min(), prop.bbox[0])
-            y1 = min(poses[:,1].min(), prop.bbox[1])
-            x2 = max(poses[:,0].max() + 1, prop.bbox[2])
-            y2 = max(poses[:,1].max() + 1, prop.bbox[3])
-            poses -= [[x1, y1]]
-
-            section = cell_masks[x1:x2,y1:y2] == prop.label
-            dists = -scipy.ndimage.distance_transform_edt(section)
-            dists_outside = scipy.ndimage.distance_transform_edt(~section)
-            dists[~section] = dists_outside[~section]
-            positive_dists = dists - dists.min()
-
-            #debug (x1, y1, x2, y2)
-            #debug (prop.bbox)
-            #debug (np.sum(section))
-            #ksjdfld
-            #debug (poses)
-            #debug (poses.shape)
-            #debug (dists.shape)
-            edge_dists = dists[poses[:,0],poses[:,1]]
-            center_dists = positive_dists[poses[:,0],poses[:,1]]
-            result = pandas.DataFrame(dict(edge_distance=edge_dists, center_distance=center_dists), index=group.index)
-            debug (result)
-            results.append(result)
-
-        table = table.join(pandas.concat(results))
-
-        table.to_csv(output.table)
-
-
-
-
-#ruleorder: merge_grid > find_dots
-#ruleorder: merge_grid > segment_cells
-#ruleorder: link_grid > find_dots
-#ruleorder: link_grid > segment_cells
-#ruleorder: merge_grid > segment_cells_bases
 ruleorder: segment_cells > segment_cells_bases
 
 
@@ -1326,12 +360,8 @@ rule annotate_dots:
     input:
         image = sequencing_dir + '{path}/raw.tif',
         bases = sequencing_dir + '{path}/bases{params}.csv',
-        #'tmp_dot_greyimage.tif',
-        #sequencing_dir + '{path}/clusters.csv',
     output:
         qc_dir + '{path}/annotated{params}.tif',
-        #qc_dir + '{path}/annotated_clusters.tif',
-        #qc_dir + '{path}/annotated_grey.tif',
     wildcard_constraints:
         params = params_regex('min', 'max', 'num'),
     resources:
@@ -1345,32 +375,9 @@ rule annotate_dots:
         import pandas
 
         table = pandas.read_csv(input.bases, index_col=0)
-        #image = tifffile.imread(input[0])
         image = tifffile.memmap(input[0], mode='r')[0]
-        #poses = np.loadtxt(input[1], delimiter=',')[:,:2].astype(int)
-        #clusters = open(input[3]).read().strip().split()[1:]
-        #clusters = np.array([int(cluster) for cluster in clusters])
-
         marked_image = starcall.utils.mark_dots(image, table.reads.positions.astype(int))
         tifffile.imwrite(output[0], marked_image)
-
-        """
-        marked_image[-1] = 0
-        for cluster in range(clusters.max()+1):
-            cluster_poses = poses[clusters==cluster]
-            center = cluster_poses.mean(axis=0).astype(int)
-            for pos in cluster_poses:
-                line = skimage.draw.line(*center, *pos)
-                marked_image[-1,line[0],line[1]] = 1
-
-        tifffile.imwrite(output[1], marked_image)
-
-        greyimage = tifffile.imread(input[2])
-        tifffile.imwrite(output[2], starcall.utils.mark_dots(greyimage[None,:,:], poses))
-        """
-
-
-#ruleorder: tabulate_cells > merge_grid
 
 
 rule merge_final_tables:
@@ -1400,7 +407,7 @@ rule merge_final_tables:
         cell_table = sequencing_dir + '{path}/{segmentation_type}_reads_partial{params}.csv',
         aux_data = get_aux_data,
     output:
-        full_table = sequencing_dir + '{path}/{segmentation_type}_reads{params}.csv',
+        full_table = sequencing_dir + '{path}/{segmentation_type}_reads_old{params}.csv',
     params:
         remove_unmatched = config['sequencing'].get('remove_unmatched_cells', False),
     wildcard_constraints:
@@ -1438,8 +445,6 @@ rule merge_final_tables:
             lengths = np.array(list(map(len, barcodes.flat)))
             debug (lengths)
             debug (lengths.min(), lengths.mean(), lengths.max())
-
-            #library = starcall.sequencing.BarcodeLibrary(barcodes)
 
             reads = []
             counts = []
@@ -1546,11 +551,6 @@ rule merge_final_tables:
         debug ('saving to csv')
         cell_table.to_csv(output.full_table)
         debug ('  done')
-
-#ruleorder: call_reads > merge_grid
-#ruleorder: match_masks > merge_grid
-#ruleorder: merge_final_tables > merge_grid
-#ruleorder: calc_features > merge_grid
 
 
 ##################################################

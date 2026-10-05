@@ -62,48 +62,6 @@ rule calc_background:
 
         tifffile.imwrite(output.background, background)
 
-        """
-        all_shapes = []
-        dtype = None
-        for path in input:
-            tmp_image = tifffile.memmap(path, mode='r')#[:10]
-            all_shapes.append(tmp_image.shape)
-            dtype = tmp_image.dtype
-            del tmp_image
-
-        image_shape = all_shapes[0][1:]
-        image_size = np.prod(image_shape)
-        num_images = sum(shape[0] for shape in all_shapes)
-
-        batch_size = max(image_size // 32, 2048)
-
-        batch_image = np.zeros((num_images, batch_size), dtype)
-        background = np.zeros((6, image_size))
-
-        for i in range(0, image_size, batch_size):
-            debug ('running batch', i, i / image_size)
-
-            begin, end = i, min(i + batch_size, image_size)
-            cur_batch_image = batch_image[:,:end-begin]
-            cur_pos = 0
-
-            for path in input:
-                tmp_image = tifffile.memmap(path, mode='r')#[:10]
-                debug (tmp_image.shape)
-                tmp_image = tmp_image.reshape(tmp_image.shape[0], -1)
-                debug (tmp_image.shape, cur_batch_image.shape, cur_batch_image[cur_pos:cur_pos+tmp_image.shape[0]].shape, tmp_image[:,begin:end].shape)
-                debug (begin, end, image_size)
-                cur_batch_image[cur_pos:cur_pos+tmp_image.shape[0],:end-begin] = tmp_image[:,begin:end]
-                cur_pos += tmp_image.shape[0]
-                del tmp_image
-
-            #background[begin:end] = starcall.correction.estimate_background(cur_batch_image)
-            #background[begin:end] = cur_batch_image.mean(axis=0)
-            background[0,begin:end] = cur_batch_image.mean(axis=0)
-            background[1:,begin:end] = np.percentile(cur_batch_image, [1,5,50,95,99], axis=0)
-
-        tifffile.imwrite(output.background, background.reshape(6, *image_shape))
-        """
 
 rule correct_background:
     """ Uses the background levels estimated by BaSiC to correct the background
@@ -157,6 +115,7 @@ rule stitch_cycle:
         #images = stitching_dir + '{well_stitching}/cycle{cycle}/{corrected}_tiles.tif',
         positions = stitching_dir + '{well_stitching}/cycle{cycle}/positions.csv',
         composite = stitching_dir + '{well_stitching}/composite.json',
+        rotation = stitching_dir + '{well_stitching}/rotation.csv',
     output:
         image = '{output_dir}{well_stitching}/cycle{cycle}/{corrected,raw|corrected}.tif',
     resources:
@@ -183,6 +142,11 @@ rule stitch_cycle:
 
         #images = nd2.imread(input.images).transpose([0,2,3,1])
         images = imread(input.images)
+        angle = read_cycle_rotations(input.rotation)[wildcards.cycle]
+        if angle != 0:
+            from starcall.rotation import rotate_frame
+            for i in range(len(images)):
+                images[i] = rotate_frame(images[i], angle, rotation_order)
         images = images.transpose([0,2,3,1])
 
         debug(images.shape)
@@ -224,87 +188,23 @@ rule stitch_cycle:
             raise
 
 
-'''
-rule stitch_well:
-    """ Stitches the whole well together with all sequencing cycles.
-    The resulting image will have 4 dimensions: (num_cycles, num_channels, width, height)
-    This image may be unreasonably large, for big wells it is recommended to use tiles
-    which are stitched directly, without having to stitch the whole well (see stitch_well_tile)
-    """
-    input:
-        images = expand(stitching_dir + '{well_stitching}/cycle{cycle}/{corrected}_tiles.tif', cycle=cycles, allow_missing=True),
-        composite = stitching_dir + '{well_stitching}/composite{params_alignment}.json',
-    output:
-        temp(stitching_dir + '{well_stitching}/{corrected,raw|corrected}{params_alignment}.tif'),
-    resources:
-        mem_mb = lambda wildcards, input: input.size_mb / len(cycles) * 3.5 + 10000
-    run:
-        import numpy as np
-        import tifffile
-        import constitch
-        import starcall.correction
-        import starcall.utils
-        import tifffile
-        import time
-        import shutil
-
-        composite = constitch.load(input.composite, constraints=False)
-        debug(composite.boxes.points1[:,:2].min(axis=0), composite.boxes.points2[:,:2].max(axis=0))
-        mins = composite.boxes.points1[:,:2].min(axis=0)
-        maxes = composite.boxes.points2[:,:2].max(axis=0)
-        dims = maxes - mins
-        debug (mins, maxes)
-
-        tmp_output = resources.tmpdir + '/well{}.tif'.format(hash(output[0]))
-
-        for i in starcall.utils.simple_progress(range(len(input.images))):
-            debug("stitching cycle", i, time.asctime())
-
-            images = tifffile.imread(input.images[i])
-            images = images.transpose([0,2,3,1])
-
-            if i == 0:
-                well_image = tifffile.memmap(tmp_output, shape=(len(input.images), images.shape[3], int(dims[0]), int(dims[1])), dtype=images.dtype)
-            else:
-                well_image = tifffile.memmap(tmp_output)
-            out_full_image = well_image[i].transpose(1,2,0)
-
-            subcomposite = composite.layer(i)
-            full_image = subcomposite.stitch(
-                real_images=images,
-                mins=mins,
-                maxes=maxes,
-                #out=out_full_image,
-                merger=constitch.EfficientNearestMerger(),
-            )
-
-            full_image = full_image.transpose([2,0,1])
-
-            well_image[i] = full_image
-            debug("written to image")
-            well_image.flush()
-            debug("flushed image")
-            del well_image
-
-        debug("Moving tmp file")
-        shutil.move(tmp_output, output[0])
-        #"""
-'''
-
-
-
 ##################################################
 ## stitching smaller sections, ie subsets, tiles
 ##################################################
-def stitch_well_section(image_paths, composite_paths, mins, maxes, merger='efficient_nearest', phenotype=False):
+def stitch_well_section(image_paths, composite_paths, mins, maxes, merger='efficient_nearest', phenotype=False, angles=None):
+    """ Stitches the section between mins and maxes of every cycle. angles is the rotation
+    (degrees) applied to the tiles of each cycle when they are read, see detect_rotation """
     import constitch
     import starcall.correction
     import numpy as np
+    from starcall.rotation import rotate_frame
 
     section_box = constitch.BBox(point1=mins, point2=maxes)
     full_image = None
+    if angles is None:
+        angles = [0] * len(image_paths)
 
-    for i,(path,composite_path) in enumerate(zip(image_paths, composite_paths)):
+    for i,(path,composite_path,angle) in enumerate(zip(image_paths, composite_paths, angles)):
         composite = constitch.load(composite_path, constraints=False)
 
         if path.endswith('.nd2'):
@@ -317,16 +217,20 @@ def stitch_well_section(image_paths, composite_paths, mins, maxes, merger='effic
                 num_channels = frame_shape[2]
                 for j in range(len(composite.boxes)):
                     if composite.boxes[j].as2d().collides(section_box):
-                        images.append(ifile.read_frame(j).transpose([1,2,0]).copy())
+                        images.append(rotate_frame(ifile.read_frame(j), angle, rotation_order).transpose([1,2,0]).copy())
                     else:
                         images.append(np.empty(frame_shape, dtype))
             composite.images = images
 
         else:
             import tifffile
-            images = tifffile.memmap(path, mode='r').transpose([0,2,3,1])
+            raw_images = tifffile.memmap(path, mode='r')
+            images = raw_images.transpose([0,2,3,1])
             num_channels = images.shape[3]
             dtype = np.float32#images.dtype
+            if angle != 0:
+                images = [rotate_frame(raw_images[j], angle, rotation_order).transpose([1,2,0])
+                          if composite.boxes[j].as2d().collides(section_box) else images[j] for j in range(len(composite.boxes))]
             composite.images = images
 
 
@@ -356,6 +260,7 @@ rule stitch_well:
         images = lambda wildcards: [find_input_tiles(wildcards, cycle=cycle) for cycle in config['cycles']],
         #images = expand(stitching_dir + '{well_stitching}/cycle{cycle}/{corrected}_tiles.tif', cycle=cycles, allow_missing=True),
         composites = expand(stitching_dir + '{well_stitching}/cycle{cycle}/composite{params_alignment}.json', cycle=cycles, allow_missing=True),
+        rotation = stitching_dir + '{well_stitching}/rotation.csv',
         full_composite = stitching_dir + '{well_stitching}/composite{params_alignment}.json',
     output:
         image = '{output_dir}{well_stitching}/{corrected,raw|corrected}{params_alignment}{merger}.tif',
@@ -377,7 +282,8 @@ rule stitch_well:
         full_composite = constitch.load(input.full_composite, constraints=False)#, executor=executor)
         mins, maxes = full_composite.boxes.points1.min(axis=0)[:2], full_composite.boxes.points2.max(axis=0)[:2]
 
-        tifffile.imwrite(output.image, stitch_well_section(input.images, input.composites, mins, maxes, merger=params.merger))
+        tifffile.imwrite(output.image, stitch_well_section(input.images, input.composites, mins, maxes, merger=params.merger,
+                angles=[read_cycle_rotations(input.rotation)[cycle] for cycle in config['cycles']]))
 
 rule stitch_well_pt:
     """ Stitches a whole well together, with all phenotyping cycles.
@@ -391,6 +297,7 @@ rule stitch_well_pt:
         images_pt = lambda wildcards: [find_input_tiles(wildcards, cycle=cycle) for cycle in config['phenotype_cycles']],
         #images_pt = expand(stitching_dir + '{well_stitching}/cycle{cycle}/{corrected}_tiles.tif', cycle=phenotype_cycles, allow_missing=True),
         composites_pt = expand(stitching_dir + '{well_stitching}/cycle{cycle}/composite.json', cycle=phenotype_cycles, allow_missing=True),
+        rotation = stitching_dir + '{well_stitching}/rotation.csv',
         full_composite = stitching_dir + '{well_stitching}/composite.json',
     output:
         image = '{output_dir}{well_stitching}/{corrected,raw|corrected}_pt.tif',
@@ -410,7 +317,8 @@ rule stitch_well_pt:
         maxes *= phenotype_scale
         maxes //= bases_scale
 
-        tifffile.imwrite(output.image, stitch_well_section(input.images_pt, input.composites_pt, mins, maxes, phenotype=True))
+        tifffile.imwrite(output.image, stitch_well_section(input.images_pt, input.composites_pt, mins, maxes, phenotype=True,
+                angles=[read_cycle_rotations(input.rotation)[cycle] for cycle in config['phenotype_cycles']]))
 
 
 rule stitch_section:
@@ -422,6 +330,7 @@ rule stitch_section:
         images = lambda wildcards: [find_input_tiles(wildcards, cycle=cycle) for cycle in config['cycles']],
         #images = expand(stitching_dir + '{well_stitching}/cycle{cycle}/{corrected}_tiles.tif', cycle=cycles, allow_missing=True),
         composites = expand(stitching_dir + '{well_stitching}/cycle{cycle}/composite{params_alignment}.json', cycle=cycles, allow_missing=True),
+        rotation = stitching_dir + '{well_stitching}/rotation.csv',
         full_composite = stitching_dir + '{well_stitching}/composite{params_alignment}.json',
     output:
         image = '{output_dir}{well_stitching}_section{size,\d+}/{corrected,raw|corrected}{params_alignment}.tif',
@@ -436,7 +345,8 @@ rule stitch_section:
         radius = int(wildcards.size) // 2
         mins, maxes = center - radius, center + radius
 
-        tifffile.imwrite(output.image, stitch_well_section(input.images, input.composites, mins, maxes))
+        tifffile.imwrite(output.image, stitch_well_section(input.images, input.composites, mins, maxes,
+                angles=[read_cycle_rotations(input.rotation)[cycle] for cycle in config['cycles']]))
 
 rule stitch_section_pt:
     """ Stitches all phenotyping cycles for a small section of a well, with dimensions wildcards.size pixels square.
@@ -447,6 +357,7 @@ rule stitch_section_pt:
         images = lambda wildcards: [find_input_tiles(wildcards, cycle=cycle) for cycle in config['phenotype_cycles']],
         #images = expand(stitching_dir + '{well_stitching}/cycle{cycle}/{corrected}_tiles.tif', cycle=phenotype_cycles, allow_missing=True),
         composites = expand(stitching_dir + '{well_stitching}/cycle{cycle}/composite.json', cycle=phenotype_cycles, allow_missing=True),
+        rotation = stitching_dir + '{well_stitching}/rotation.csv',
         full_composite = stitching_dir + '{well_stitching}/composite.json',
     output:
         image = '{output_dir}{well_stitching}_section{size,\d+}/{corrected,raw|corrected}_pt.tif',
@@ -467,7 +378,8 @@ rule stitch_section_pt:
         maxes *= phenotype_scale
         maxes //= bases_scale
 
-        tifffile.imwrite(output.image, stitch_well_section(input.images, input.composites, mins, maxes, phenotype=True))
+        tifffile.imwrite(output.image, stitch_well_section(input.images, input.composites, mins, maxes, phenotype=True,
+                angles=[read_cycle_rotations(input.rotation)[cycle] for cycle in config['phenotype_cycles']]))
 
 
 ##################################################
@@ -512,6 +424,7 @@ rule stitch_tile:
         images = lambda wildcards: [find_input_tiles(wildcards, cycle=cycle) for cycle in config['cycles']],
         #images = expand(stitching_dir + '{well_stitching}/cycle{cycle}/{corrected}_tiles.tif', cycle=cycles, allow_missing=True),
         composites = expand(stitching_dir + '{well_stitching}/cycle{cycle}/composite.json', cycle=cycles, allow_missing=True),
+        rotation = stitching_dir + '{well_stitching}/rotation.csv',
         grid_composite = stitching_dir + '{well_stitching}_grid{grid_size}/grid_composite.json',
     output:
         image = '{output_dir}{well_stitching}_grid{grid_size,\d+}/tile{x,\d+}x{y,\d+}y/{corrected,raw|corrected}.tif',
@@ -528,7 +441,11 @@ rule stitch_tile:
         box = grid_composite.boxes[x*grid_size+y]
         debug(box)
 
-        tifffile.imwrite(output.image, stitch_well_section(input.images, input.composites, box.point1, box.point2))
+        tifffile.imwrite(output.image, stitch_well_section(input.images, input.composites, box.point1, box.point2,
+                angles=[read_cycle_rotations(input.rotation)[cycle] for cycle in config['cycles']]))
+
+        import resource
+        debug('peak rss MB', resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024)
 
 
 rule stitch_tile_pt:
@@ -539,6 +456,7 @@ rule stitch_tile_pt:
         images_pt = lambda wildcards: [find_input_tiles(wildcards, cycle=cycle) for cycle in config['phenotype_cycles']],
         #images_pt = expand(stitching_dir + '{well_stitching}/cycle{cycle}/{corrected}_tiles.tif', cycle=phenotype_cycles, allow_missing=True),
         composites_pt = expand(stitching_dir + '{well_stitching}/cycle{cycle}/composite.json', cycle=phenotype_cycles, allow_missing=True),
+        rotation = stitching_dir + '{well_stitching}/rotation.csv',
         grid_composite = stitching_dir + '{well_stitching}_grid{grid_size}/grid_composite.json',
     output:
         image = '{output_dir}{well_stitching}_grid{grid_size,\d+}/tile{x,\d+}x{y,\d+}y/{corrected,raw|corrected}_pt.tif',
@@ -562,7 +480,11 @@ rule stitch_tile_pt:
         box.size //= bases_scale
         debug(box)
 
-        tifffile.imwrite(output.image, stitch_well_section(input.images_pt, input.composites_pt, box.point1, box.point2, phenotype=True))
+        tifffile.imwrite(output.image, stitch_well_section(input.images_pt, input.composites_pt, box.point1, box.point2, phenotype=True,
+                angles=[read_cycle_rotations(input.rotation)[cycle] for cycle in config['phenotype_cycles']]))
+
+        import resource
+        debug('peak rss MB', resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024)
 
 
 
@@ -718,7 +640,8 @@ rule ashlar_positions_to_composite:
         table = np.genfromtxt(input.poses, dtype=None, names=True, delimiter=',')
         composite = constitch.load(input.composite)
 
-        composite.plot_scores(output.plot1)
+        import starcall.stitching_qc
+        starcall.stitching_qc.plot_tile_layout(composite, output.plot1, qc_cycle_labels, title='Tile positions before ASHLAR')
 
         for cycle in range(table['cycle'].max() + 1):
             subtable = table[table['cycle']==cycle]
@@ -737,7 +660,7 @@ rule ashlar_positions_to_composite:
                 for i, index in enumerate(sorted_indices):
                     subcomposite.boxes[index].position[:2] = (round(subtable[i]['x']), round(subtable[i]['y']))
 
-        composite.plot_scores(output.plot2)
+        starcall.stitching_qc.plot_tile_layout(composite, output.plot2, qc_cycle_labels, title='Tile positions from ASHLAR')
 
         constitch.save(output.composite, composite)
 

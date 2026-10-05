@@ -3,6 +3,8 @@ import sys
 import glob
 import time
 
+
+
 ##################################################
 ## Quality control plots
 ##################################################
@@ -1010,107 +1012,155 @@ rule make_variant_cell_images_with_annotation:
 
 
 ##################################################
-## Per-cycle, per-channel SNR QC
+## Dot detection diagnostics
 ##################################################
 
-rule calculate_snr:
-    """ Computes a percentile-based, dot-agnostic SNR metric for the G/T/A/C base-calling
-    channels of a single well/sequencing cycle, sampling a subset of raw tiles rather than
-    reading the full tile stack. Meant as an early sanity check on raw imaging/chemistry
-    quality, not a hard gate - the resulting table/plot are for manual review when picking
-    QC cutoffs.
+# plots made by starcall.dotdetection_qc.plot_all, each with a _data.csv of the values drawn
+dot_detection_qc_plots = ['intensity_trends', 'dog_effect', 'zscore', 'dots']
+
+rule plot_dot_detection_qc:
+    """ QC plots of the intermediate steps of dot detection for one tile: raw intensity trends,
+    the difference of gaussian background correction, the z score normalization per cycle and
+    channel, and dot sizes / chastity / blob_log threshold. Needs dotdetection.diagnostics: True
+    (and backend cpu or gpu) so find_dots writes the diagnostics.
+    The values drawn in each plot are saved next to it as {plot}_data.csv
     """
     input:
-        image = lambda wildcards: find_input_file(well=wildcards.well, cycle=wildcards.cycle),
+        summary = sequencing_dir + '{path}/dotdiagnostics{params}.summary.csv',
+        images = sequencing_dir + '{path}/dotdiagnostics{params}.images.npz',
     output:
-        table = qc_dir + '{well}/snr_cycle{cycle}.csv',
-    params:
-        num_sample_tiles = config['qc']['snr_num_sample_tiles'],
-        background_percentile = config['qc']['snr_background_percentile'],
-        signal_percentile = config['qc']['snr_signal_percentile'],
-        seed = config['qc']['snr_random_seed'],
+        plots = expand(qc_dir + '{{path}}/dot_detection{{params}}/{plot}.svg', plot=dot_detection_qc_plots),
+        data = expand(qc_dir + '{{path}}/dot_detection{{params}}/{plot}_data.csv', plot=dot_detection_qc_plots),
+    wildcard_constraints:
+        params = params_regex('min', 'max', 'num'),
     resources:
         mem_mb = 8000
     run:
-        import numpy as np
-        import pandas as pd
-        from starcall.qc import calculate_snr
-
-        base_channels = [c for c in config['sequencing_channels'] if c in ('G', 'T', 'A', 'C')]
-
-        shape, dtype = iminfo(input.image)  # (num_tiles, num_channels, H, W), no full load
-        rng = np.random.default_rng(params.seed)
-        sample_size = min(params.num_sample_tiles, shape[0])
-        indices = np.sort(rng.choice(shape[0], size=sample_size, replace=False))
-
-        images = imread(input.image, indices=indices)  # only loads the sampled tiles
-
-        rows = []
-        for channel_name in base_channels:
-            c = config['sequencing_channels'].index(channel_name)
-            background, signal, noise, snr = calculate_snr(
-                images[:, c].astype(np.float64).ravel(),
-                params.background_percentile, params.signal_percentile)
-            rows.append(dict(well=wildcards.well, cycle=wildcards.cycle, channel=channel_name,
-                              channel_index=c, background=background, signal=signal,
-                              noise=noise, snr=snr, num_tiles_sampled=sample_size))
-
-        pd.DataFrame(rows).to_csv(output.table, index=False)
+        import starcall.dotdetection_qc
+        starcall.dotdetection_qc.plot_all([input.summary], os.path.dirname(output.plots[0]),
+                images_path=input.images, cycle_labels=cycles)
 
 
-rule combine_snr:
-    """ Concatenates per-cycle SNR tables for a well into one table covering all sequencing cycles. """
+def get_grid_dot_diagnostics(wildcards):
+    grid_size = int(wildcards.grid_size)
+    numbers = ['{:02}'.format(i) for i in range(grid_size)]
+    return expand(sequencing_dir + '{well}_grid{grid_size}/tile{x}x{y}y/dotdiagnostics{params}.summary.csv', x=numbers, y=numbers, allow_missing=True)
+
+rule plot_dot_detection_qc_well:
+    """ The dot detection QC plots for a whole well, from the diagnostics of all its tiles.
+    Histograms and sums are added up over tiles, per tile values (z score means and stds,
+    blob_log thresholds, dot density) are shown per tile.
+    Also saves tile_summary.csv (all tile summaries) and well_summary.csv (merged), which
+    starcall.dotdetection_qc can load to make custom plots.
+    """
     input:
-        tables = lambda wildcards: expand(qc_dir + '{well}/snr_cycle{cycle}.csv', cycle=cycles, allow_missing=True),
+        summaries = get_grid_dot_diagnostics,
     output:
-        table = qc_dir + '{well}/snr_all_cycles.csv',
+        plots = expand(qc_dir + '{{well}}_grid{{grid_size}}/dot_detection{{params}}/well_{plot}.svg', plot=dot_detection_qc_plots),
+        data = expand(qc_dir + '{{well}}_grid{{grid_size}}/dot_detection{{params}}/well_{plot}_data.csv', plot=dot_detection_qc_plots),
+        well_summary = qc_dir + '{well}_grid{grid_size}/dot_detection{params}/well_summary.csv',
+        tile_summary = qc_dir + '{well}_grid{grid_size}/dot_detection{params}/tile_summary.csv',
+    wildcard_constraints:
+        grid_size = '\d+',
+        params = params_regex('min', 'max', 'num'),
+    resources:
+        mem_mb = lambda wildcards, input: 8000 + size_mb(input) * 5
     run:
-        import pandas as pd
-        pd.concat([pd.read_csv(t) for t in input.tables], ignore_index=True).to_csv(output.table, index=False)
+        import starcall.dotdetection_qc
+        written = starcall.dotdetection_qc.plot_all(input.summaries, os.path.dirname(output.plots[0]),
+                prefix='well_', cycle_labels=cycles)
+        # with a single non empty tile no merged summaries are written by plot_all
+        import pandas
+        table = starcall.dotdetection_qc.load_summary(input.summaries)
+        if output.tile_summary not in written:
+            table.to_csv(output.tile_summary, index=False)
+        if output.well_summary not in written:
+            starcall.dotdetection_qc.merge_summary(table).to_csv(output.well_summary, index=False)
 
-def get_cycle_str(i):
-    if i >= 10:
-        return str(i)
-    else:
-        return "0" + str(i)
 
-rule make_snr_qc_plot:
-    """ Renders a base-channel x cycle heatmap of SNR values for a well, for manual QC review. """
+def find_mask_sizes_tables(wildcards):
+    """ The per tile mask size tables written by segment_nuclei / segment_cells for each well.
+    In a grid the tile filenames also end with the grid suffix, so find_all_files can't be used directly.
+    """
+    unmatched = '_unmatched' if config['segmentation'].get('match_masks', False) else ''
+    path = segmentation_dir + '{well}{grid}/' + wildcards.segmentation_type + '_mask_sizes' + unmatched
+    if wildcards.grid[:5] == '_grid':
+        grid_size = int(wildcards.grid[5:]) if len(wildcards.grid) > 5 else segmentation_grid_size
+        return find_all_files(wildcards, path + '_grid{}.tsv'.format(grid_size), grid_size=grid_size)
+    return find_all_files(wildcards, path + '.tsv')
+
+rule plot_mask_sizes:
+    """ Distributions of nuclei / cell mask sizes (area, min and max bbox side length) before
+    filtering, from the tables saved by segment_nuclei and segment_cells. The min_area and
+    min_bbox filter thresholds are drawn as dashed lines. Masks touching the image edge are
+    left out, as they are removed regardless of size and their sizes are truncated.
+    """
     input:
-        table = qc_dir + '{well}/snr_all_cycles.csv',
+        tables = find_mask_sizes_tables,
     output:
-        plot = qc_dir + '{well}/snr_qc.svg',
+        plot = qc_dir + '{wells}{grid}/{segmentation_type}_mask_sizes.svg',
+    wildcard_constraints:
+        segmentation_type = '(nuclei|cells)(_[^/]*)?',
+    params:
+        min_area = lambda wildcards: config['segmentation']['nuclei_segmentation_filter_min_area'
+                if wildcards.segmentation_type.startswith('nuclei') else 'cell_segmentation_filter_min_area'],
+        min_bbox = lambda wildcards: config['segmentation']['nuclei_segmentation_filter_min_bbox'
+                if wildcards.segmentation_type.startswith('nuclei') else 'cell_segmentation_filter_min_bbox'],
+    resources:
+        mem_mb = lambda wildcards, input: 5000 + size_mb(input) * 10
     run:
-        import pandas as pd
+        import pandas
         import numpy as np
+        import matplotlib
+        matplotlib.use('Agg')
         import matplotlib.pyplot as plt
 
-        df = pd.read_csv(input.table)
-        df['cycle'] = df['cycle'].apply(lambda x: get_cycle_str(x))
-        debug (df)
-        base_channels = [c for c in config['sequencing_channels'] if c in ('G', 'T', 'A', 'C')]
-        grid = np.full((len(base_channels), len(cycles)), np.nan)
-        for i, ch in enumerate(base_channels):
-            for j, cyc in enumerate(cycles):
-                debug (ch, cyc)
-                match = df[(df.channel == ch) & (df.cycle == cyc)]
-                if len(match):
-                    grid[i, j] = match['snr'].iloc[0]
+        matplotlib.rcParams.update({'xtick.labelsize': 10, 'ytick.labelsize': 10, 'font.size': 12})
+        bar_color, line_color, text_color = '#2a78d6', '#52514e', '#0b0b0b'
 
-        fig, ax = plt.subplots(figsize=(max(6, len(cycles) * 0.5), max(4, len(base_channels) * 0.5)))
-        im = ax.imshow(grid, aspect='auto', cmap='viridis')
-        ax.set_xticks(range(len(cycles)))
-        ax.set_xticklabels(cycles, rotation=90)
-        ax.set_yticks(range(len(base_channels)))
-        ax.set_yticklabels(base_channels)
-        for i in range(len(base_channels)):
-            for j in range(len(cycles)):
-                if not np.isnan(grid[i, j]):
-                    ax.text(j, i, f'{grid[i, j]:.1f}', ha='center', va='center', color='white', size=7)
-        ax.set_xlabel('cycle')
-        ax.set_ylabel('base channel')
-        fig.colorbar(im, ax=ax, label='SNR')
+        table = pandas.concat([pandas.read_csv(path, sep='\t') for path in input.tables], ignore_index=True)
+        num_edge = int(table['on_edge'].astype(bool).sum())
+        table = table[~table['on_edge'].astype(bool)]
+
+        fig, axes = plt.subplots(ncols=3, figsize=(15, 4.5))
+        panels = [
+            ('area', 'Area (px)', params.min_area, 'min_area'),
+            ('min_bbox_dim', 'Min bbox side (px)', params.min_bbox, 'min_bbox'),
+            ('max_bbox_dim', 'Max bbox side (px)', None, None),
+        ]
+
+        for ax, (column, label, threshold, threshold_name) in zip(axes, panels):
+            values = table[column].to_numpy()
+            ax.set_xlabel(label)
+            ax.spines[['top', 'right']].set_visible(False)
+            ax.grid(axis='y', color='#e5e5e3', linewidth=0.8)
+            ax.set_axisbelow(True)
+            if len(values) == 0:
+                ax.text(0.5, 0.5, 'no masks', transform=ax.transAxes, ha='center', color=line_color)
+                continue
+
+            # bins always reach the threshold so its line is on the plot
+            low, high = min(values.min(), threshold or values.min()), values.max()
+            if column == 'area':
+                # areas span orders of magnitude, so log spaced bins on a log axis
+                bins = np.geomspace(max(low, 1), max(high, 2), 80)
+                ax.set_xscale('log')
+            else:
+                # integer aligned bins, otherwise integer values alias into spikes
+                step = max(1, int(np.ceil((high - low + 1) / 100)))
+                bins = np.arange(low, high + step + 1, step) - 0.5
+            counts, _, _ = ax.hist(values, bins=bins, color=bar_color, edgecolor='white', linewidth=0.5)
+            # headroom above the tallest bar for the threshold label
+            ax.set_ylim(0, counts.max() * 1.25)
+
+            if threshold:
+                ax.axvline(threshold, color=line_color, linestyle='--', linewidth=1.5)
+                ax.text(threshold, 0.97, ' {} = {}\n {:.1%} below'.format(threshold_name, threshold, (values < threshold).mean()),
+                        transform=ax.get_xaxis_transform(), ha='left', va='top', fontsize=10, color=text_color)
+
+        axes[0].set_ylabel('Masks')
+        fig.suptitle('{} mask sizes, {} - {} masks ({} touching edge excluded), {} kept after filtering'.format(
+                wildcards.segmentation_type, wildcards.wells + wildcards.grid, len(table.index), num_edge,
+                int(table['kept'].astype(bool).sum())), fontsize=12)
         fig.tight_layout()
         fig.savefig(output.plot)
-
-####

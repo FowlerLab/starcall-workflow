@@ -1,0 +1,124 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Starcall Viewer</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Ubuntu+Mono:ital,wght@0,400;0,700;1,400&display=swap">
+<link rel="stylesheet" href="/static/style.css?v=2">
+</head>
+<body>
+<header class="topbar">
+  <div class="brand">Starcall Viewer <span id="run-name" class="muted"></span></div>
+  <label>Well <select id="well"></select></label>
+  <nav class="tabs" role="tablist">
+    <button role="tab" data-mode="dot" id="tab-dot">Dot</button>
+    <button role="tab" data-mode="cell" id="tab-cell">Cell</button>
+  </nav>
+  <form id="dot-form" class="lookup">
+    <label>Tile <select id="dot-tile"></select></label>
+    <label>Dot index <input id="dot-index" type="number" min="0" step="1" required></label>
+    <label title="Fit cell: the dot's cell plus a margin (64 px around dots that aren't in a cell). Or a square of this many pixels centred on the dot">Crop
+      <select id="dot-size"><option value="fit" selected>fit cell</option><option>32</option><option>64</option><option>128</option><option>256</option></select></label>
+    <button type="submit">Show</button>
+  </form>
+  <form id="cell-form" class="lookup" hidden>
+    <label title="Tile of the cell shown; the cell id alone decides which cell is shown">Tile <select id="cell-tile"></select></label>
+    <label>Cell id <input id="cell-id" type="number" min="0" step="1" required></label>
+    <label title="Fit cell: the cell plus a margin. Or a square of this many pixels centred on the cell">Crop
+      <select id="cell-size"><option value="fit" selected>fit cell</option><option>32</option><option>64</option><option>128</option><option>256</option></select></label>
+    <button type="submit">Show</button>
+  </form>
+  <div class="options">
+    <label title="Global: same display range for a channel in every cycle. Per image: stretch each crop.">Contrast mode
+      <select id="contrast-mode"><option value="global">global</option><option value="local">per image</option></select></label>
+    <label>Masks and dots
+      <select id="overlay-mode">
+        <option value="none">None</option>
+        <option value="cells">Cells</option>
+        <option value="cells-nuclei">Cells and nuclei</option>
+        <option value="cells-dots" selected>Cells and dots</option>
+        <option value="cells-nuclei-dots">Cells and nuclei and dots</option>
+        <option value="cells-dots-ids">Cells and dots (ids)</option>
+        <option value="cells-dots-seqs">Cells and dots (sequences)</option>
+        <option value="cells-nuclei-dots-ids">Cells and nuclei and dots (ids)</option>
+        <option value="cells-nuclei-dots-seqs">Cells and nuclei and dots (sequences)</option>
+      </select></label>
+    <label title="Also draw every other cell outline, nucleus and dot inside the crop (this tile's tables only)">
+      <input type="checkbox" id="show-region" autocomplete="off"> All cells and dots in view</label>
+    <span id="region-status" aria-live="polite"></span>
+  </div>
+</header>
+
+<main id="main">
+  <p class="placeholder" id="placeholder">Enter a tile and dot index, or a cell id.</p>
+  <div id="error" class="error" hidden></div>
+
+  <section id="view" hidden>
+    <div class="left">
+      <div class="summary card">
+        <div id="summary"></div>
+        <div id="summary-images" class="pt-grid summary-images" hidden></div>
+      </div>
+
+      <div class="card viewer-card">
+        <div class="viewer-head">
+          <button class="icon" id="prev-image" title="Previous image (←)">‹</button>
+          <div id="viewer-title">Click any image to view it here</div>
+          <button class="icon" id="next-image" title="Next image (→)">›</button>
+        </div>
+        <div class="viewer-stage" id="viewer-stage"></div>
+        <div class="viewer-controls">
+          <label>min <input type="range" id="vmin" min="0" max="65535" step="1"><output id="vmin-out"></output></label>
+          <label>max <input type="range" id="vmax" min="0" max="65535" step="1"><output id="vmax-out"></output></label>
+          <button id="apply-contrast" title="Use this range for every image of this channel">Apply to channel</button>
+          <button id="reset-contrast">Reset</button>
+        </div>
+        <div class="viewer-controls export-controls">
+          <label title="Width and height of the exported PNG">Export
+            <select id="export-size"><option>512</option><option selected>1024</option><option>2048</option></select> px</label>
+          <button id="export-png" title="This image and the annotations shown, as one PNG">PNG</button>
+          <button id="export-svg" title="This image with the annotations as vector lines, as one SVG">SVG</button>
+          <span id="export-status" class="muted" aria-live="polite"></span>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2 id="pt-title">Phenotype</h2>
+        <div class="pt-grid" id="pt-grid"></div>
+      </div>
+
+      <div class="card" id="cell-extra" hidden></div>
+    </div>
+
+    <div class="right card">
+      <div class="card-head">
+        <h2>Sequencing cycles × channels</h2>
+        <button id="reset-colors" title="Back to the default colour for every channel">Reset colours</button>
+      </div>
+      <div class="matrix-wrap"><div class="matrix" id="matrix"></div></div>
+    </div>
+
+    <div class="side">
+      <div class="card composite-card">
+        <div class="card-head">
+          <h2>Composite</h2>
+          <button id="composite-default" title="Back to the phenotype segmentation channels">Default layers</button>
+        </div>
+        <div class="composite-body">
+          <div class="composite-stage" id="composite-stage"></div>
+          <div class="composite-layers" id="composite-layers"></div>
+        </div>
+        <p class="note">Tick the images to stack. Each one is drawn in its channel's colour and contrast, and they are added together. Click the composite to open it in the viewer and export it.</p>
+      </div>
+
+      <div class="card" id="charts"></div>
+    </div>
+  </section>
+</main>
+<div id="tooltip" class="tooltip" hidden></div>
+<script src="/static/app.js?v=2"></script>
+</body>
+</html>

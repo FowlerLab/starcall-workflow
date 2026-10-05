@@ -40,7 +40,7 @@ stitching:
     # so 16 would mean alignment is done to 1/16 of a pixel. This requires minimal extra
     # processing, and improves alignment up to 16, past which improvements are not small.
     # This can be disabled by not setting this or setting it to 1.
-    subpixel_alignment: 16
+    subpixel_alignment: 8
     # Solving method for alignment. I have found 'mae' (Mean absolute error minimizing solver)
     # to be the best in most situations. Other options are 'mse' (Mean squared error minimizing solver),
     # 'spantree' (Spanning tree)
@@ -49,6 +49,24 @@ stitching:
     # the limit is 5, cycle 0 would be aligned to cycle 4 but not cycle 5.
     # This reduces the processing greatly when the number of cycles is large.
     max_cycle_pairs: 16
+    # Number of threads used by each calculate_constraints job to align tiles
+    threads: 8
+    # Rotation of the image content of each cycle is measured on sample tiles before alignment
+    # (eg when the plate was rotated slightly when put back on the stage), and cycles rotated
+    # more than threshold degrees from the reference are rotated back when their tiles are read,
+    # for alignment and all stitched images. See qc/{well}/rotation.png and rotation.csv.
+    # Not applied to the ASHLAR stitching rules.
+    rotation:
+        # set to False to only measure and report rotations
+        correct: True
+        # degrees, 0.05 moves the corners of a 2304 px tile by about 1.4 px
+        threshold: 0.05
+        # 'median' to use the median rotation of the sequencing cycles as zero, or a cycle eg '03'
+        reference: 'median'
+        # number of tiles the rotation is measured on
+        num_tiles: 16
+        # interpolation when rotating tiles, 1 is bilinear, 3 cubic
+        interpolation_order: 1
     # The method to combine overlapping tiles. Mean takes the mean, nearest crops
     # each tile to be not overlapping
     merger: 'nearest'
@@ -84,7 +102,7 @@ segmentation:
     cells_method: 'cellpose'
     # Determine if both nuclei and cytoplasm should be used for cellpoes segmentation
     # If true, use both, else uses only cytoplasm
-    use_cytoplasm_and_nuclei: False
+    use_cytoplasm_and_nuclei: True
 
     #Filtering parameters for removing small nuclei masks.  The min_area value removes all masks 
     #with area less than the min_area value in pixels.  The min_bbox removes all masks with 
@@ -116,44 +134,28 @@ dotdetection:
     min_sigma: 1
     max_sigma: 3
     num_sigma: 7
+    # Which version of dot detection to run: original (single threaded),
+    # cpu (multithreaded, less memory) or gpu (needs cupy and cucim, runs on a cuda node)
+    backend: gpu
+    # threads for dot detection, only the cpu and gpu backends use more than one
+    # threads: 16
+    # Write statistics of the intermediate dot detection steps (cpu and gpu backends only),
+    # for the plot_dot_detection_qc (per tile) and plot_dot_detection_qc_well rules
+    diagnostics: True
+    #The stride to use when sampling image pixels for diagnostic stats (will take every Xth 
+    #pixel in the X and Y axis to make the sample)
+    pixel_sample_stride: 8
+    #Image crop size to take for examples for the diagnostics report 
+    #This will be taken from the center of the well by default and show the raw intensities,
+    #the Gaussian background subtraction, and z-scoring results in the crop 
+    crop_sample_size: 512
+    #Number of dots to sample per tile (or per well if doing well-level processing)
+    #for diagnostic statistics 
+    max_dots_for_sample: 50000
 
-read_clustering:
-    # Parameters for clustering nearby reads into single reads of the same sequence
-    # Distances between reads are calculated with three values, positional distance, 
-    # cosine distance between their read values extracted from the sequencing images,
-    # and edit distance between their sequences.
-    # The current values for the paramters (99999, 0, 1 for weights, linkage max and threshold 0.5)
-    # simply combines all reads that have the same sequence. This system is still being
-    # tested, and experimentation with parameters is encouraged.
-    normalization: 'none'
-    positional_weight: 99999
-    value_weight: 0
-    sequence_weight: 1
-
-    # These distances are then clustered with agglomerative clustering, specified
-    # with linkage (min, mean, max) and threshold. More on agglomerative clustering
-    # can be found here
-    # https://scikit-learn.org/stable/modules/generated/sklearn.cluster.AgglomerativeClustering.html#sklearn.cluster.AgglomerativeClustering
-    linkage: 'max'
-    threshold: 0.5
-
-crosstalk_correction: 
-    #how many samples to take in total across the well to calculate a cross talk matrix
-    total_samples: 50000
-    #Cutoff for sampling. Only use samples below the percentile cutoff given per tile
-    sampling_percentile_cutoff: 0.99
-    #Minimum phred per cycle needed to be considered for sampling for the crosstalk matrix 
-    min_sampling_phred: 90
-    #Bins to split cycles in per tile to sample from for crosstalk matrix construction
-    number_sampling_bins: 10
-
-sequencing:
-    # The max number of reads kept for each cell. A good number for this is usually,
-    # 4-8, but this depends on how prevelant errors are and the size of the barcode library
-    max_reads: 4
-    # Whether the table should keep all reads per cell (these are not used for barcode matching,
-    # only the the number max_reads are used for barcode matching, sorted by read count)
-    keep_all_reads: False
+sequencing: 
+    remove_unmatched_cells: False
+    number_cores_for_alignment: 16 #adjust based on memory usage and available cores
 
 phenotyping:
     # Whether cell segmentation is run on background corrected images
@@ -165,16 +167,6 @@ phenotyping:
     # in a different conda environment, this should reflect that.
     cellprofiler_executable: 'cellprofiler'
     #cellprofiler_executable: '~/miniconda3/envs/cp4/bin/cellprofiler'
-
-qc:
-    # Number of tiles randomly sampled per well/cycle when computing SNR QC metrics
-    snr_num_sample_tiles: 20
-    # Percentile used as the "background" intensity level for SNR
-    snr_background_percentile: 50
-    # Percentile used as the "signal" intensity level for SNR
-    snr_signal_percentile: 99.9
-    # Random seed for tile sampling, for reproducibility
-    snr_random_seed: 0
 
 
 # Directory that contains the raw .nd2 microscope files. It should
