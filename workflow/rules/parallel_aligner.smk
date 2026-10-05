@@ -127,52 +127,25 @@ rule align_unique_well_sequences_to_barcodes_zscored:
         read_seqs = pd.read_csv(input.sequences)['sequence'].to_list()
         batch_size = params.batch_size
 
-        #check if a version of the alignment table exists already (if it does, add the new sequences only to it
-        #this is just to make it easier to prototype sequencing approaches - we can remove this later 
-        if os.path.exists(output.matches):
-            already_matched = pd.read_csv(output.matches)
-            already_matched = already_matched.sequence.to_list()
-            debug ('aligmnet table already exists...initial reads to align: ', len(read_seqs))
-            read_seqs = set(read_seqs).difference(set(already_matched))
-            debug ('reads not already aligned: ', len(read_seqs))
-            read_seqs = np.asarray(list(read_seqs), dtype=f'<U{num_cycles}')
-            batches = [(start, read_seqs[start:start + batch_size]) for start in range(0, len(read_seqs), batch_size)]
+        debug ('aligning', len(read_seqs), 'unique sequences against', len(barcode_seqs), 'barcodes using', threads, 'workers')
+        
+        read_seqs = np.asarray(list(read_seqs), dtype=f'<U{num_cycles}')
+        batches = [(start, read_seqs[start:start + batch_size]) for start in range(0, len(read_seqs), batch_size)]
+        min_dist = np.empty(len(read_seqs), dtype=int)
+        matched_barcodes = [None] * len(read_seqs)
 
-            min_dist = np.empty(len(read_seqs), dtype=int)
-            matched_barcodes = [None] * len(read_seqs)
+        with ProcessPoolExecutor(max_workers=threads, initializer=init_barcode_match_worker, initargs=(barcode_seqs, barcode_seqs_full)) as executor:
+            for start, batch_min, batch_matches in executor.map(match_barcode_batch, batches):
+                min_dist[start:start + len(batch_min)] = batch_min
+                for i, m in enumerate(batch_matches):
+                    matched_barcodes[start + i] = m
 
-            with ProcessPoolExecutor(max_workers=threads, initializer=init_barcode_match_worker, initargs=(barcode_seqs, barcode_seqs_full)) as executor:
-                for start, batch_min, batch_matches in executor.map(match_barcode_batch, batches):
-                    min_dist[start:start + len(batch_min)] = batch_min
-                    for i, m in enumerate(batch_matches):
-                        matched_barcodes[start + i] = m
-
-            result = pd.DataFrame({
-                'sequence': read_seqs,
-                'min_hamming_distance': min_dist,
-                'barcode_matches': matched_barcodes,
-            })
-            result.to_csv(output.matches, index=False)
-        else:
-            debug ('aligning', len(read_seqs), 'unique sequences against', len(barcode_seqs), 'barcodes using', threads, 'workers')
-           
-            read_seqs = np.asarray(list(read_seqs), dtype=f'<U{num_cycles}')
-            batches = [(start, read_seqs[start:start + batch_size]) for start in range(0, len(read_seqs), batch_size)]
-            min_dist = np.empty(len(read_seqs), dtype=int)
-            matched_barcodes = [None] * len(read_seqs)
-
-            with ProcessPoolExecutor(max_workers=threads, initializer=init_barcode_match_worker, initargs=(barcode_seqs, barcode_seqs_full)) as executor:
-                for start, batch_min, batch_matches in executor.map(match_barcode_batch, batches):
-                    min_dist[start:start + len(batch_min)] = batch_min
-                    for i, m in enumerate(batch_matches):
-                        matched_barcodes[start + i] = m
-
-            result = pd.DataFrame({
-                'sequence': read_seqs,
-                'min_hamming_distance': min_dist,
-                'barcode_matches': matched_barcodes,
-            })
-            result.to_csv(output.matches, index=False)
+        result = pd.DataFrame({
+            'sequence': read_seqs,
+            'min_hamming_distance': min_dist,
+            'barcode_matches': matched_barcodes,
+        })
+        result.to_csv(output.matches, index=False)
 
 
 rule apply_barcode_matches_quality_table_to_tile_zscored:
@@ -245,7 +218,7 @@ rule combine_reads_in_cells_with_scores_zscored_quality_version:
         table = sequencing_dir + '{path}/{segmentation_type}_zscored_matched_quality{params}.csv',
         cell_table = segmentation_dir + '{path}/{segmentation_type}.csv',
     output:
-        table = sequencing_dir + '{path}/{segmentation_type}_reads{params}.csv',
+        table = sequencing_dir + '{path}/{segmentation_type}_reads_no_winner{params}.csv',
     wildcard_constraints:
         maxreads = '|_maxreads\d+',
         params = params_regex('min', 'max', 'num', ),
@@ -382,3 +355,127 @@ rule calculate_per_tile_stats_zscored:
             })
         summary_table = pd.DataFrame(summary_rows)
         summary_table.to_csv(output.summary_csv)
+
+
+
+
+
+
+rule select_winner_attach_aux_data:
+    input: 
+        table = sequencing_dir + '{path}/{segmentation_type}_reads_no_winner{params}.csv',
+        aux_data = get_aux_data,
+    output: 
+        table = sequencing_dir + '{path}/{segmentation_type}_reads{params}.csv',
+    wildcard_constraints:
+        params = params_regex('min', 'max', 'num', ),
+    resources:
+        mem_mb = lambda wildcards, input: 5000 + size_mb(input) * 2
+    run:
+        import pandas as pd
+
+        def max_qual(phred_val):
+            #qualities are ':'-joined when count_i > 1 (one score per merged read); take the best
+            #only need one good count of a read to be a candidate
+            if isinstance(phred_val, str):
+                return max(float(p) for p in phred_val.split(':'))
+            return float(phred_val)
+
+        def lowest_match_winner(row, exclude_lowest_chastity = True):
+            #matcher based on the old approach 
+            #order barcodes by their edit distance, and by highest count within the same edit distance
+            #take the first two barcodes as first and second place 
+            #if they have the same edit distance and count, return no winner
+            #if exclude_lowest_chastity, don't allow reads with a highest phred of 0.5 to be considered for winning
+            
+            #keep only the best (distance, -count) entry for each barcode, so the same barcode
+            #can't take both first and second place. reads are visited in rank order (count, then chastity),
+            #so on an exact tie within a barcode the earlier read is kept
+            best_per_barcode = {}
+            i = 0
+            while f'read_{i}' in row.axes[0]:
+                read = row[f'read_{i}']
+                if isinstance(read, str):
+                    hamming_dist = row[f'barcode_hamming_dist_{i}']
+                    count = row[f'count_{i}']
+                    barcodes = row[f'barcode_matches_{i}']
+                    barcodes = barcodes.split(';')
+                    qual = max_qual(row[f'chastities_{i}'])
+                    if (exclude_lowest_chastity and qual > 0.5) or (not exclude_lowest_chastity):
+                        for barcode in barcodes:
+                            entry = (hamming_dist, -1 * count, barcode, read, i)
+                            if barcode not in best_per_barcode or entry[:2] < best_per_barcode[barcode][:2]:
+                                best_per_barcode[barcode] = entry
+                i += 1
+
+            #sort on (distance, -count, read index) only -- never on the barcode string, so the
+            #ranking doesn't depend on spelling. sorted() is stable, so remaining ties keep insertion order
+            reads_pq = sorted(best_per_barcode.values(), key=lambda entry: (entry[0], entry[1], entry[4]))
+
+            winning_barcode = None
+            winning_distance = None
+            winning_count = 0
+            winning_read_index = None
+            second_barcode = None
+            second_distance = None
+            second_count = 0
+            second_read_index = None
+            winning_read = None
+            second_read = None
+            #print (reads_pq)
+            if len(reads_pq) > 0:
+                first_tuple = reads_pq[0]
+                winning_distance = first_tuple[0]
+                winning_count = first_tuple[1]
+                winning_barcode = first_tuple[2]
+                winning_read = first_tuple[3]
+                winning_read_index = first_tuple[4]
+            if len(reads_pq) > 1:
+                sec_tuple = reads_pq[1]
+                second_distance = sec_tuple[0]
+                second_count = sec_tuple[1]
+                second_barcode = sec_tuple[2]
+                second_read = sec_tuple[3]
+                second_read_index = sec_tuple[4]
+
+            final_winner = winning_barcode
+            #check if there's an overall winner
+            #first and second are always different barcodes, so equal distance and count is a true tie
+            if winning_distance == second_distance and winning_count == second_count:
+                final_winner = None
+            
+            return final_winner, winning_barcode, winning_distance, winning_read_index, second_barcode, second_distance, second_read_index, winning_read, second_read
+
+
+        def winner_toptie_stats(row):
+            #top_score/second_score are raw (count-weighted) total mismatch scores from choose_new_winner_per_row
+            #avg_mismatches_per_read = how well the winner fits every read in the cell, in mismatches/read
+            #margin_per_read = how much better the winner fits than the runner-up, in mismatches/read
+            final_winner, winning_barcode, winning_distance, winning_read_index, second_barcode, second_distance, second_read_index, winning_read, second_read = lowest_match_winner(row)
+            return pd.Series({
+                'edit_distance': winning_distance,
+                'matched_read_index_0': winning_read_index,
+                'matched_barcode_0':final_winner,
+                'matched_read_0':winning_read,
+                'edit_distance_2': second_distance,
+                'matched_read_index_1': second_read_index,
+                'matched_barcode_1':second_barcode,
+                'matched_read_1':second_read,
+
+            })
+
+
+        debug ('begin ')
+        cell_table = pd.read_csv(input.table, index_col=0)
+        debug (cell_table)
+        cell_cols = cell_table.columns.copy()
+        #load aux_table, set index
+        aux_table = pd.read_csv(input.aux_data)
+        #assign barcodes, etc. 
+        winner_selection = cell_table.apply(lambda row: winner_toptie_stats(row), axis = 1)
+        cell_table = pd.concat([cell_table, winner_selection], axis = 1)
+        #merge aux_table on columns[0], right on matched_barcode_0
+        cell_table = cell_table.join(aux_table.set_index(aux_table.columns[0]), on='matched_barcode_0')
+        cell_table.to_csv(output.table)
+        
+        

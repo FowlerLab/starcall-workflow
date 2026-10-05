@@ -353,6 +353,9 @@ rule make_orig_method_metric_performance_table:
 ruleorder: segment_cells > segment_cells_bases
 
 
+
+
+
 rule annotate_dots:
     """ Marks each dot that was detected with a cross. The annotations are included in a new
     channel added to the image
