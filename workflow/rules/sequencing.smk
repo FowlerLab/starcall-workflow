@@ -160,7 +160,7 @@ rule attach_quality_information:
      input:
         sequencing_dir + '{path}/bases{params}.csv',
     output:
-        sequencing_dir + '{path}/quality_bases{params}.csv',
+        temp(sequencing_dir + '{path}/quality_bases{params}.csv'),
     wildcard_constraints:
         params = params_regex('min', 'max', 'num'),
     resources:

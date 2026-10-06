@@ -73,7 +73,7 @@ rule correct_background:
         #images = input_dir + '{well_stitching}/cycle{cycle}/raw.tif',
         background = lambda wildcards: stitching_dir + 'background{}.tif'.format('_pt' if wildcards.cycle in phenotype_cycles else '')
     output:
-        images = stitching_dir + '{well_stitching}/cycle{cycle}/corrected_tiles.tif',
+        images = temp(stitching_dir + '{well_stitching}/cycle{cycle}/corrected_tiles.tif'),
     resources:
         mem_mb = lambda wildcards, input:  size_mb(input) * 1.5 + 10000
     run:
@@ -117,7 +117,7 @@ rule stitch_cycle:
         composite = stitching_dir + '{well_stitching}/composite.json',
         rotation = stitching_dir + '{well_stitching}/rotation.csv',
     output:
-        image = '{output_dir}{well_stitching}/cycle{cycle}/{corrected,raw|corrected}.tif',
+        image = temp('{output_dir}{well_stitching}/cycle{cycle}/{corrected,raw|corrected}.tif'),
     resources:
         mem_mb = lambda wildcards, input:  size_mb(input) * 2.4 + 10000
     run:
@@ -263,7 +263,7 @@ rule stitch_well:
         rotation = stitching_dir + '{well_stitching}/rotation.csv',
         full_composite = stitching_dir + '{well_stitching}/composite{params_alignment}.json',
     output:
-        image = '{output_dir}{well_stitching}/{corrected,raw|corrected}{params_alignment}{merger}.tif',
+        image = temp('{output_dir}{well_stitching}/{corrected,raw|corrected}{params_alignment}{merger}.tif'),
     params:
         merger = parse_param('merger', config['stitching']['merger']),
     wildcard_constraints:
@@ -300,7 +300,7 @@ rule stitch_well_pt:
         rotation = stitching_dir + '{well_stitching}/rotation.csv',
         full_composite = stitching_dir + '{well_stitching}/composite.json',
     output:
-        image = '{output_dir}{well_stitching}/{corrected,raw|corrected}_pt.tif',
+        image = temp('{output_dir}{well_stitching}/{corrected,raw|corrected}_pt.tif'),
     resources:
         mem_mb = lambda wildcards, input: 5000 +  size_mb(input) * 2
     run:
@@ -333,7 +333,7 @@ rule stitch_section:
         rotation = stitching_dir + '{well_stitching}/rotation.csv',
         full_composite = stitching_dir + '{well_stitching}/composite{params_alignment}.json',
     output:
-        image = '{output_dir}{well_stitching}_section{size,\d+}/{corrected,raw|corrected}{params_alignment}.tif',
+        image = temp('{output_dir}{well_stitching}_section{size,\d+}/{corrected,raw|corrected}{params_alignment}.tif'),
     run:
         import constitch
         import numpy as np
@@ -360,7 +360,7 @@ rule stitch_section_pt:
         rotation = stitching_dir + '{well_stitching}/rotation.csv',
         full_composite = stitching_dir + '{well_stitching}/composite.json',
     output:
-        image = '{output_dir}{well_stitching}_section{size,\d+}/{corrected,raw|corrected}_pt.tif',
+        image = temp('{output_dir}{well_stitching}_section{size,\d+}/{corrected,raw|corrected}_pt.tif'),
     run:
         import constitch
         import numpy as np
@@ -427,7 +427,7 @@ rule stitch_tile:
         rotation = stitching_dir + '{well_stitching}/rotation.csv',
         grid_composite = stitching_dir + '{well_stitching}_grid{grid_size}/grid_composite.json',
     output:
-        image = '{output_dir}{well_stitching}_grid{grid_size,\d+}/tile{x,\d+}x{y,\d+}y/{corrected,raw|corrected}.tif',
+        image = temp('{output_dir}{well_stitching}_grid{grid_size,\d+}/tile{x,\d+}x{y,\d+}y/{corrected,raw|corrected}.tif'),
     resources:
         mem_mb = lambda wildcards, input, attempt: 5000 + attempt * (size_mb(input) * 2.2 / (int(wildcards.grid_size)**2))
         #mem_mb = lambda wildcards, input: 5000 +  size_mb(input) * 2.2 / (int(wildcards.grid_size)**2)
@@ -459,7 +459,7 @@ rule stitch_tile_pt:
         rotation = stitching_dir + '{well_stitching}/rotation.csv',
         grid_composite = stitching_dir + '{well_stitching}_grid{grid_size}/grid_composite.json',
     output:
-        image = '{output_dir}{well_stitching}_grid{grid_size,\d+}/tile{x,\d+}x{y,\d+}y/{corrected,raw|corrected}_pt.tif',
+        image = temp('{output_dir}{well_stitching}_grid{grid_size,\d+}/tile{x,\d+}x{y,\d+}y/{corrected,raw|corrected}_pt.tif'),
     resources:
         mem_mb = lambda wildcards, input, attempt: 5000 + attempt * (size_mb(input) * 2.2 / (int(wildcards.grid_size)**2))
         #mem_mb = lambda wildcards, input: 5000 +  size_mb(input) * 2.2 / (int(wildcards.grid_size)**2)
@@ -545,7 +545,7 @@ rule prepare_tiles_ashlar:
         images = expand(input_dir + '{well_stitching}/cycle{cycle}/raw.tif', cycle=cycles, allow_missing=True),
         positions = expand(input_dir + '{well_stitching}/cycle{cycle}/positions.csv', cycle=cycles, allow_missing=True),
     output:
-        imagedir = directory(stitching_dir + '{well_stitching}/raw_ashlar_tiles/'),
+        imagedir = temp(directory(stitching_dir + '{well_stitching}/raw_ashlar_tiles/')),
     resources:
         mem_mb = lambda wildcards, input: 5000 +  size_mb(input) * 1.5 / len(cycles)
     run:

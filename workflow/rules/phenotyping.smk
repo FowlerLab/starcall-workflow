@@ -279,7 +279,7 @@ rule run_cellprofiler:
     output:
         #data = phenotyping_dir + '{path}/cellprofiler_{pipeline,[^./]+}.csv',
         #mark = phenotyping_dir + '{path}/cellprofiler/{pipeline,[^./]+}/mark',
-        cell_file = phenotyping_dir + '{path}/cellprofiler{cycle,|cycle\d+}/{pipeline}/Cells.csv'
+        cell_file = temp(phenotyping_dir + '{path}/cellprofiler{cycle,|cycle\d+}/{pipeline}/Cells.csv'),
     params:
         cellprofiler_executable = config['phenotyping'].get('cellprofiler_executable', 'cellprofiler'),
     resources:

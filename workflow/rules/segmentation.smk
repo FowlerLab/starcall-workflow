@@ -38,7 +38,7 @@ rule segment_nuclei:
                 segmentation_dir + '{path_nogrid}{grid}{path_nogrid2}/raw_pt.tif'),
     output:
         # grid is included twice as segmentation on grid tiles needs to be merged, so the output is marked with '_grid'
-        segmentation_dir + '{path_nogrid}{grid}{path_nogrid2}/nuclei{nuclearchannel}_mask{unmatched}{grid}.tif',
+        temp(segmentation_dir + '{path_nogrid}{grid}{path_nogrid2}/nuclei{nuclearchannel}_mask{unmatched}{grid}.tif'),
         # area and bbox dimensions of every mask before filtering, with filter results
         segmentation_dir + '{path_nogrid}{grid}{path_nogrid2}/nuclei{nuclearchannel}_mask_sizes{unmatched}{grid}.tsv',
     params:
@@ -100,7 +100,7 @@ rule segment_cells:
                 if config['segmentation']['use_corrected'] else
                 segmentation_dir + '{path_nogrid}{grid}{path_nogrid2}/raw_pt.tif'),
     output:
-        segmentation_dir + '{path_nogrid}{grid}{path_nogrid2}/cells{diameter}{nuclearchannel}{cytochannel}_mask{unmatched}{grid}.tif',
+        temp(segmentation_dir + '{path_nogrid}{grid}{path_nogrid2}/cells{diameter}{nuclearchannel}{cytochannel}_mask{unmatched}{grid}.tif'),
         # area and bbox dimensions of every mask before filtering, with filter results
         segmentation_dir + '{path_nogrid}{grid}{path_nogrid2}/cells{diameter}{nuclearchannel}{cytochannel}_mask_sizes{unmatched}{grid}.tsv',
     resources:
@@ -187,7 +187,7 @@ rule expand_segmentation:
         cells = segmentation_dir + '{path_nogrid}{grid}{path_nogrid2}/{segmentation_type}_mask{downscaled}{unmatched}{grid}.tif',
     output:
         #cells = segmentation_dir + '{path}/{segmentation_type}expanded{size,\d+}_mask_unmerged.tif',
-        cells = segmentation_dir + '{path_nogrid}{grid}{path_nogrid2}/{segmentation_type}expanded{size,\d+}_mask{downscaled}{unmatched}{grid}.tif',
+        cells = temp(segmentation_dir + '{path_nogrid}{grid}{path_nogrid2}/{segmentation_type}expanded{size,\d+}_mask{downscaled}{unmatched}{grid}.tif'),
     wildcard_constraints:
         downscaled = '|_downscaled',
     resources:
@@ -217,7 +217,7 @@ rule segment_cells_bases:
         segmentation_dir + '{path_nogrid}{grid}{path_nogrid2}/raw.tif'
         #segmentation_dir + '{path_nogrid}{grid}{path_nogrid2}/cycle' + cycles[-1] + '/raw.tif'
     output:
-        segmentation_dir + '{path_nogrid}{grid}{path_nogrid2}/cellsbases{diameter}{nuclearchannel}_mask_downscaled{unmatched}{grid}.tif',
+        temp(segmentation_dir + '{path_nogrid}{grid}{path_nogrid2}/cellsbases{diameter}{nuclearchannel}_mask_downscaled{unmatched}{grid}.tif'),
     params:
         diameter = parse_param('diameter', config['segmentation']['diameter']),
         nuclearchannel = parse_param('nuclearchannel', config['segmentation']['channels'][0]),
@@ -280,7 +280,7 @@ rule segment_nuclei_bases:
     input:
         segmentation_dir + '{path_nogrid}{grid}{path_nogrid2}/raw.tif'
     output:
-        segmentation_dir + '{path_nogrid}{grid}{path_nogrid2}/nucleibases{nuclearchannel}_mask_downscaled{unmatched}{grid}.tif',
+        temp(segmentation_dir + '{path_nogrid}{grid}{path_nogrid2}/nucleibases{nuclearchannel}_mask_downscaled{unmatched}{grid}.tif'),
     params:
         nuclearchannel = parse_param('nuclearchannel', config['segmentation']['channels'][0])
     wildcard_constraints:
@@ -322,7 +322,7 @@ rule downscale_segmentation:
     input:
         segmentation_dir + '{path}/{segmentation_type}_mask.tif',
     output:
-        segmentation_dir + '{path}/{segmentation_type}_mask_downscaled.tif',
+        temp(segmentation_dir + '{path}/{segmentation_type}_mask_downscaled.tif'),
     run:
         import tifffile
         import skimage.transform
@@ -532,15 +532,15 @@ rule drop_duplicate_cells:
     between cells is only checked for tiles with an index less than the current tile.
 
     Which cells a tile keeps depends on which cells its earlier neighbors kept, so this replays that cascade from the
-    overlaps found by find_cell_overlaps for this and every earlier tile. That is only arithmetic on small tables, so it
-    runs locally instead of each tile waiting for a cluster job of the tile before it.
+    overlaps found by find_cell_overlaps for this and every earlier tile, so no tile waits on the job of the tile before it.
     """
     input:
         unpack(earlier_dedup_files),
         table = segmentation_dir + '{well}_grid{grid_size}/tile{x}x{y}y/{segmentation_type}{unmatched}_grid{grid_size}.csv',
     output:
         table = segmentation_dir + '{well}_grid{grid_size}/tile{x}x{y}y/{segmentation_type}{unmatched}.csv',
-    localrule: True
+    resources:
+        mem_mb = 2000,
     run:
         import numpy as np
         import pandas
@@ -703,8 +703,8 @@ if config['segmentation'].get('match_masks', False):
 
     rule number_cell_tables:
         """ Numbers the matched tables of a grid tile so cell ids are unique across the well: each tile continues from
-        the largest id of the tile before it. Only the row counts of the earlier tiles are needed, so this runs locally
-        and every tile can be numbered as soon as the tiles are matched.
+        the largest id of the tile before it. Only the row counts of the earlier tiles are needed, so every tile can be
+        numbered as soon as the tiles are matched.
         """
         input:
             tables = expand(segmentation_dir + '{path}/{segmentation_type}{extra_params}_matched.csv', segmentation_type=mask_pair, allow_missing=True),
@@ -713,7 +713,8 @@ if config['segmentation'].get('match_masks', False):
             tables = expand(segmentation_dir + '{path}/{segmentation_type}{extra_params}.csv', segmentation_type=mask_pair, allow_missing=True),
         wildcard_constraints:
             extra_params = '(|bases)(|expanded\d+)',
-        localrule: True
+        resources:
+            mem_mb = 2000,
         run:
             import pandas
 
@@ -898,7 +899,7 @@ rule relabel_segmentation:
         image = segmentation_dir + '{path_nogrid}{grid}{path_nogrid2}/{segmentation_type}_mask{downscaled}' + unmatched + '{grid}.tif',
         table = segmentation_dir + '{path_nogrid}{grid}{path_nogrid2}/{segmentation_type}.csv',
     output:
-        image = '{output_dir}{path_nogrid}{grid}{path_nogrid2}/{segmentation_type}_mask{downscaled,|_downscaled}.tif',
+        image = temp('{output_dir}{path_nogrid}{grid}{path_nogrid2}/{segmentation_type}_mask{downscaled,|_downscaled}.tif'),
     resources:
         mem_mb = lambda wildcards, input:  size_mb(input) * 5 + 10000,
     run:
@@ -1026,7 +1027,7 @@ rule stitch_tile_segmentation:
         composite2 = stitching_dir + '{well}_grid{grid_size}/grid_composite.json',
         table = '{output_dir}{well}_grid{grid_size}/tile{x}x{y}y/{segmentation_type}.csv',
     output:
-        image = '{output_dir}{well}_grid{grid_size,\d+}/tile{x,\d+}x{y,\d+}y/{segmentation_type}_mask{downscaled,|_downscaled}.tif',
+        image = temp('{output_dir}{well}_grid{grid_size,\d+}/tile{x,\d+}x{y,\d+}y/{segmentation_type}_mask{downscaled,|_downscaled}.tif'),
     resources:
         mem_mb = lambda wildcards, input: 5000 +  size_mb(input) * 2
     run:

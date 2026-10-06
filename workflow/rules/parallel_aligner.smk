@@ -20,7 +20,7 @@ rule collect_unique_sequences_zscored:
     input:
         corrected_tables = get_grid_filenames_zscore_with_cells,
     output:
-        sequences = sequencing_dir + '{well}_grid{grid_size}/{segmentation_type}_zscore_unique_sequences{params}.csv',
+        sequences = temp(sequencing_dir + '{well}_grid{grid_size}/{segmentation_type}_zscore_unique_sequences{params}.csv'),
     wildcard_constraints:
         params = params_regex('min', 'max', 'num',),
         grid_size = '\d+',
@@ -50,7 +50,7 @@ rule collect_unique_sequences_zscored_no_grid:
     input:
         fullwell_table = sequencing_dir + '{well}/{segmentation_type}_quality{params}.csv'
     output:
-        sequences = sequencing_dir + '{well}/{segmentation_type}_zscore_unique_sequences{params}.csv',
+        sequences = temp(sequencing_dir + '{well}/{segmentation_type}_zscore_unique_sequences{params}.csv'),
     wildcard_constraints:
         params = params_regex('min', 'max', 'num',),
     resources:
@@ -77,7 +77,7 @@ rule align_unique_well_sequences_to_barcodes_zscored:
         sequences = sequencing_dir + '{path}/{segmentation_type}_zscore_unique_sequences{params}.csv',
         library = get_aux_data,
     output:
-        matches = sequencing_dir + '{path}/{segmentation_type}_zscore_barcode_matches{params}.csv',
+        matches = temp(sequencing_dir + '{path}/{segmentation_type}_zscore_barcode_matches{params}.csv'),
     wildcard_constraints:
         params = params_regex('min', 'max', 'num', ),
     params:
@@ -157,7 +157,7 @@ rule apply_barcode_matches_quality_table_to_tile_zscored:
         table = sequencing_dir + '{well}_grid{grid_size}/{tile}/{segmentation_type}_quality{params}.csv',
         matches =  sequencing_dir + '{well}_grid{grid_size}/{segmentation_type}_zscore_barcode_matches{params}.csv',
     output:
-        table = sequencing_dir + '{well}_grid{grid_size}/{tile}/{segmentation_type}_zscored_matched_quality{params}.csv',
+        table = temp(sequencing_dir + '{well}_grid{grid_size}/{tile}/{segmentation_type}_zscored_matched_quality{params}.csv'),
     wildcard_constraints:
         grid_size = '\d+',
         params = params_regex('min', 'max', 'num', ),
@@ -189,7 +189,7 @@ rule apply_barcode_matches_quality_table_to_fullwell_zscored:
         table = sequencing_dir + '{well}/{segmentation_type}_quality{params}.csv',
         matches =  sequencing_dir + '{well}/{segmentation_type}_zscore_barcode_matches{params}.csv',
     output:
-        table = sequencing_dir + '{well}/{segmentation_type}_zscored_matched_quality{params}.csv',
+        table = temp(sequencing_dir + '{well}/{segmentation_type}_zscored_matched_quality{params}.csv'),
     wildcard_constraints:
         params = params_regex('min', 'max', 'num', ),
     resources:
@@ -218,7 +218,7 @@ rule combine_reads_in_cells_with_scores_zscored_quality_version:
         table = sequencing_dir + '{path}/{segmentation_type}_zscored_matched_quality{params}.csv',
         cell_table = segmentation_dir + '{path}/{segmentation_type}.csv',
     output:
-        table = sequencing_dir + '{path}/{segmentation_type}_reads_no_winner{params}.csv',
+        table = temp(sequencing_dir + '{path}/{segmentation_type}_reads_no_winner{params}.csv'),
     wildcard_constraints:
         maxreads = '|_maxreads\d+',
         params = params_regex('min', 'max', 'num', ),
@@ -469,13 +469,14 @@ rule select_winner_attach_aux_data:
         cell_table = pd.read_csv(input.table, index_col=0)
         debug (cell_table)
         cell_cols = cell_table.columns.copy()
-        #load aux_table, set index
-        aux_table = pd.read_csv(input.aux_data)
         #assign barcodes, etc. 
         winner_selection = cell_table.apply(lambda row: winner_toptie_stats(row), axis = 1)
         cell_table = pd.concat([cell_table, winner_selection], axis = 1)
-        #merge aux_table on columns[0], right on matched_barcode_0
-        cell_table = cell_table.join(aux_table.set_index(aux_table.columns[0]), on='matched_barcode_0')
+        #input.aux_data is a list of files (get_aux_data returns a list), so load each one
+        #and merge on its columns[0], right on matched_barcode_0
+        for path in input.aux_data:
+            aux_table = pd.read_csv(path)
+            cell_table = cell_table.join(aux_table.set_index(aux_table.columns[0]), on='matched_barcode_0')
         cell_table.to_csv(output.table)
         
         
