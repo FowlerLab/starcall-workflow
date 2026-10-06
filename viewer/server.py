@@ -71,6 +71,26 @@ class Run:
         return self.wells[0] if self.wells else None
 
 
+def phenotyping_channel_lists(config):
+    """ config phenotyping_channels as one list per phenotype cycle, as workflow/rules/config.smk does """
+    channels = config['phenotyping_channels']
+    if not isinstance(channels[0], list):
+        channels = [channels]
+    return [list(c) for c in channels]
+
+
+def all_phenotyping_channels(config):
+    """ Every phenotype channel name, in config order, without repeats """
+    return list(dict.fromkeys(c for channels in phenotyping_channel_lists(config) for c in channels))
+
+
+def segmentation_channels(config):
+    """ segmentation: channels as names; an index refers to the first phenotype cycle's channels """
+    first = phenotyping_channel_lists(config)[0]
+    channels = config.get('segmentation', {}).get('channels', first[:2])
+    return [c if isinstance(c, str) else first[c] for c in channels]
+
+
 class Viewer:
     def __init__(self, run_dir, well, config, paths, files, layout, cache_dir=None, **table_names):
         self.run_dir = run_dir
@@ -82,9 +102,9 @@ class Viewer:
         self.tables = RunTables(self.run_dir, well, self.config, layout, cache_dir=cache_dir, **table_names)
 
         self.sequencing_channels = list(self.config['sequencing_channels'])
-        self.phenotyping_channels = list(self.config['phenotyping_channels'])
-        self.segmentation_channels = list(self.config.get('segmentation', {}).get('channels', self.phenotyping_channels[:2]))
-        self.segmentation_channels = [c if isinstance(c, str) else self.phenotyping_channels[c] for c in self.segmentation_channels]
+        self.phenotyping_channel_lists = phenotyping_channel_lists(self.config)
+        self.phenotyping_channels = all_phenotyping_channels(self.config)
+        self.segmentation_channels = segmentation_channels(self.config)
 
         self._contrast = None
         self._contrast_lock = threading.Lock()
@@ -106,14 +126,20 @@ class Viewer:
                 return self._contrast
 
             result = {}
-            for kind, cycles, channels in (('seq', self.images.seq_cycles, self.sequencing_channels),
-                                           ('pt', self.images.pt_cycles, self.phenotyping_channels)):
+            for kind, cycles in (('seq', self.images.seq_cycles), ('pt', self.images.pt_cycles)):
                 if not cycles: continue
-                picks = sorted({cycles[0], cycles[len(cycles) // 2], cycles[-1]})
-                samples = np.concatenate([self.images.cycles[c].sample_pixels() for c in picks], axis=1)
+                # phenotype cycles can each image different channels, so sample all of them
+                picks = cycles if kind == 'pt' else sorted({cycles[0], cycles[len(cycles) // 2], cycles[-1]})
+                samples = {}
+                for cycle in picks:
+                    pixels = self.images.cycles[cycle].sample_pixels()
+                    for i, name in enumerate(self.cycle_channels(cycle)[:pixels.shape[0]]):
+                        samples.setdefault(name, []).append(pixels[i])
                 result[kind] = {}
-                for i, name in enumerate(channels[:samples.shape[0]]):
-                    values = samples[i][np.isfinite(samples[i])]
+                for name, parts in samples.items():
+                    values = np.concatenate(parts)
+                    values = values[np.isfinite(values)]
+                    if not values.size: continue
                     lo, hi = np.percentile(values, [1, 99.9])
                     result[kind][name] = {'vmin': float(lo), 'vmax': float(max(hi, lo + 1)), 'max': float(values.max())}
             with open(path, 'w') as ofile:
@@ -121,8 +147,19 @@ class Viewer:
             self._contrast = result
             return result
 
+    def cycle_channels(self, cycle):
+        """ Channel names of a cycle. Phenotype cycles PT, P1, P2... use the matching list of
+        phenotyping_channels, or the last one if there are fewer lists than cycles.
+        """
+        if not self.images.is_pt(cycle):
+            return self.sequencing_channels
+        lists = self.phenotyping_channel_lists
+        match = re.fullmatch(r'P(\d+)', cycle)
+        index = 0 if cycle == 'PT' else int(match.group(1)) if match else self.images.pt_cycles.index(cycle)
+        return lists[min(index, len(lists) - 1)]
+
     def channel_index(self, cycle, channel):
-        channels = self.phenotyping_channels if self.images.is_pt(cycle) else self.sequencing_channels
+        channels = self.cycle_channels(cycle)
         if channel not in channels:
             raise HTTPException(400, 'Unknown channel {} for cycle {}'.format(channel, cycle))
         return channels.index(channel)
@@ -603,16 +640,14 @@ def make_app(run, token, hosts=None):
     @app.get('/api/config')
     def config():
         config = run.config
-        phenotyping = list(config['phenotyping_channels'])
-        segmentation = config.get('segmentation', {}).get('channels', phenotyping[:2])
         return {
             'run_dir': run.run_dir,
             'wells': run.wells,
             'layouts': {well: run.files.layout(well).mode for well in run.wells},
             'default_well': app.state.default_well,
             'sequencing_channels': list(config['sequencing_channels']),
-            'phenotyping_channels': phenotyping,
-            'segmentation_channels': [c if isinstance(c, str) else phenotyping[c] for c in segmentation],
+            'phenotyping_channels': all_phenotyping_channels(config),
+            'segmentation_channels': segmentation_channels(config),
             'scale': config['phenotype_scale'] // config['bases_scale'],
         }
 
@@ -624,6 +659,7 @@ def make_app(run, token, hosts=None):
             'tiled': viewer.tables.layout.tiled,
             'seq_cycles': viewer.images.seq_cycles,
             'pt_cycles': viewer.images.pt_cycles,
+            'pt_channels': {cycle: viewer.cycle_channels(cycle) for cycle in viewer.images.pt_cycles},
             'tiles': viewer.tables.tiles(),
             'contrast': viewer.contrast(),
         }

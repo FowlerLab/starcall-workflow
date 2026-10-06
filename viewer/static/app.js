@@ -138,10 +138,18 @@ function saveComposite() {
   } catch (e) { /* storage unavailable */ }
 }
 
+// phenotype cycles can each image different channels (config phenotyping_channels per cycle)
+const cycleChannels = (cycle) => (state.config.pt_channels || {})[cycle] || state.config.phenotyping_channels;
+const hasChannel = (layer) => !layer.pt || cycleChannels(layer.cycle).includes(layer.channel);
+
 function defaultLayerKeys() {
+  // each segmentation channel from the first phenotype cycle that has it, PT first
   const c = state.config;
-  const cycle = c.pt_cycles.includes('PT') ? 'PT' : c.pt_cycles[0];
-  return cycle ? c.segmentation_channels.map((channel) => layerKey({ pt: true, cycle, channel })) : [];
+  const cycles = c.pt_cycles.includes('PT') ? ['PT', ...c.pt_cycles.filter((x) => x !== 'PT')] : c.pt_cycles;
+  return c.segmentation_channels.flatMap((channel) => {
+    const cycle = cycles.find((x) => cycleChannels(x).includes(channel));
+    return cycle ? [layerKey({ pt: true, cycle, channel })] : [];
+  });
 }
 const selectedLayerKeys = () => new Set(Array.isArray(state.composite) ? state.composite : defaultLayerKeys());
 
@@ -149,7 +157,7 @@ function availableLayers() {
   // every image the well has, phenotype first, in the order of the page
   const c = state.config;
   const layers = [];
-  for (const cycle of c.pt_cycles) for (const channel of c.phenotyping_channels) layers.push({ pt: true, cycle, channel });
+  for (const cycle of c.pt_cycles) for (const channel of cycleChannels(cycle)) layers.push({ pt: true, cycle, channel });
   for (const cycle of c.seq_cycles) for (const channel of c.sequencing_channels) layers.push({ pt: false, cycle, channel });
   return layers;
 }
@@ -192,7 +200,7 @@ function renderLayerPicker() {
   const keys = selectedLayerKeys();
   const group = (title, cycles, channels, pt) => {
     if (!cycles.length) return null;
-    const rows = cycles.flatMap((cycle) => channels.map((channel) => ({ pt, cycle, channel })));
+    const rows = cycles.flatMap((cycle) => channels.map((channel) => ({ pt, cycle, channel }))).filter(hasChannel);
     const count = rows.filter((layer) => keys.has(layerKey(layer))).length;
     const table = el('table', { class: 'layer-table' });
     table.append(el('thead', {}, el('tr', {}, el('th', { text: pt ? '' : 'cycle' }),
@@ -202,6 +210,7 @@ function renderLayerPicker() {
       const row = el('tr', {}, el('th', { text: cycle }));
       for (const channel of channels) {
         const layer = { pt, cycle, channel };
+        if (!hasChannel(layer)) { row.append(el('td')); continue; }
         const box = el('input', { type: 'checkbox', 'aria-label': layerName(layer), title: layerName(layer) });
         box.checked = keys.has(layerKey(layer));
         box.addEventListener('change', () => toggleLayer(layerKey(layer), box.checked));
@@ -416,6 +425,7 @@ function render() {
   if (d.kind === 'cell') {
     for (const cycle of c.pt_cycles) {
       for (const channel of c.segmentation_channels) {
+        if (!cycleChannels(cycle).includes(channel)) continue;
         const image = { cycle, channel, pt: true, label: `${cycle} · ${channel} (segmentation)` };
         summaryImages.append(el('figure', {}, makeThumb(image),
           el('figcaption', {}, colorPicker(colorKey(image), `phenotype ${channel}`), `${cycle} · ${channel}`)));
@@ -429,6 +439,7 @@ function render() {
   const ptGrid = $('pt-grid');
   for (const cycle of c.pt_cycles) {
     for (const channel of ptChannels) {
+      if (!cycleChannels(cycle).includes(channel)) continue;
       const image = { cycle, channel, pt: true, label: `${cycle} · ${channel}` };
       ptGrid.append(el('figure', {}, makeThumb(image),
         el('figcaption', {}, colorPicker(colorKey(image), `phenotype ${channel}`), image.label)));
