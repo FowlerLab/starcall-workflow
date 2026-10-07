@@ -177,7 +177,13 @@ rule extract_cellprofiler_channel:
 
         image = tifffile.memmap(input.image, mode='r')
         cycle, chan = wildcards.channel.split('.')
-        tifffile.imwrite(output.image, image[int(cycle),int(chan)])
+        #fill nans from stitching with 0 otherwise it crashes cellprofiler
+        #nans were introduced to track no image regions previously (and required some datatype changes) - but the orignal data was uint16
+        #So all stitched images are float32 holding raw 16 bit camera values, cellprofiler only rescales integer images to 0-1
+        #It can crash when rescaling float32 data so clip so out of range values and cast back to uint16
+        channel = np.nan_to_num(image[int(cycle),int(chan)], nan=0)
+        tifffile.imwrite(output.image, np.clip(np.rint(channel), 0, 65535).astype(np.uint16))
+        
 
 max_num_channels = max(len(channels) for channels in config['phenotyping_channels'])
 

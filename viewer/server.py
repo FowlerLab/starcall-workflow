@@ -456,7 +456,7 @@ class Viewer:
             # without the mask image, paint each downscaled mask from the table (finest available)
             labels = np.zeros((box_pt[2] - box_pt[0], box_pt[3] - box_pt[1]), np.int32)
             labels_found, rows = self.tables.cells_in_box(tile, box_pt, kind)
-            for label, row in zip(labels_found, rows.itertuples()):
+            for label, (_, row) in zip(labels_found, rows.iterrows()):
                 labels[self.object_mask_in_box(kind, tile, label, row, box_pt)] = label
         if exclude:
             labels[labels == exclude] = 0
