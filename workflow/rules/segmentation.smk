@@ -38,6 +38,7 @@ rule segment_nuclei:
                 segmentation_dir + '{path_nogrid}{grid}{path_nogrid2}/raw_pt.tif'),
     output:
         # grid is included twice as segmentation on grid tiles needs to be merged, so the output is marked with '_grid'
+        #removing temp for mask check debugging
         temp(segmentation_dir + '{path_nogrid}{grid}{path_nogrid2}/nuclei{nuclearchannel}_mask{unmatched}{grid}.tif'),
         # area and bbox dimensions of every mask before filtering, with filter results
         segmentation_dir + '{path_nogrid}{grid}{path_nogrid2}/nuclei{nuclearchannel}_mask_sizes{unmatched}{grid}.tsv',
@@ -100,6 +101,7 @@ rule segment_cells:
                 if config['segmentation']['use_corrected'] else
                 segmentation_dir + '{path_nogrid}{grid}{path_nogrid2}/raw_pt.tif'),
     output:
+        #removed temp for mask check debugging
         temp(segmentation_dir + '{path_nogrid}{grid}{path_nogrid2}/cells{diameter}{nuclearchannel}{cytochannel}_mask{unmatched}{grid}.tif'),
         # area and bbox dimensions of every mask before filtering, with filter results
         segmentation_dir + '{path_nogrid}{grid}{path_nogrid2}/cells{diameter}{nuclearchannel}{cytochannel}_mask_sizes{unmatched}{grid}.tsv',
@@ -1119,8 +1121,6 @@ rule stitch_tile_from_well_segmentation:
 """
 
 
-
-
 def get_grid_size_file(wildcards):
     grid_size = config.get('segmentation_{}_grid_size'.format(wildcards.segmentation_type), segmentation_grid_size)
     if grid_size == 1:
@@ -1139,12 +1139,6 @@ rule link_merged_grid:
 ruleorder: link_merged_grid > segment_cells
 ruleorder: link_merged_grid > segment_nuclei
 ruleorder: link_merged_grid > tabulate_cells
-
-
-
-
-
-
 
 
 
