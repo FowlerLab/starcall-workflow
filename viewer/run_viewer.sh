@@ -14,8 +14,8 @@
 #$ -pe serial 2
 
 source /net/fowler/vol1/shared/miniconda3/etc/profile.d/conda.sh
-env_dir="${VIEWER_ENV:-$HOME/.conda/envs/starcall-viewer}"
-conda activate "$env_dir"
+conda activate /net/fowler/vol1/shared/miniconda3/envs/starcall-viewer
+
 
 # the repo directory (holding viewer/), from this script's location or the qsub working directory
 repo_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." 2>/dev/null && pwd)"
@@ -27,4 +27,4 @@ if test $# -gt 0 && test "${1#-}" = "$1"; then
     shift
 fi
 
-cd "$repo_dir" && exec env PYTHONNOUSERSITE=1 PYTHONUNBUFFERED=1 "$env_dir/bin/python" -m viewer.server "$run_dir" "$@"
+cd "$repo_dir" && exec env PYTHONNOUSERSITE=1 PYTHONUNBUFFERED=1 "/net/fowler/vol1/shared/miniconda3/envs/starcall-viewer/bin/python" -m viewer.server "$run_dir" "$@"
