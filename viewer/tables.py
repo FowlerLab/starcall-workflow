@@ -23,6 +23,7 @@ import glob
 import base64
 import threading
 import collections
+from fractions import Fraction
 
 import numpy as np
 import pandas as pd
@@ -86,7 +87,8 @@ class RunTables:
         self.run_dir = run_dir
         self.well = well
         self.config = config
-        self.scale = config['phenotype_scale'] // config['bases_scale']
+        # phenotype pixels per bases pixel; below 1 when the phenotype is imaged at lower magnification
+        self.scale = Fraction(config['phenotype_scale'], config['bases_scale'])
         self.layout = layout
         self.grid_size = layout.grid_size
         if layout.tiled and int(config.get('segmentation_grid_size', self.grid_size)) != self.grid_size:
@@ -119,8 +121,9 @@ class RunTables:
         """ (r0, c0, r1, c1) of a grid tile; phenotype sections are scaled like stitch_tile_pt """
         section = self.sections[tile]
         if phenotype:
-            # position and size are scaled separately in the pipeline
-            pos, size = section[:2] * self.scale, (section[2:] - section[:2]) * self.scale
+            # position and size are scaled separately in the pipeline, each rounded down
+            p, b = self.scale.numerator, self.scale.denominator
+            pos, size = section[:2] * p // b, (section[2:] - section[:2]) * p // b
             section = np.concatenate([pos, pos + size])
         return section
 

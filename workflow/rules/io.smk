@@ -224,6 +224,28 @@ if os.path.exists(rawinput_dir):
 
                 np.savetxt(output[0], np.concatenate((grid_poses, positions), axis=1), fmt='%d', delimiter=',')
 
+    rule extract_nd2_stage:
+        """ Writes the absolute stage position of each tile, which positions.csv doesn't keep. 
+        Used by make_initial_composite to place phenotype cycles relative to the sequencing cycles
+        when stitching.phenotype_stage_positions is set (see starcall.stage) otherwise they are placed 
+        at the center of the well, which may not be correct if images are purposefully taken towards edges
+        
+        stage.csv has one row per tile, in the same order as positions.csv:
+        x (um), y (um), pixel size (um)
+        """
+        input:
+            find_input_file,
+        output:
+            input_dir + '{well_base}/cycle{cycle}/stage.csv',
+        resources:
+            mem_mb = 2000
+        run:
+            import numpy as np
+            import starcall.stage
+
+            stage = starcall.stage.read_stage_positions(input[0])
+            np.savetxt(output[0], stage, delimiter=',', header='x_um,y_um,pixel_size_um')
+
     rule copy_nd2_image:
         """ Converts an nd2 file into a tiff. The resulting tiff should have 4 dimensions,
         (num_tiles, num_cycles, width, height)

@@ -196,8 +196,32 @@ rule attach_quality_information:
         reads.to_csv(output[0])
 
 
+def dots_in_phenotype_frame(wildcards):
+    """ Whether attach_cell_ids looks up the dots in the phenotype resolution masks, through the phenotype
+    frame: with stitching.rotation.phenotype_correction: coordinates, for masks segmented on phenotype images """
+    return phenotype_coordinates and wildcards.segmentation_type.count('bases') == 0
+
+def parse_section_path(path):
+    """ (well, grid_size, x, y) of a path of attach_cell_ids, grid_size x y None for a whole well """
+    import re
+    match = re.fullmatch(r'(.+)_grid(\d+)/tile(\d+)x(\d+)y', path)
+    if match:
+        well, grid_size, x, y = match.groups()
+        return well, int(grid_size), int(x), int(y)
+    assert '/' not in path, 'attach_cell_ids with phenotype_correction: coordinates expects a well or a grid tile, not ' + path
+    return path, None, None, None
+
+def section_composite(wildcards):
+    """ The composite that gives the origin of the images of the section of attach_cell_ids """
+    return section_composite_for(parse_section_path(wildcards.path))
+
 rule attach_cell_ids:
     """ Attaches the ID of each cell the dots are in to said dots
+
+    With stitching.rotation.phenotype_correction: coordinates, masks segmented on the phenotype images are
+    looked up at their own resolution: the position of each dot is mapped into the phenotype frame through the
+    transform in phenotype_frame.json (rotation and scale from detect_rotation, see starcall.phenotype_frame),
+    instead of using the mask downscaled by the nominal bases_scale / phenotype_scale.
 
     Output: The output is a csv file containing the columns:
             position_x, position_y: The pixel position of the colony
@@ -205,10 +229,16 @@ rule attach_cell_ids:
                 The values extracted from the sequencing images at the colony position,
                 for each cycle and channel.
             cell: The cell that each read is contained in, 0 if not in a cell.
+            phenotype_position_x, phenotype_position_y: with phenotype_correction: coordinates, the position of
+                the colony in the phenotype mask (pixels of the phenotype image of the same section)
     """
     input:
         bases = sequencing_dir + '{path}/quality_bases{params}.csv',
-        cells = segmentation_dir + '{path}/{segmentation_type}_mask_downscaled.tif',
+        cells = lambda wildcards: segmentation_dir + ('{path}/{segmentation_type}_mask.tif' if dots_in_phenotype_frame(wildcards)
+                else '{path}/{segmentation_type}_mask_downscaled.tif'),
+        frame = lambda wildcards: stitching_dir + parse_section_path(wildcards.path)[0] + '/phenotype_frame.json'
+                if dots_in_phenotype_frame(wildcards) else [],
+        composite = lambda wildcards: section_composite(wildcards) if dots_in_phenotype_frame(wildcards) else [],
         #cells_table = segmentation_dir + '{path}/{segmentation_type}.csv',
     output:
         table = sequencing_dir + '{path}/{segmentation_type}_quality{params}.csv',
@@ -226,8 +256,32 @@ rule attach_cell_ids:
 
         cells = tifffile.imread(input.cells)
         table = pandas.read_csv(input.bases, index_col=0)
-        xposes, yposes = np.round(table.reads.positions.T).astype(int)
-        table['cell'] = cells[xposes,yposes]
+
+        if input.frame:
+            import constitch
+            import starcall.phenotype_frame
+
+            # origin of the sequencing and phenotype images of the section, in the global coordinates of the
+            # composite, as stitch_well / stitch_well_pt or stitch_tile / stitch_tile_pt use them
+            well, grid_size, x, y = parse_section_path(wildcards.path)
+            composite = constitch.load(input.composite, constraints=False)
+            if grid_size is None:
+                origin = composite.boxes.points1.min(axis=0)[:2]
+            else:
+                origin = composite.boxes[x * grid_size + y].point1[:2]
+            origin_pt = origin * phenotype_scale // bases_scale
+
+            frame, _ = starcall.phenotype_frame.load(input.frame)
+            points = frame.base_to_frame(table.reads.positions + origin) - origin_pt
+            table['phenotype_position_x'], table['phenotype_position_y'] = points.T
+            xposes, yposes = np.rint(points.T).astype(int)
+            inside = (xposes >= 0) & (xposes < cells.shape[0]) & (yposes >= 0) & (yposes < cells.shape[1])
+            table['cell'] = 0
+            table.loc[inside, 'cell'] = cells[xposes[inside], yposes[inside]]
+            debug('{} of {} dots inside the phenotype mask, {} in cells'.format(inside.sum(), len(table), (table['cell'] != 0).sum()))
+        else:
+            xposes, yposes = np.round(table.reads.positions.T).astype(int)
+            table['cell'] = cells[xposes,yposes]
         table.to_csv(output.table)
 
 

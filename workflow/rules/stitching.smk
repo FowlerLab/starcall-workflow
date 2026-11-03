@@ -142,11 +142,11 @@ rule stitch_cycle:
 
         #images = nd2.imread(input.images).transpose([0,2,3,1])
         images = imread(input.images)
-        angle = read_cycle_rotations(input.rotation)[wildcards.cycle]
-        if angle != 0:
+        (angle,), (scale,) = stitch_corrections(input.rotation, [wildcards.cycle])
+        if angle != 0 or scale != 1:
             from starcall.rotation import rotate_frame
             for i in range(len(images)):
-                images[i] = rotate_frame(images[i], angle, rotation_order)
+                images[i] = rotate_frame(images[i], angle, rotation_order, scale)
         images = images.transpose([0,2,3,1])
 
         debug(images.shape)
@@ -191,9 +191,14 @@ rule stitch_cycle:
 ##################################################
 ## stitching smaller sections, ie subsets, tiles
 ##################################################
-def stitch_well_section(image_paths, composite_paths, mins, maxes, merger='efficient_nearest', phenotype=False, angles=None):
+def corrections_kwargs(rotation_path, stitched_cycles):
+    angles, scales = stitch_corrections(rotation_path, stitched_cycles)
+    return dict(angles=angles, scales=scales)
+
+def stitch_well_section(image_paths, composite_paths, mins, maxes, merger='efficient_nearest', phenotype=False, angles=None, scales=None):
     """ Stitches the section between mins and maxes of every cycle. angles is the rotation
-    (degrees) applied to the tiles of each cycle when they are read, see detect_rotation """
+    (degrees) and scales the scale applied to the tiles of each cycle when they are read,
+    see detect_rotation and stitch_corrections """
     import constitch
     import starcall.correction
     import numpy as np
@@ -203,8 +208,10 @@ def stitch_well_section(image_paths, composite_paths, mins, maxes, merger='effic
     full_image = None
     if angles is None:
         angles = [0] * len(image_paths)
+    if scales is None:
+        scales = [1] * len(image_paths)
 
-    for i,(path,composite_path,angle) in enumerate(zip(image_paths, composite_paths, angles)):
+    for i,(path,composite_path,angle,scale) in enumerate(zip(image_paths, composite_paths, angles, scales)):
         composite = constitch.load(composite_path, constraints=False)
 
         if path.endswith('.nd2'):
@@ -217,7 +224,7 @@ def stitch_well_section(image_paths, composite_paths, mins, maxes, merger='effic
                 num_channels = frame_shape[2]
                 for j in range(len(composite.boxes)):
                     if composite.boxes[j].as2d().collides(section_box):
-                        images.append(rotate_frame(ifile.read_frame(j), angle, rotation_order).transpose([1,2,0]).copy())
+                        images.append(rotate_frame(ifile.read_frame(j), angle, rotation_order, scale).transpose([1,2,0]).copy())
                     else:
                         images.append(np.empty(frame_shape, dtype))
             composite.images = images
@@ -228,8 +235,8 @@ def stitch_well_section(image_paths, composite_paths, mins, maxes, merger='effic
             images = raw_images.transpose([0,2,3,1])
             num_channels = images.shape[3]
             dtype = np.float32#images.dtype
-            if angle != 0:
-                images = [rotate_frame(raw_images[j], angle, rotation_order).transpose([1,2,0])
+            if angle != 0 or scale != 1:
+                images = [rotate_frame(raw_images[j], angle, rotation_order, scale).transpose([1,2,0])
                           if composite.boxes[j].as2d().collides(section_box) else images[j] for j in range(len(composite.boxes))]
             composite.images = images
 
@@ -283,7 +290,7 @@ rule stitch_well:
         mins, maxes = full_composite.boxes.points1.min(axis=0)[:2], full_composite.boxes.points2.max(axis=0)[:2]
 
         tifffile.imwrite(output.image, stitch_well_section(input.images, input.composites, mins, maxes, merger=params.merger,
-                angles=[read_cycle_rotations(input.rotation)[cycle] for cycle in config['cycles']]))
+                **corrections_kwargs(input.rotation, config['cycles'])))
 
 rule stitch_well_pt:
     """ Stitches a whole well together, with all phenotyping cycles.
@@ -318,7 +325,7 @@ rule stitch_well_pt:
         maxes //= bases_scale
 
         tifffile.imwrite(output.image, stitch_well_section(input.images_pt, input.composites_pt, mins, maxes, phenotype=True,
-                angles=[read_cycle_rotations(input.rotation)[cycle] for cycle in config['phenotype_cycles']]))
+                **corrections_kwargs(input.rotation, config['phenotype_cycles'])))
 
 
 rule stitch_section:
@@ -346,7 +353,7 @@ rule stitch_section:
         mins, maxes = center - radius, center + radius
 
         tifffile.imwrite(output.image, stitch_well_section(input.images, input.composites, mins, maxes,
-                angles=[read_cycle_rotations(input.rotation)[cycle] for cycle in config['cycles']]))
+                **corrections_kwargs(input.rotation, config['cycles'])))
 
 rule stitch_section_pt:
     """ Stitches all phenotyping cycles for a small section of a well, with dimensions wildcards.size pixels square.
@@ -379,7 +386,7 @@ rule stitch_section_pt:
         maxes //= bases_scale
 
         tifffile.imwrite(output.image, stitch_well_section(input.images, input.composites, mins, maxes, phenotype=True,
-                angles=[read_cycle_rotations(input.rotation)[cycle] for cycle in config['phenotype_cycles']]))
+                **corrections_kwargs(input.rotation, config['phenotype_cycles'])))
 
 
 ##################################################
@@ -442,7 +449,7 @@ rule stitch_tile:
         debug(box)
 
         tifffile.imwrite(output.image, stitch_well_section(input.images, input.composites, box.point1, box.point2,
-                angles=[read_cycle_rotations(input.rotation)[cycle] for cycle in config['cycles']]))
+                **corrections_kwargs(input.rotation, config['cycles'])))
 
         import resource
         debug('peak rss MB', resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024)
@@ -481,7 +488,7 @@ rule stitch_tile_pt:
         debug(box)
 
         tifffile.imwrite(output.image, stitch_well_section(input.images_pt, input.composites_pt, box.point1, box.point2, phenotype=True,
-                angles=[read_cycle_rotations(input.rotation)[cycle] for cycle in config['phenotype_cycles']]))
+                **corrections_kwargs(input.rotation, config['phenotype_cycles'])))
 
         import resource
         debug('peak rss MB', resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024)

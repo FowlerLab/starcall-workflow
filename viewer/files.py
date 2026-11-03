@@ -156,6 +156,8 @@ class RunFiles:
                     os.path.join(stitching, well, 'cycle' + cycle, 'composite.json')))
         layout = self.layout(well)
         files.append(self.entry('grid tile positions' if layout.tiled else 'well positions', layout.positions_file()))
+        if (self.config.get('stitching') or {}).get('rotation', {}).get('phenotype_correction', 'resample') == 'coordinates':
+            files.append(self.entry('phenotype frame transform', os.path.join(stitching, well, 'phenotype_frame.json')))
         return files
 
     def tile_file(self, well, tile, kind):

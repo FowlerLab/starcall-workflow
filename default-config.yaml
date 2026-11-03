@@ -65,13 +65,57 @@ stitching:
         reference: 'median'
         # number of tiles the rotation is measured on
         num_tiles: 16
+        # a phenotype cycle imaged as a single tile is measured on the sequencing tiles with at least
+        # this fraction of their area inside it (all of them, or num_tiles of them sampled on a grid)
+        min_phenotype_overlap: 0.5
         # interpolation when rotating tiles, 1 is bilinear, 3 cubic
         interpolation_order: 1
+        # also correct the scale of phenotype cycles relative to the sequencing cycles (after the
+        # nominal bases_scale / phenotype_scale), which stitching cannot absorb since it only
+        # translates tiles
+        correct_scale: False
+        # relative scale error below which phenotype cycles are not rescaled, 0.0005 moves the
+        # edges of a 2304 px tile by about 0.6 px
+        scale_threshold: 0.0005
+        # How the rotation and scale of phenotype cycles are corrected:
+        #   'resample': their pixels are rotated and rescaled for alignment and in every stitched image
+        #   'coordinates': only for alignment; stitched phenotype images keep the raw pixels (placed by
+        #       translation) and the correction is kept as a transform (stitching/{well}/phenotype_frame.json,
+        #       qc/{well}/phenotype_frame.png) that maps sequencing dots into the phenotype masks in
+        #       attach_cell_ids. See starcall.phenotype_frame
+        phenotype_correction: 'resample'
+    # Only with rotation.phenotype_correction: coordinates. Positions of the tiles of multi tile phenotype
+    # cycles in the phenotype frame are refined with the offsets between overlapping phenotype tiles
+    # at full resolution, held to the joint solve with sequencing by refine_weight (relative to a
+    # measured pair). modeled_weight: weight of pairs estimated by the stage model. outlier_px: pairs
+    # disagreeing with the joint solve by more than this are dropped (null keeps all)
+    phenotype_frame:
+        refine_weight: 1.0
+        modeled_weight: 0.25
+        outlier_px: null
     # The method to combine overlapping tiles. Mean takes the mean, nearest crops
     # each tile to be not overlapping
     merger: 'nearest'
     # Centers each cycle independently
     # center: True
+    # Places the phenotype cycles from their stage positions relative to the first
+    # sequencing cycle instead of their own grid, eg when the phenotype cycle is a single
+    # tile that doesn't cover the whole well. Needs nd2 input files.
+    # phenotype_stage_positions: True
+    # Aligns sequencing tiles to phenotype tiles with starcall.cropped_alignment.CroppedFFTAligner,
+    # against a window of the phenotype tile around the expected position of the sequencing tile,
+    # instead of the whole phenotype tile. For phenotype tiles much larger than the sequencing tiles,
+    # eg a single tile at a lower magnification, where the default aligner finds wrong offsets.
+    # phenotype_cropped_aligner: True
+    # px (at the scale of the sequencing images) the window extends past the expected position of
+    # the sequencing tile on each side, the largest error of the initial positions that is corrected
+    # phenotype_cropped_margin: 600
+    # Score threshold for constraints between sequencing and phenotype tiles. If set, it replaces the
+    # threshold estimated from non overlapping pairs for these, and constraints whose correction
+    # disagrees with the others by more than phenotype_consistency_tolerance px are removed.
+    # If not set, these constraints are filtered like all others.
+    # phenotype_score_threshold: 0.3
+    # phenotype_consistency_tolerance: 20
 
     # This section is all of the parameters for ASHLAR stitching. ASHLAR may provide
     # better stitching than ConStitch, but it should be noted that ASHLAR cannot be used

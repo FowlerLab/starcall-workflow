@@ -6,22 +6,22 @@
 # Scale of objective used to image phenotyping and genotyping images.
 # The absolute value of each is not important, but the relative ratio
 # is used to scale up and down images. Both should be integers.
-phenotype_scale: 20
+phenotype_scale: 4
 bases_scale: 10
 
 # The channels imaged for sequencing and phenotyping images.
 # Channels for each base should be labeled as such so bases
 # are called properly. 
-sequencing_channels: ['DAPI', 'GFP', 'G', 'T', 'A', 'C']
-phenotyping_channels: ['DAPI', 'GFP', 'Ph+WGA', 'Mito']
+sequencing_channels: ['DAPI', 'WGA', 'G', 'T', 'A', 'C']
+phenotyping_channels: ['WGA', 'DAPI']
 
 # Grid size for different processing steps. Input images are split
 # into an X by X grid, the processing is run, then resulting images are
 # merged back together.
 # This can be disabled by setting the size to 1 or not setting the variable
-segmentation_grid_size: 5
-sequencing_grid_size: 5
-phenotyping_grid_size: 20
+segmentation_grid_size: 4
+sequencing_grid_size: 4
+phenotyping_grid_size: 12
 # Segmentation grid sizes can be further specified, this is really only useful if
 # you are running segmentation on the gpu and need very fine grain control
 #segmentation_cells_grid_size: 6
@@ -32,7 +32,7 @@ stitching:
     # name of one of the channels above. If a string, it should be
     # present in both sequencing and phenotyping channels, to align between them.
     #channel: 0
-    channel: 'GFP'
+    channel: 'DAPI'
     # The amount of overlap in pixels between generated tiles. This should be
     # larger than a cell, so that all cells are fully contained in at least one tile
     overlap: 100
@@ -40,7 +40,7 @@ stitching:
     # so 16 would mean alignment is done to 1/16 of a pixel. This requires minimal extra
     # processing, and improves alignment up to 16, past which improvements are not small.
     # This can be disabled by not setting this or setting it to 1.
-    subpixel_alignment: 8
+    subpixel_alignment: 16
     # Solving method for alignment. I have found 'mae' (Mean absolute error minimizing solver)
     # to be the best in most situations. Other options are 'mse' (Mean squared error minimizing solver),
     # 'spantree' (Spanning tree)
@@ -50,27 +50,79 @@ stitching:
     # This reduces the processing greatly when the number of cycles is large.
     max_cycle_pairs: 16
     # Number of threads used by each calculate_constraints job to align tiles
-    threads: 8
+    threads: 1
+
     # Rotation of the image content of each cycle is measured on sample tiles before alignment
     # (eg when the plate was rotated slightly when put back on the stage), and cycles rotated
-    # more than threshold degrees from the reference are rotated back when their tiles are read,
-    # for alignment and all stitched images. See qc/{well}/rotation.png and rotation.csv.
+    # more than threshold degrees from the reference are rotated/corrected.  Sequencing images are rotated back.
+    # Phenotype images are corrected depending on the phenotype_correction mode selected.
+    # See qc/{well}/rotation.png and rotation.csv for measured values and test resuls. 
     # Not applied to the ASHLAR stitching rules.
     rotation:
-        # set to False to only measure and report rotations
+        # set to False to only measure and report rotations, not correct
         correct: True
-        # degrees, 0.05 moves the corners of a 2304 px tile by about 1.4 px
+        # Degree threshold to correct rotations over - if median rotation value is over the threshold it is labelled as 'rotated'
+        # Note: 0.05 moves the corners of a 2304 px tile by about 1.4 px
         threshold: 0.05
         # 'median' to use the median rotation of the sequencing cycles as zero, or a cycle eg '03'
         reference: 'median'
-        # number of tiles the rotation is measured on
+        # number of tiles the rotation is measured on (if more than the number of tiles in a cycle, all are used)
         num_tiles: 16
-        # interpolation when rotating tiles, 1 is bilinear, 3 cubic
+        # The cutoff for how much area in a sequencin image has to overlap with a phenotype cycle image to be counted as 'overlapping'.
+        # This value is used in the case when a sinlge phenotype image is present. Only overlapping tiles are used for the rotation test for single phenotype images, 
+        # since the fit tends to fail on partially overlapping images or give unreliable results.
+        # Afer tiles are determined to be overlapping, all of them are used if less than num_tiles, or a sampling grid is placed in the phenotype image
+        # and num_tiles are sampled from the phenotype grid)
+        min_phenotype_overlap: 0.5
+        # Interpolation approach when rotating tiles to a common alignment, 1 is bilinear, 3 cubic
         interpolation_order: 1
+        # Also correct the scale of phenotype cycles relative to the sequencing cycles (after the
+        # nominal bases_scale / phenotype_scale).  The rotation model fit also calculates scale differences 
+        # which would be expected to ~1 after the bases_scale/phenotype_scale correction. The stitching approach 
+        # cannot absorb scale correction, and it will give bad seams/alignment if the scale is off.
+        # If true, it will correct the scale 
+        correct_scale: True
+        # relative scale error below which phenotype cycles are not rescaled, 0.0005 moves the
+        # edges of a 2304 px tile by about 0.6 px
+        scale_threshold: 0.0005
+        # How the rotation and scale of phenotype cycles are corrected:
+        #   'resample': their pixels are rotated and rescaled for alignment and in every stitched image
+        #   'coordinates': only for alignment; stitched phenotype images keep the raw pixels (placed by
+        #       translation) and the correction is kept as a transform (stitching/{well}/phenotype_frame.json,
+        #       qc/{well}/phenotype_frame.png) that maps sequencing dots into the phenotype masks in
+        #       attach_cell_ids. See starcall.phenotype_frame
+        phenotype_correction: 'coordinates'
+    # Only with rotation.phenotype_correction: coordinates. Positions of the tiles of multi tile phenotype
+    # cycles in the phenotype frame are refined with the offsets between overlapping phenotype tiles
+    # at full resolution, held to the joint solve with sequencing by refine_weight (relative to a
+    # measured pair). modeled_weight: weight of pairs estimated by the stage model. outlier_px: pairs
+    # disagreeing with the joint solve by more than this are dropped (null keeps all)
+    phenotype_frame:
+        refine_weight: 1.0
+        modeled_weight: 0.25
+        outlier_px: null
     # The method to combine overlapping tiles. Mean takes the mean, nearest crops
     # each tile to be not overlapping
     merger: 'nearest'
     center: True
+    # Places the phenotype cycles from their stage positions relative to the first
+    # sequencing cycle instead of their own grid, eg when the phenotype cycle is a single
+    # tile that doesn't cover the whole well. Needs nd2 input files.
+    phenotype_stage_positions: True
+    # Aligns sequencing tiles to phenotype tiles with starcall.cropped_alignment.CroppedFFTAligner,
+    # against a window of the phenotype tile around the expected position of the sequencing tile,
+    # instead of the whole phenotype tile. For phenotype tiles much larger than the sequencing tiles,
+    # eg a single tile at a lower magnification, where the default aligner finds wrong offsets.
+    phenotype_cropped_aligner: True
+    # px (at the scale of the sequencing images) the window extends past the expected position of
+    # the sequencing tile on each side, the largest error of the initial positions that is corrected
+    phenotype_cropped_margin: 600
+    # Score threshold for constraints between sequencing and phenotype tiles. If set, it replaces the
+    # threshold estimated from non overlapping pairs for these, and constraints whose correction
+    # disagrees with the others by more than phenotype_consistency_tolerance px are removed.
+    # If not set, these constraints are filtered like all others.
+    phenotype_score_threshold: 0.3
+    phenotype_consistency_tolerance: 20
     # This section is all of the parameters for ASHLAR stitching. ASHLAR may provide
     # better stitching than ConStitch, but it should be noted that ASHLAR cannot be used
     # when the phenotype cycles are imaged at a different scale
@@ -86,7 +138,7 @@ stitching:
 
 segmentation:
     # Diameter passed to cellpose, in pixels of the phenotype images.
-    diameter: 100
+    diameter: 16
 
     # Method to segment nuclei. Can be 'otsu_threshold' or 'stardist'
     nuclei_method: 'stardist'
@@ -94,33 +146,32 @@ segmentation:
     #Filtering parameters for removing small nuclei masks.  The min_area value removes all masks 
     #with area less than the min_area value in pixels.  The min_bbox removes all masks with 
     #bounding box length or width smaller than the value 
-    #min_area=100, min_bbox=10
-    nuclei_segmentation_filter_min_area: 100
-    nuclei_segmentation_filter_min_bbox: 10
+    nuclei_segmentation_filter_min_area: 27
+    nuclei_segmentation_filter_min_bbox: 3
 
     # Method to segment cells. Can be 'cellpose' or 'stardist'
     cells_method: 'cellpose'
     # Determine if both nuclei and cytoplasm should be used for cellpoes segmentation
     # If true, use both, else uses only cytoplasm
-    use_cytoplasm_and_nuclei: True
+    use_cytoplasm_and_nuclei: False
 
     #Filtering parameters for removing small nuclei masks.  The min_area value removes all masks 
     #with area less than the min_area value in pixels.  The min_bbox removes all masks with 
     #bounding box length or width smaller than the value 
-    cell_segmentation_filter_min_area: 100
-    cell_segmentation_filter_min_bbox: 10
+    cell_segmentation_filter_min_area: 35
+    cell_segmentation_filter_min_bbox: 7
 
     # Channels used to run cellpose, can be indices or strings from the
     # list of phenotype channels above. The first channel should be the nuclear
     # channel and the second the cytoplasm channel
-    channels: ['DAPI', 'Ph+WGA']
+    channels: ['DAPI', 'WGA']
 
     # Whether the cell and nuclei masks should be linked together.
     # Only necessary if you are going to use the nuclei masks, for example
     # in phenotyping
     #match_masks: True 
     #True is the default ['nuclei', 'cells'] matching
-    match_masks: True
+    match_masks: ['nucleiexpanded5', 'cells']
     
     # Whether cell segmentation is run on background corrected images
     # if both this and phenotyping.use_corrected are false, background correction
@@ -132,7 +183,7 @@ dotdetection:
     # These values should work well for most images, but if dot detection is
     # not working well, they can be adjusted
     min_sigma: 1
-    max_sigma: 3
+    max_sigma: 8
     num_sigma: 7
     # Which version of dot detection to run: original (single threaded),
     # cpu (multithreaded, less memory) or gpu (needs cupy and cucim, runs on a cuda node)

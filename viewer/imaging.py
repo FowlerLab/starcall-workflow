@@ -6,11 +6,20 @@ integer (row, col) origin for every nd2 frame (frame j == box j); tiles are neve
 or flipped, so a crop is just a paste of the few frames that overlap it.
 
 Cycles listed as rotated in stitching/<well>/rotation.csv (detect_rotation in
-workflow/rules/alignment.smk) had every frame rotated about its centre by applied_deg before
-alignment and stitching, keeping its shape, so the composite positions are those of the rotated
-frames. The same rotation is applied here to the part of each frame that is pasted, matching
-starcall.rotation.rotate_frame. Without rotation.csv (runs from before rotation correction)
-no frame is rotated.
+workflow/rules/alignment.smk) had every frame rotated about its centre by applied_deg (and
+phenotype cycles rescaled by applied_scale) before alignment and stitching, keeping its shape, so
+the composite positions are those of the corrected frames. The same correction is applied here to
+the part of each frame that is pasted, matching starcall.rotation.rotate_frame. Without
+rotation.csv (runs from before rotation correction) no frame is rotated.
+
+With stitching.rotation.phenotype_correction: coordinates, the phenotype frames are stitched with
+their raw pixels (the first phenotype cycle; later ones only by their difference from it), and their
+composite positions are in the phenotype frame, see starcall.phenotype_frame. The viewer still
+shows every image over the same area as the sequencing view box: a phenotype crop is made by
+looking up, for each phenotype pixel of the view box at the nominal bases_scale / phenotype_scale,
+the nearest pixel of the stitched phenotype frame through the transform in
+stitching/<well>/phenotype_frame.json (rotation and scale from detect_rotation). Pixel values are
+the raw values; only their placement follows the transform, so dots and cell outlines line up.
 
 The paste reproduces how stitch_well_section (workflow/rules/stitching.smk) builds raw.tif:
 tiles are clipped to the grid tile section, then merged with constitch's EfficientNearestMerger
@@ -22,6 +31,7 @@ import os
 import json
 import threading
 import collections
+from fractions import Fraction
 
 import numpy as np
 import yaml
@@ -116,24 +126,66 @@ def load_boxes(path):
 def load_rotations(path):
     """ cycle -> rotation (degrees) applied to the frames of the cycle, from the rotation.csv
     written by detect_rotation. Empty if the run has no rotation.csv. """
+    return {cycle: angle for cycle, (angle, scale) in load_corrections(path).items()}
+
+
+def load_corrections(path):
+    """ cycle -> (angle, scale) applied to the frames of the cycle when aligned, from rotation.csv
+    (applied_deg, applied_scale; scale 1 in tables from before scale correction). Empty without it. """
     if not os.path.exists(path):
         return {}
     import csv
     with open(path, newline='') as ifile:
-        return {row['cycle']: float(row['applied_deg']) for row in csv.DictReader(ifile)}
+        return {row['cycle']: (float(row['applied_deg']), float(row.get('applied_scale') or 1))
+                for row in csv.DictReader(ifile)}
 
 
-def rotate_region(frame, angle, rows, cols, order=1):
-    """ Rows rows[0]:rows[1] and columns cols[0]:cols[1] of rotate_frame(frame, angle, order)
-    (starcall/rotation.py, scipy.ndimage.rotate about the frame centre with mode='nearest'),
-    for a (C, H, W) frame, without rotating the rest of the frame """
-    if angle == 0:
+def content_matrix(angle, scale=1):
+    """ The 2x2 matrix, in (row, col), by which starcall.rotation.rotate_frame(frame, angle, scale=scale)
+    moves the content of a frame about its centre """
+    a = np.radians(angle)
+    return scale * np.array([[np.cos(a), -np.sin(a)], [np.sin(a), np.cos(a)]])
+
+
+class PhenotypeFrame:
+    """ The transform of stitching/<well>/phenotype_frame.json (starcall.phenotype_frame) between the
+    nominal phenotype pixels (bases pixels scaled by phenotype_scale / bases_scale) and the phenotype
+    frame, the coordinates of the stitched phenotype images: nominal = pivot + M @ (frame - pivot) """
+
+    def __init__(self, path):
+        with open(path) as ifile:
+            obj = json.load(ifile)
+        self.pivot = np.array(obj['pivot'], dtype=float)
+        self.reference = obj['reference']
+        self.cycles = {cycle: (c['angle'], c['scale']) for cycle, c in obj['cycles'].items()}
+        self.matrix = content_matrix(*self.cycles[self.reference])
+        self.inverse = np.linalg.inv(self.matrix)
+
+    def nominal_to_frame(self, points):
+        return self.pivot + (np.asarray(points, dtype=float) - self.pivot) @ self.inverse.T
+
+    def frame_to_nominal(self, points):
+        return self.pivot + (np.asarray(points, dtype=float) - self.pivot) @ self.matrix.T
+
+    def relative(self, cycle):
+        """ (angle, scale) the frames of a phenotype cycle are resampled by when stitched, relative to the
+        reference phenotype cycle, as stitch_corrections in workflow/rules/alignment.smk """
+        angle, scale = self.cycles[cycle]
+        ref_angle, ref_scale = self.cycles[self.reference]
+        return angle - ref_angle, scale / ref_scale
+
+
+def rotate_region(frame, angle, rows, cols, order=1, scale=1):
+    """ Rows rows[0]:rows[1] and columns cols[0]:cols[1] of rotate_frame(frame, angle, order, scale)
+    (starcall/rotation.py, scipy.ndimage.rotate about the frame centre with mode='nearest', with the
+    content enlarged by scale), for a (C, H, W) frame, without rotating the rest of the frame """
+    if angle == 0 and scale == 1:
         return frame[:, rows[0]:rows[1], cols[0]:cols[1]]
     import scipy.ndimage
     import scipy.special
     # the transform scipy.ndimage.rotate uses, with the output shifted to the region's origin
     c, s = scipy.special.cosdg(angle), scipy.special.sindg(angle)
-    matrix = np.array([[c, s], [-s, c]])
+    matrix = np.array([[c, s], [-s, c]]) / scale
     center = (np.array(frame.shape[1:]) - 1) / 2
     offset = center - matrix @ center + matrix @ np.array([rows[0], cols[0]])
     shape = (rows[1] - rows[0], cols[1] - cols[0])
@@ -170,11 +222,12 @@ def stitch_batches(positions, sizes):
 
 class CycleImages:
     """ One cycle of one well: the nd2 file plus its composite positions, and the rotation
-    (degrees) applied to its frames, see detect_rotation """
+    (degrees) and scale applied to its frames when stitched, see detect_rotation """
 
-    def __init__(self, path, composite_path, angle=0, rotation_order=1):
+    def __init__(self, path, composite_path, angle=0, rotation_order=1, scale=1):
         self.path = path
         self.angle = angle
+        self.scale = scale
         self.rotation_order = rotation_order
         self.positions, self.sizes = load_boxes(composite_path)
         self.batches = stitch_batches(self.positions, self.sizes)
@@ -198,8 +251,8 @@ class CycleImages:
 
     def read_region(self, index, rows, cols):
         """ Rows rows[0]:rows[1] and columns cols[0]:cols[1] of frame index, as stitched:
-        rotated by the cycle's rotation """
-        return rotate_region(self.read_frame(index), self.angle, rows, cols, self.rotation_order)
+        rotated and rescaled by the cycle's correction """
+        return rotate_region(self.read_frame(index), self.angle, rows, cols, self.rotation_order, self.scale)
 
     def crop(self, box, section=None):
         """ Crops box = (r0, c0, r1, c1) (in this cycle's composite pixels) from all channels.
@@ -255,9 +308,9 @@ class CycleImages:
             image = np.full((num_channels,) + shape, np.nan, dtype=np.float32)
         return image
 
-    def coverage(self, box):
-        """ Fraction of box (r0, c0, r1, c1) that some frame of this cycle covers. Parts of the well
-        outside every frame were not imaged in this cycle (NaN in raw.tif).
+    def covered(self, box):
+        """ Mask over box (r0, c0, r1, c1) of the pixels some frame of this cycle covers. Parts of the
+        well outside every frame were not imaged in this cycle (NaN in raw.tif).
         """
         r0, c0, r1, c1 = box
         covered = np.zeros((r1 - r0, c1 - c0), bool)
@@ -265,7 +318,11 @@ class CycleImages:
         for j in np.nonzero(np.all((point1 < (r1, c1)) & ((r0, c0) < point2), axis=1))[0]:
             covered[max(point1[j, 0], r0) - r0:min(point2[j, 0], r1) - r0,
                     max(point1[j, 1], c0) - c0:min(point2[j, 1], c1) - c0] = True
-        return float(covered.mean())
+        return covered
+
+    def coverage(self, box):
+        """ Fraction of box (r0, c0, r1, c1) that some frame of this cycle covers """
+        return float(self.covered(box).mean())
 
     def sample_pixels(self, num_frames=3, step=8):
         """ Subsampled pixels from a few frames spread across the well, for default contrast """
@@ -287,21 +344,33 @@ class RunImages:
         self.run_dir = run_dir
         self.well = well
         self.config = config
-        self.scale = config['phenotype_scale'] // config['bases_scale']
+        self.scale = Fraction(config['phenotype_scale'], config['bases_scale'])
         stitching_dir = os.path.join(run_dir, config.get('stitching_dir', 'stitching/'))
 
         if paths is None:
             paths = find_input_files(run_dir, config).get(well)
         if not paths:
             raise ValueError('No input files found for {} under {}'.format(well, config.get('rawinput_dir', 'rawinput/')))
-        self.rotations = load_rotations(os.path.join(stitching_dir, well, 'rotation.csv'))
-        rotation_order = (config.get('stitching') or {}).get('rotation', {}).get('interpolation_order', 1)
+        self.corrections = load_corrections(os.path.join(stitching_dir, well, 'rotation.csv'))
+        self.rotations = {cycle: angle for cycle, (angle, scale) in self.corrections.items()}
+        rotation = (config.get('stitching') or {}).get('rotation', {})
+        rotation_order = rotation.get('interpolation_order', 1)
+        # with phenotype_correction: coordinates the phenotype images are in the phenotype frame
+        self.frame = None
+        if rotation.get('phenotype_correction', 'resample') == 'coordinates':
+            frame_path = os.path.join(stitching_dir, well, 'phenotype_frame.json')
+            if not os.path.exists(frame_path):
+                raise FileNotFoundError('Missing phenotype frame ' + frame_path)
+            self.frame = PhenotypeFrame(frame_path)
         self.cycles = {}
         for cycle, path in paths.items():
             composite_path = os.path.join(stitching_dir, well, 'cycle' + cycle, 'composite.json')
             if not os.path.exists(composite_path):
                 raise FileNotFoundError('Missing solved composite ' + composite_path)
-            self.cycles[cycle] = CycleImages(path, composite_path, self.rotations.get(cycle, 0), rotation_order)
+            angle, scale = self.corrections.get(cycle, (0, 1))
+            if self.frame is not None and cycle in self.frame.cycles:
+                angle, scale = self.frame.relative(cycle)
+            self.cycles[cycle] = CycleImages(path, composite_path, angle, rotation_order, scale)
 
         self.seq_cycles = sorted(c for c in self.cycles if not c.startswith('P'))
         self.pt_cycles = [c for c in self.cycles if c.startswith('P')]
@@ -315,14 +384,52 @@ class RunImages:
     def is_pt(self, cycle):
         return cycle in self.pt_cycles
 
+    ##### phenotype frame #####
+
+    def view_to_frame(self, box_pt):
+        """ Phenotype frame coordinates (rows, cols, 2) of the pixels of box_pt, a box of nominal phenotype pixels """
+        rows, cols = np.arange(box_pt[0], box_pt[2]), np.arange(box_pt[1], box_pt[3])
+        grid = np.stack(np.meshgrid(rows, cols, indexing='ij'), axis=-1).reshape(-1, 2)
+        return self.frame.nominal_to_frame(grid).reshape(len(rows), len(cols), 2)
+
+    def frame_box(self, box_pt, margin=2):
+        """ Integer box of the phenotype frame containing the area of box_pt (nominal phenotype pixels) """
+        corners = np.array([[box_pt[0], box_pt[1]], [box_pt[0], box_pt[3]], [box_pt[2], box_pt[1]], [box_pt[2], box_pt[3]]])
+        corners = self.frame.nominal_to_frame(corners)
+        lo, hi = np.floor(corners.min(axis=0)).astype(int) - margin, np.ceil(corners.max(axis=0)).astype(int) + margin
+        return [int(lo[0]), int(lo[1]), int(hi[0]), int(hi[1])]
+
+    def warp(self, array, frame_box, box_pt, fill=0):
+        """ An array (..., rows, cols) over frame_box of the phenotype frame, looked up at the pixels of box_pt
+        (nominal phenotype pixels) through the transform, nearest pixel; fill where it isn't covered """
+        points = np.rint(self.view_to_frame(box_pt) - frame_box[:2]).astype(int)
+        r, c = points[..., 0], points[..., 1]
+        valid = (r >= 0) & (r < array.shape[-2]) & (c >= 0) & (c < array.shape[-1])
+        out = np.full(array.shape[:-2] + r.shape, fill, dtype=array.dtype)
+        out[..., valid] = array[..., r[valid], c[valid]]
+        return out
+
+    def coverage(self, cycle, box):
+        """ Fraction of box (in the cycle's pixels; nominal phenotype pixels for phenotype cycles) imaged in the cycle """
+        if self.frame is None or not self.is_pt(cycle):
+            return self.cycles[cycle].coverage(box)
+        frame_box = self.frame_box(box)
+        return float(self.warp(self.cycles[cycle].covered(frame_box), frame_box, box, fill=False).mean())
+
     def crop(self, cycle, box, section=None):
-        """ All channels of box (r0, c0, r1, c1) of a cycle, in that cycle's pixels, cached """
+        """ All channels of box (r0, c0, r1, c1) of a cycle, in that cycle's pixels, cached. For phenotype
+        cycles in the phenotype frame, box is in nominal phenotype pixels and the crop is looked up in the
+        frame (see the module docstring); section stays in frame pixels, as stitch_tile_pt uses it """
         key = (cycle, tuple(box), None if section is None else tuple(section))
         with self._cache_lock:
             if key in self._cache:
                 self._cache.move_to_end(key)
                 return self._cache[key]
-        image = self.cycles[cycle].crop(box, section)
+        if self.frame is not None and self.is_pt(cycle):
+            frame_box = self.frame_box(box)
+            image = self.warp(self.cycles[cycle].crop(frame_box, section), frame_box, box, fill=np.nan)
+        else:
+            image = self.cycles[cycle].crop(box, section)
         with self._cache_lock:
             if key in self._cache:
                 self._cache_used -= self._cache.pop(key).nbytes

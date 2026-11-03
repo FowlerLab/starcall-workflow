@@ -1077,6 +1077,33 @@ rule plot_dot_detection_qc_well:
         if output.well_summary not in written:
             starcall.dotdetection_qc.merge_summary(table).to_csv(output.well_summary, index=False)
 
+rule plot_dot_detection_qc_well_nogrid:
+    """ The same well level dot detection QC plots as plot_dot_detection_qc_well, for wells that
+    are not split into a grid (dots found on the whole well, eg sequencing/wellb3/). There is
+    only one summary, so the per tile panels show a single value, but the image crops of the
+    intermediate steps are available and drawn too.
+    Also saves tile_summary.csv and well_summary.csv like plot_dot_detection_qc_well.
+    """
+    input:
+        summary = sequencing_dir + '{well}/dotdiagnostics{params}.summary.csv',
+        images = sequencing_dir + '{well}/dotdiagnostics{params}.images.npz',
+    output:
+        plots = expand(qc_dir + '{{well}}/dot_detection{{params}}/well_{plot}.svg', plot=dot_detection_qc_plots),
+        data = expand(qc_dir + '{{well}}/dot_detection{{params}}/well_{plot}_data.csv', plot=dot_detection_qc_plots),
+        well_summary = qc_dir + '{well}/dot_detection{params}/well_summary.csv',
+        tile_summary = qc_dir + '{well}/dot_detection{params}/tile_summary.csv',
+    wildcard_constraints:
+        params = params_regex('min', 'max', 'num'),
+    resources:
+        mem_mb = lambda wildcards, input: 8000 + size_mb(input) * 5
+    run:
+        import starcall.dotdetection_qc
+        starcall.dotdetection_qc.plot_all([input.summary], os.path.dirname(output.plots[0]),
+                images_path=input.images, prefix='well_', cycle_labels=cycles)
+        table = starcall.dotdetection_qc.load_summary([input.summary])
+        table.to_csv(output.tile_summary, index=False)
+        starcall.dotdetection_qc.merge_summary(table).to_csv(output.well_summary, index=False)
+
 
 def find_mask_sizes_tables(wildcards):
     """ The per tile mask size tables written by segment_nuclei / segment_cells for each well.

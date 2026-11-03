@@ -346,6 +346,20 @@ viewer_masks_scale = config['segmentation'].get('viewer_masks_scale', 2)
 def drop_viewer_masks(table):
     return table.drop(columns=['mask{}'.format(viewer_masks_scale)], errors='ignore')
 
+def bases_table_section(wildcards):
+    """ (well, grid_size, x, y) of the section of a tabulate_cells table, see parse_section_path """
+    section = wildcards.path_nogrid + wildcards.grid + wildcards.path_nogrid2
+    import re
+    assert not re.search(r'_grid\d+$', section), ('tabulate_cells of a sequencing segmentation with phenotype_correction: '
+            'coordinates expects a well or a grid tile, not ' + section)
+    return parse_section_path(section)
+
+def section_composite_for(section):
+    well, grid_size, x, y = section
+    if grid_size is None:
+        return stitching_dir + well + '/composite.json'
+    return stitching_dir + '{}_grid{}/grid_composite.json'.format(well, grid_size)
+
 rule tabulate_cells:
     """ Simple information is recorded about the segmented cells, such as position, bbox.
     Also stores masks of each cell, downscaled so they take up a reasonable amount of space.
@@ -354,13 +368,19 @@ rule tabulate_cells:
     defined in starcall.cells
     If the input segmentation is sequencing image scale (contains '_downscaled' in the path), the bboxes
     and positions of cells is converted to phenotype scale, to ensure all cell tables are consistently
-    phenotype scale.
+    phenotype scale. With stitching.rotation.phenotype_correction: coordinates, they are converted through
+    the phenotype frame transform (phenotype_frame.json, see starcall.phenotype_frame) into the coordinates of
+    the stitched phenotype image of the same section, instead of the nominal bases_scale / phenotype_scale.
     """
     input:
         cells = lambda wildcards: (
                 segmentation_dir + '{path_nogrid}{grid}{path_nogrid2}/{segmentation_type}_mask{unmatched}{grid}.tif'
                 if 'bases' not in wildcards.segmentation_type else
                 segmentation_dir + '{path_nogrid}{grid}{path_nogrid2}/{segmentation_type}_mask_downscaled{unmatched}{grid}.tif'),
+        frame = lambda wildcards: stitching_dir + bases_table_section(wildcards)[0] + '/phenotype_frame.json'
+                if phenotype_coordinates and 'bases' in wildcards.segmentation_type else [],
+        composite = lambda wildcards: section_composite_for(bases_table_section(wildcards))
+                if phenotype_coordinates and 'bases' in wildcards.segmentation_type else [],
         #cells = segmentation_dir + '{path}/{segmentation_type}_mask.tif',
     output:
         #table = segmentation_dir + '{path}/{segmentation_type}{unmerged}.csv',
@@ -399,8 +419,22 @@ rule tabulate_cells:
             #masks_scale = round(newscale * bases_scale / phenotype_scale)
             debug (masks_scale, newscale)
 
-            table.cells.bboxes[:,:2] = np.ceil(table.cells.bboxes[:,:2] * phenotype_scale / bases_scale).astype(int)
-            table.cells.bboxes[:,2:] = np.floor(table.cells.bboxes[:,2:] * phenotype_scale / bases_scale).astype(int)
+            if input.frame:
+                import constitch
+                import starcall.phenotype_frame
+                frame, _ = starcall.phenotype_frame.load(input.frame)
+                well, grid_size, x, y = bases_table_section(wildcards)
+                composite = constitch.load(input.composite, constraints=False)
+                origin = composite.boxes.points1.min(axis=0)[:2] if grid_size is None else composite.boxes[x * grid_size + y].point1[:2]
+                origin_pt = origin * phenotype_scale // bases_scale
+                # corners of each box (pixel edges, index - 0.5) in the phenotype frame, and the box around them
+                bboxes = table.cells.bboxes.astype(float)
+                corners = np.stack([bboxes[:,[0,1]], bboxes[:,[0,3]], bboxes[:,[2,1]], bboxes[:,[2,3]]], axis=1)
+                mapped = frame.base_to_frame(corners.reshape(-1, 2) - 0.5 + origin).reshape(corners.shape) + 0.5 - origin_pt
+                table.cells.bboxes = np.concatenate([np.ceil(mapped.min(axis=1)), np.floor(mapped.max(axis=1))], axis=1).astype(int)
+            else:
+                table.cells.bboxes[:,:2] = np.ceil(table.cells.bboxes[:,:2] * phenotype_scale / bases_scale).astype(int)
+                table.cells.bboxes[:,2:] = np.floor(table.cells.bboxes[:,2:] * phenotype_scale / bases_scale).astype(int)
 
             table['mask{}'.format(newscale)] = table['mask{}'.format(masks_scale)]
             table = table.drop('mask{}'.format(masks_scale), axis=1)

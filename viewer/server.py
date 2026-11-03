@@ -14,6 +14,7 @@ import time
 import secrets
 import argparse
 import threading
+from fractions import Fraction
 from typing import List
 
 import numpy as np
@@ -97,8 +98,12 @@ class Viewer:
         self.well = well
         self.config = config
         self.files = files
-        self.scale = self.config['phenotype_scale'] // self.config['bases_scale']
+        # phenotype pixels per bases pixel, exact; below 1 when the phenotype is imaged at lower magnification
+        self.scale = Fraction(self.config['phenotype_scale'], self.config['bases_scale'])
         self.images = RunImages(self.run_dir, well, self.config, paths=paths)
+        # with phenotype_correction: coordinates, phenotype images, masks and cell tables are in the phenotype
+        # frame, and are shown through its transform over the same area as the sequencing images (see imaging.py)
+        self.frame = self.images.frame
         self.tables = RunTables(self.run_dir, well, self.config, layout, cache_dir=cache_dir, **table_names)
 
         self.sequencing_channels = list(self.config['sequencing_channels'])
@@ -166,20 +171,40 @@ class Viewer:
 
     ##### views #####
 
+    def nominal_box(self, box_pt):
+        """ A box of the phenotype images (eg a cell bbox from a cell table) in nominal phenotype pixels, the
+        bases pixels scaled by phenotype_scale / bases_scale; the same box unless phenotype images are in the
+        phenotype frame, then the box around its corners mapped through the transform """
+        if self.frame is None:
+            return np.asarray(box_pt, float)
+        r0, c0, r1, c1 = np.asarray(box_pt, float)
+        # pixel edges are at index - 0.5
+        corners = np.array([[r0, c0], [r0, c1], [r1, c0], [r1, c1]]) - 0.5
+        corners = self.frame.frame_to_nominal(corners) + 0.5
+        return np.concatenate([corners.min(axis=0), corners.max(axis=0)])
+
     def view_box(self, center=None, cell_box_pt=None, size=64, pad=0.25, min_size=32):
         """ A square view box in bases pixels of the well composite, either `size` pixels around
         center (bases pixels), or containing a cell bbox (phenotype pixels) with some padding.
         """
         if cell_box_pt is not None:
-            r0, c0, r1, c1 = np.asarray(cell_box_pt, float) / self.scale
+            r0, c0, r1, c1 = self.nominal_box(cell_box_pt) / float(self.scale)
             side = max(r1 - r0, c1 - c0) * (1 + 2 * pad)
             side = int(np.ceil(max(side, min_size)))
             center = ((r0 + r1) / 2, (c0 + c1) / 2)
         else:
             side = int(size)
-        r0 = int(np.floor(center[0] - side / 2))
-        c0 = int(np.floor(center[1] - side / 2))
+        # with a fractional scale (eg 4x phenotype, 10x bases: 2/5), the box is snapped to multiples
+        # of its denominator so that the phenotype box covers exactly the same area
+        step = self.scale.denominator
+        side = -(-side // step) * step
+        r0 = int(np.floor((center[0] - side / 2) / step)) * step
+        c0 = int(np.floor((center[1] - side / 2) / step)) * step
         return [r0, c0, r0 + side, c0 + side]
+
+    def to_pt(self, box):
+        """ A box in bases pixels -> phenotype pixels """
+        return [int(v) * self.scale.numerator // self.scale.denominator for v in box]
 
     def require_tile(self, tile, kinds):
         self.files.require(self.files.tile_files(self.well, tile, kinds),
@@ -218,8 +243,8 @@ class Viewer:
             cell_box = self.tables.cell_box(tile, cell_row)
             box = self.view_box(cell_box_pt=cell_box) if size is None else self.view_box(center=position, size=size)
             cell = {'id': cell_id, 'label': label, 'bbox_pt': [int(v) for v in cell_box]}
-            cell['outline'] = self.outline(tile, label, cell_row, [int(v) * self.scale for v in box])
-            cell['nucleus_outline'] = self.nucleus_outline(tile, label, [int(v) * self.scale for v in box])
+            cell['outline'] = self.outline(tile, label, cell_row, self.to_pt(box))
+            cell['nucleus_outline'] = self.nucleus_outline(tile, label, self.to_pt(box))
         else:
             box = self.view_box(center=position, size=64 if size is None else size)
 
@@ -257,7 +282,8 @@ class Viewer:
         if size is None:
             box = self.view_box(cell_box_pt=cell_box)
         else:
-            center = ((cell_box[0] + cell_box[2]) / 2 / self.scale, (cell_box[1] + cell_box[3]) / 2 / self.scale)
+            nominal = self.nominal_box(cell_box)
+            center = ((nominal[0] + nominal[2]) / 2 / float(self.scale), (nominal[1] + nominal[3]) / 2 / float(self.scale))
             box = self.view_box(center=center, size=size)
         reads = self.tables.cell_reads(tile, cell_id)
 
@@ -286,8 +312,8 @@ class Viewer:
             'kind': 'cell',
             'tile': tile,
             'cell': {'id': int(cell_id), 'label': int(label), 'bbox_pt': [int(v) for v in cell_box],
-                     'outline': self.outline(tile, label, row, [int(v) * self.scale for v in box]),
-                     'nucleus_outline': self.nucleus_outline(tile, label, [int(v) * self.scale for v in box])},
+                     'outline': self.outline(tile, label, row, self.to_pt(box)),
+                     'nucleus_outline': self.nucleus_outline(tile, label, self.to_pt(box))},
             'num_reads': reads.get('num_reads'),
             'total_count': reads.get('total_count'),
             'reads': read_list,
@@ -297,14 +323,14 @@ class Viewer:
         }
 
     def box_info(self, tile, box):
-        box_pt = [int(v) * self.scale for v in box]
+        box_pt = self.to_pt(box)
         return {
             'box': [int(v) for v in box],
             'box_pt': box_pt,
             'section': [int(v) for v in self.tables.section(tile)],
             # fraction of the crop each cycle imaged; 0 means no image data there in that cycle
-            'coverage': {cycle: round(images.coverage(box_pt if self.images.is_pt(cycle) else box), 4)
-                         for cycle, images in self.images.cycles.items()},
+            'coverage': {cycle: round(self.images.coverage(cycle, box_pt if self.images.is_pt(cycle) else box), 4)
+                         for cycle in self.images.cycles},
         }
 
     def marker(self, index, position, box, row, current=False):
@@ -376,25 +402,38 @@ class Viewer:
                 raise HTTPException(400, 'Bad layer ' + layer)
             parsed.append((parts[0], parts[1], parts[2], vmin, vmax))
 
-        scale = self.scale if any(self.images.is_pt(cycle) for cycle, *_ in parsed) else 1
-        shape = ((box[2] - box[0]) * scale, (box[3] - box[1]) * scale)
+        # drawn at the finer of the two resolutions, phenotype if any layer is a phenotype image
+        box_pt = self.to_pt(box)
+        fine = box_pt if self.scale > 1 and any(self.images.is_pt(cycle) for cycle, *_ in parsed) else box
+        shape = (fine[2] - fine[0], fine[3] - fine[1])
         total = np.zeros(shape + (3,), np.float32)
         imaged = np.zeros(shape, bool)
         for cycle, channel, color, vmin, vmax in parsed:
             pt = self.images.is_pt(cycle)
-            layer_box = [v * self.scale for v in box] if pt else box
+            layer_box = box_pt if pt else box
             scaled, layer_imaged = self.scaled_crop(tile, cycle, channel, parse_box(layer_box), vmin, vmax, contrast)
-            if not pt and scale > 1:
-                # box_pt is box * scale, so each sequencing pixel covers exactly scale x scale phenotype pixels
-                scaled = np.repeat(np.repeat(scaled, scale, axis=0), scale, axis=1)
-                layer_imaged = np.repeat(np.repeat(layer_imaged, scale, axis=0), scale, axis=1)
+            if scaled.shape != shape:
+                # nearest neighbour: both boxes cover the same area, so output pixel i is layer pixel
+                # floor(i * layer size / output size) (np.repeat for an integer scale)
+                rows = np.arange(shape[0]) * scaled.shape[0] // shape[0]
+                cols = np.arange(shape[1]) * scaled.shape[1] // shape[1]
+                scaled = scaled[np.ix_(rows, cols)]
+                layer_imaged = layer_imaged[np.ix_(rows, cols)]
             total += scaled[..., None] * hex_rgb(color)
             imaged |= layer_imaged
         rgba = np.concatenate([np.clip(total, 0, 255), imaged[..., None] * 255.0], axis=2)
         return png_bytes(Image.fromarray(rgba.astype(np.uint8), mode='RGBA'))
 
     def crop_labels(self, image, tile, box_pt):
-        """ Crop of a tile-local segmentation label image (phenotype pixels) over box_pt, 0 outside it """
+        """ Crop of a tile-local segmentation label image (phenotype pixels) over box_pt, 0 outside it.
+        In the phenotype frame, the labels are looked up through its transform (nearest pixel) """
+        if self.frame is None:
+            return self.frame_crop_labels(image, tile, box_pt)
+        frame_box = self.images.frame_box(box_pt)
+        return self.images.warp(self.frame_crop_labels(image, tile, frame_box), frame_box, box_pt)
+
+    def frame_crop_labels(self, image, tile, box_pt):
+        """ Crop of a tile-local segmentation label image over box_pt, in the pixels of the phenotype images """
         section = self.tables.section(tile, phenotype=True)
         shape = (box_pt[2] - box_pt[0], box_pt[3] - box_pt[1])
         labels = np.zeros(shape, image.dtype)
@@ -414,6 +453,14 @@ class Viewer:
             # exact segmentation, while the segmentation mask image still exists; the unmatched
             # nuclei mask is labelled by orig_index rather than by the matched cell label
             return self.crop_labels(full_mask, tile, box_pt) == (label if kind == 'cells' else row.orig_index)
+        if self.frame is not None:
+            frame_box = self.images.frame_box(box_pt)
+            return self.images.warp(self.table_mask(tile, row, frame_box), frame_box, box_pt, fill=False)
+        return self.table_mask(tile, row, box_pt)
+
+    def table_mask(self, tile, row, box_pt):
+        """ Boolean mask over box_pt (pixels of the phenotype images) of a cell or nucleus from its row of the
+        cell table: its bbox and the finest downscaled mask column """
         shape = (box_pt[2] - box_pt[0], box_pt[3] - box_pt[1])
         mask = np.zeros(shape, bool)
         object_mask = self.tables.cell_mask(row)
@@ -455,7 +502,8 @@ class Viewer:
         else:
             # without the mask image, paint each downscaled mask from the table (finest available)
             labels = np.zeros((box_pt[2] - box_pt[0], box_pt[3] - box_pt[1]), np.int32)
-            labels_found, rows = self.tables.cells_in_box(tile, box_pt, kind)
+            # cell table bboxes are in the pixels of the phenotype images
+            labels_found, rows = self.tables.cells_in_box(tile, self.images.frame_box(box_pt) if self.frame is not None else box_pt, kind)
             for label, (_, row) in zip(labels_found, rows.iterrows()):
                 labels[self.object_mask_in_box(kind, tile, label, row, box_pt)] = label
         if exclude:
@@ -470,7 +518,7 @@ class Viewer:
         tile = self.check_tile(tile)
         self.require_tile(tile, ['dots', 'cells'])
         box = parse_box(box)
-        box_pt = [v * self.scale for v in box]
+        box_pt = self.to_pt(box)
         labels = self.labels_in_box(tile, box_pt, exclude=exclude_cell)
         nuclei = None
         if self.tables.has_nuclei(tile):
@@ -648,7 +696,7 @@ def make_app(run, token, hosts=None):
             'sequencing_channels': list(config['sequencing_channels']),
             'phenotyping_channels': all_phenotyping_channels(config),
             'segmentation_channels': segmentation_channels(config),
-            'scale': config['phenotype_scale'] // config['bases_scale'],
+            'scale': config['phenotype_scale'] / config['bases_scale'],
         }
 
     @app.get('/api/well')
